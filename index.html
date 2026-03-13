@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MoreInfo</title>
+
+  <!-- Tailwind Play CDN + typography plugin -->
+  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+
+  <!-- Phosphor Icons (regular weight) -->
+  <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css" />
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          fontFamily: {
+            mono: ['"JetBrains Mono"', '"Cascadia Code"', '"Fira Code"', 'Menlo', 'ui-monospace', 'monospace'],
+          },
+        },
+      },
+    }
+  </script>
+
+  <style>
+    /* Scrollbars */
+    ::-webkit-scrollbar            { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track      { background: transparent; }
+    ::-webkit-scrollbar-thumb      { background: #3f3f46; border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover{ background: #52525b; }
+
+    /* Render mode: side-by-side */
+    [data-mode="render"] #h-divider,
+    [data-mode="render"] #preview-pane { display: none; }
+    #editor-area[data-mode="render"]   { flex-direction: row; }
+
+    /* V-divider and markdown pane hidden outside render mode */
+    #v-divider,
+    #markdown-pane { display: none; }
+    [data-mode="render"] #v-divider      { display: flex; }
+    [data-mode="render"] #markdown-pane  { display: flex; flex: 1; min-width: 0; flex-direction: column; }
+
+    /* Textarea extras */
+    #editor { tab-size: 2; caret-color: #38bdf8; }
+    #editor::placeholder { color: #3f3f46; }
+  </style>
+</head>
+
+<body class="bg-neutral-900 text-neutral-300 h-screen flex flex-col overflow-hidden select-none">
+
+  <!-- ── Toolbar ──────────────────────────────────────── -->
+  <header
+    id="toolbar"
+    class="flex items-center justify-between px-3 py-1.5 bg-neutral-800 border-b border-neutral-700 flex-shrink-0"
+    style="-webkit-app-region: drag"
+  >
+    <span class="text-xs font-semibold text-neutral-500 tracking-wide">MoreInfo</span>
+
+    <div class="flex items-center gap-1.5" style="-webkit-app-region: no-drag">
+
+      <!-- File actions -->
+      <button
+        id="btn-open"
+        title="Open  Ctrl+O"
+        class="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 border border-neutral-600 transition-colors"
+      >
+        <i class="ph ph-folder-open text-sm leading-none"></i>
+        Open
+      </button>
+
+      <button
+        id="btn-save"
+        title="Save  Ctrl+S"
+        class="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 border border-neutral-600 transition-colors"
+      >
+        <i class="ph ph-floppy-disk text-sm leading-none"></i>
+        Save
+      </button>
+
+      <button
+        id="btn-save-as"
+        title="Save As  Ctrl+Shift+S"
+        class="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 border border-neutral-600 transition-colors"
+      >
+        <i class="ph ph-floppy-disk-back text-sm leading-none"></i>
+        Save As
+      </button>
+
+      <div class="w-px h-4 bg-neutral-700 mx-1"></div>
+
+      <!-- View mode toggle -->
+      <div class="flex rounded border border-neutral-700 overflow-hidden text-xs">
+        <button
+          data-mode="edit"
+          title="Edit only"
+          class="flex items-center gap-1.5 px-2.5 py-1 text-neutral-400 hover:bg-neutral-700 transition-colors data-[active]:bg-sky-600 data-[active]:text-white"
+        >
+          <i class="ph ph-pencil-simple text-sm leading-none"></i>
+          Edit
+        </button>
+        <button
+          data-mode="render"
+          title="Editor + Markdown preview"
+          class="flex items-center gap-1.5 px-2.5 py-1 text-neutral-400 border-l border-neutral-700 hover:bg-neutral-700 transition-colors data-[active]:bg-sky-600 data-[active]:text-white"
+        >
+          <i class="ph ph-eye text-sm leading-none"></i>
+          Render
+        </button>
+      </div>
+
+    </div>
+  </header>
+
+  <!-- ── Content row (editor + sidebar) ───────────────── -->
+  <div class="flex flex-1 min-h-0 overflow-hidden">
+
+  <!-- ── Editor area ───────────────────────────────────── -->
+  <main
+    id="editor-area"
+    data-mode="edit"
+    class="flex flex-col flex-1 min-h-0 overflow-hidden"
+  >
+    <!-- Editor (top, fills remaining height) -->
+    <div id="editor-pane" class="flex-1 min-h-0 overflow-hidden">
+      <textarea
+        id="editor"
+        class="w-full h-full resize-none bg-neutral-900 text-neutral-300 font-mono text-sm leading-relaxed p-6 outline-none border-none select-text"
+        placeholder="Start writing Markdown…"
+        spellcheck="false"
+        autocomplete="off"
+        autocorrect="off"
+      ></textarea>
+    </div>
+
+    <!-- Vertical resize handle (render mode only) -->
+    <div
+      id="v-divider"
+      class="flex-shrink-0 w-[5px] bg-neutral-800 border-l border-r border-neutral-700/60 cursor-col-resize group hover:bg-sky-950 transition-colors"
+      title="Drag to resize"
+    >
+      <div class="flex flex-col items-center justify-center h-full gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+        <span class="block w-1 h-1 rounded-full bg-neutral-500"></span>
+        <span class="block w-1 h-1 rounded-full bg-neutral-500"></span>
+        <span class="block w-1 h-1 rounded-full bg-neutral-500"></span>
+      </div>
+    </div>
+
+    <!-- Markdown preview pane (render mode only) -->
+    <div id="markdown-pane" class="overflow-auto bg-neutral-900">
+      <div id="markdown-content" class="prose prose-invert prose-sm max-w-none p-6 select-text"></div>
+    </div>
+
+  </main>
+
+  <!-- ── Sidebar ───────────────────────────────────────── -->
+  <aside
+    id="sidebar"
+    class="w-52 flex-shrink-0 border-l border-neutral-700 overflow-y-auto flex flex-col"
+    style="background:#1a1a1a"
+  >
+    <div id="calendar-widget"></div>
+
+    <!-- Front Matter widget -->
+    <div id="frontmatter-widget" class="flex flex-col border-t border-neutral-700 flex-1 min-h-0">
+      <div class="flex items-center justify-between px-3 py-1.5 border-b border-neutral-700 flex-shrink-0" style="background:#1c1c1c">
+        <span class="flex items-center gap-1.5 text-xs font-semibold text-neutral-500 tracking-wide uppercase">
+          <i class="ph ph-list-dashes text-sm leading-none"></i>
+          Front Matter
+        </span>
+        <span id="metadata-count" class="text-xs text-neutral-600 tabular-nums"></span>
+      </div>
+      <div id="metadata-list" class="flex-1 overflow-y-auto select-text"></div>
+    </div>
+  </aside>
+
+  </div><!-- end content row -->
+
+  <!-- ── Status bar ────────────────────────────────────── -->
+  <footer
+    id="status-bar"
+    class="flex items-center gap-2 px-3 py-0.5 bg-sky-700 text-white text-xs flex-shrink-0"
+  >
+    <i class="ph ph-file-text text-sm leading-none"></i>
+    <span id="file-name">Untitled</span>
+    <span id="modified-indicator" class="text-yellow-300 text-sm leading-none"></span>
+    <span id="cursor-info" class="ml-auto tabular-nums"></span>
+  </footer>
+
+  <script src="src/main.js"></script>
+</body>
+</html>

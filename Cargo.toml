@@ -1,0 +1,12 @@
+[workspace]
+members = [
+    "src-tauri",
+    "crates/front-matter",
+]
+resolver = "2"
+
+# Keep debug info in separate dSYM files on macOS to avoid the Homebrew-Rust
+# LLVM 32-bit archive overflow when building large Tauri debug binaries on
+# Apple Silicon.
+[profile.dev]
+split-debuginfo = "unpacked"

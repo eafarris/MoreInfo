@@ -1,0 +1,10 @@
+[env]
+# Use Homebrew's SQLite so rusqlite doesn't need to compile SQLite from source.
+# "bundled" feature is intentionally NOT used — macOS provides SQLite natively.
+SQLITE3_LIB_DIR     = "/opt/homebrew/opt/sqlite/lib"
+SQLITE3_INCLUDE_DIR = "/opt/homebrew/opt/sqlite/include"
+
+[profile.dev]
+# Incremental compilation has been causing corrupted cache states that force
+# rustc to do exponential amounts of work on each invocation. Disabled.
+incremental = false

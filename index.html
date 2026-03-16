@@ -5,23 +5,11 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MoreInfo</title>
 
-  <!-- Tailwind Play CDN + typography plugin -->
-  <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+  <!-- Compiled Tailwind CSS (run: npm run css:watch during dev) -->
+  <link rel="stylesheet" href="src/style.css" />
 
   <!-- Phosphor Icons (regular weight) -->
   <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css" />
-
-  <script>
-    tailwind.config = {
-      theme: {
-        extend: {
-          fontFamily: {
-            mono: ['"JetBrains Mono"', '"Cascadia Code"', '"Fira Code"', 'Menlo', 'ui-monospace', 'monospace'],
-          },
-        },
-      },
-    }
-  </script>
 
   <style>
     /* Scrollbars */
@@ -30,163 +18,353 @@
     ::-webkit-scrollbar-thumb      { background: #3f3f46; border-radius: 3px; }
     ::-webkit-scrollbar-thumb:hover{ background: #52525b; }
 
-    /* Render mode: side-by-side */
+    /* Render mode: side-by-side editor + preview */
     [data-mode="render"] #h-divider,
     [data-mode="render"] #preview-pane { display: none; }
     #editor-area[data-mode="render"]   { flex-direction: row; }
 
-    /* V-divider and markdown pane hidden outside render mode */
     #v-divider,
     #markdown-pane { display: none; }
-    [data-mode="render"] #v-divider      { display: flex; }
-    [data-mode="render"] #markdown-pane  { display: flex; flex: 1; min-width: 0; flex-direction: column; }
+    [data-mode="render"] #v-divider     { display: flex; }
+    [data-mode="render"] #markdown-pane { display: flex; flex: 1; min-width: 0; flex-direction: column; }
 
-    /* Textarea extras */
+    /* Textarea */
     #editor { tab-size: 2; caret-color: #38bdf8; }
     #editor::placeholder { color: #3f3f46; }
+
+    /* ── Sidebar layout ───────────────────────────────────────
+       VS Code model:
+         content-row (flex-row)
+           left-sidebar   (full height flex child)
+           center-column  (flex-col, flex-1)
+             top-sidebar
+             editor-area
+             bottom-sidebar
+           right-sidebar  (full height flex child)
+       This means T/B sidebars only span the center column width,
+       never overlapping the L/R sidebars.
+    ─────────────────────────────────────────────────────────── */
+
+    /* Give every sidebar position:relative so its absolute resize
+       handle is contained within it (even when flyout makes it
+       position:absolute — that still creates a containing block). */
+    #left-sidebar, #right-sidebar, #top-sidebar, #bottom-sidebar {
+      position: relative;
+    }
+
+    /* hidden: removed from layout */
+    #left-sidebar[data-sb-state="hidden"],
+    #right-sidebar[data-sb-state="hidden"],
+    #top-sidebar[data-sb-state="hidden"],
+    #bottom-sidebar[data-sb-state="hidden"] { display: none; }
+
+    /* flyout: overlays the center column; does not affect layout.
+       L/R are contained by #content-row (position:relative).
+       T/B are contained by #center-column (position:relative).
+       Background opacity + backdrop-blur are applied via Tailwind
+       data-attribute variants on the element itself, so the blur
+       is geometrically scoped to only the content behind that sidebar. */
+    #left-sidebar[data-sb-state="flyout"] {
+      position: absolute; left: 0; top: 0; bottom: 0; z-index: 20;
+      box-shadow: 4px 0 24px rgba(0,0,0,0.65);
+    }
+    #right-sidebar[data-sb-state="flyout"] {
+      position: absolute; right: 0; top: 0; bottom: 0; z-index: 20;
+      box-shadow: -4px 0 24px rgba(0,0,0,0.65);
+    }
+    #top-sidebar[data-sb-state="flyout"] {
+      position: absolute; top: 0; left: 0; right: 0; z-index: 20;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.65);
+    }
+    #bottom-sidebar[data-sb-state="flyout"] {
+      position: absolute; bottom: 0; left: 0; right: 0; z-index: 20;
+      box-shadow: 0 -4px 24px rgba(0,0,0,0.65);
+    }
+
+    /* ── Flyout entrance animations ──────────────────────────── */
+
+    @keyframes sb-in-left   { from { transform:translateX(-14px); opacity:0; } to { transform:none; opacity:1; } }
+    @keyframes sb-in-right  { from { transform:translateX(14px);  opacity:0; } to { transform:none; opacity:1; } }
+    @keyframes sb-in-top    { from { transform:translateY(-14px); opacity:0; } to { transform:none; opacity:1; } }
+    @keyframes sb-in-bottom { from { transform:translateY(14px);  opacity:0; } to { transform:none; opacity:1; } }
+    @keyframes sb-fade-in   { from { opacity:0; }                              to { opacity:1; }                }
+
+    #left-sidebar[data-sb-state="flyout"]   { animation: sb-in-left   160ms cubic-bezier(.2,0,.2,1); }
+    #right-sidebar[data-sb-state="flyout"]  { animation: sb-in-right  160ms cubic-bezier(.2,0,.2,1); }
+    #top-sidebar[data-sb-state="flyout"]    { animation: sb-in-top    160ms cubic-bezier(.2,0,.2,1); }
+    #bottom-sidebar[data-sb-state="flyout"] { animation: sb-in-bottom 160ms cubic-bezier(.2,0,.2,1); }
+
+    /* Pinned: fade in when sidebar is newly shown */
+    #left-sidebar[data-sb-state="pinned"],
+    #right-sidebar[data-sb-state="pinned"],
+    #top-sidebar[data-sb-state="pinned"],
+    #bottom-sidebar[data-sb-state="pinned"]  { animation: sb-fade-in 120ms ease; }
+
+    /* ── Resize handles ───────────────────────────────────────── */
+
+    .sb-resize {
+      position: absolute; z-index: 5;
+      background: transparent;
+      transition: background 150ms;
+    }
+    .sb-resize:hover { background: rgba(14,165,233,0.15); }
+
+    [data-sb-resize="left"]   { right:  0; top: 0; bottom: 0; width:  5px; cursor: ew-resize; }
+    [data-sb-resize="right"]  { left:   0; top: 0; bottom: 0; width:  5px; cursor: ew-resize; }
+    [data-sb-resize="top"]    { bottom: 0; left: 0; right:  0; height: 5px; cursor: ns-resize; }
+    [data-sb-resize="bottom"] { top:    0; left: 0; right:  0; height: 5px; cursor: ns-resize; }
+
+    .sb-resize-dots {
+      display: flex; align-items: center; justify-content: center;
+      width: 100%; height: 100%; gap: 3px;
+      opacity: 0; transition: opacity 150ms;
+    }
+    [data-sb-resize="left"]  .sb-resize-dots,
+    [data-sb-resize="right"] .sb-resize-dots  { flex-direction: column; }
+    [data-sb-resize="top"]   .sb-resize-dots,
+    [data-sb-resize="bottom"].sb-resize-dots  { flex-direction: row; }
+    .sb-resize:hover .sb-resize-dots { opacity: 1; }
+    .sb-resize-dots span {
+      display: block; width: 3px; height: 3px;
+      border-radius: 50%; background: #71717a;
+    }
+
+    /* ── Action button icons ────────────────────────────────── */
+
+    /* CSS-driven: correct icon appears based on current state */
+    .sb-icon-pin, .sb-icon-close { display: none; }
+    [data-sb-state="flyout"] .sb-icon-pin   { display: inline; }
+    [data-sb-state="pinned"] .sb-icon-close { display: inline; }
+
+    /* ── Collapsed edge tabs ──────────────────────────────────
+       Thin strips at each edge shown when the sidebar is hidden.
+       L/R tabs live inside #content-row; T/B inside #center-column.
+    ─────────────────────────────────────────────────────────── */
+
+    .sb-collapsed {
+      position: absolute; z-index: 10;
+      display: none;
+      align-items: center; justify-content: center;
+      cursor: pointer;
+      transition: background 120ms;
+    }
+    .sb-collapsed.sb-visible { display: flex; }
+
+    #collapsed-left   { left:   0; top:    0; bottom: 0; width:  14px; background:#1a1a1a; border-right:  1px solid #3f3f46; }
+    #collapsed-right  { right:  0; top:    0; bottom: 0; width:  14px; background:#1a1a1a; border-left:   1px solid #3f3f46; }
+    #collapsed-top    { top:    0; left:   0; right:  0; height: 14px; background:#1a1a1a; border-bottom: 1px solid #3f3f46; }
+    #collapsed-bottom { bottom: 0; left:   0; right:  0; height: 14px; background:#1a1a1a; border-top:    1px solid #3f3f46; }
+
+    .sb-collapsed:hover           { background: #232323 !important; }
+    .sb-collapsed:hover .sb-caret { color: #a1a1aa; }
+    .sb-caret { color: #52525b; font-size: 9px; line-height: 1; }
+
   </style>
 </head>
 
 <body class="bg-neutral-900 text-neutral-300 h-screen flex flex-col overflow-hidden select-none">
 
-  <!-- ── Toolbar ──────────────────────────────────────── -->
+  <!-- ── Toolbar ──────────────────────────────────────────────── -->
   <header
     id="toolbar"
-    class="flex items-center justify-between px-3 py-1.5 bg-neutral-800 border-b border-neutral-700 flex-shrink-0"
+    class="flex items-center justify-between px-3 py-1.5 bg-neutral-800 border-b border-neutral-700 shrink-0"
     style="-webkit-app-region: drag"
   >
-    <span class="text-xs font-semibold text-neutral-500 tracking-wide">MoreInfo</span>
+    <div class="flex items-center gap-1" style="-webkit-app-region: no-drag">
+      <button id="btn-toggle-left" title="Toggle left sidebar" data-active
+        class="flex items-center justify-center w-6 h-6 rounded text-neutral-400 hover:bg-neutral-700 hover:text-white transition-colors data-active:text-neutral-200">
+        <i class="ph ph-sidebar-simple text-base leading-none"></i>
+      </button>
+      <button id="btn-toggle-top" title="Toggle top panel"
+        class="flex items-center justify-center w-6 h-6 rounded text-neutral-400 hover:bg-neutral-700 hover:text-white transition-colors data-active:text-neutral-200">
+        <i class="ph ph-sidebar-simple text-base leading-none" style="transform:rotate(-90deg)"></i>
+      </button>
+      <button id="btn-toggle-bottom" title="Toggle bottom panel"
+        class="flex items-center justify-center w-6 h-6 rounded text-neutral-400 hover:bg-neutral-700 hover:text-white transition-colors data-active:text-neutral-200">
+        <i class="ph ph-sidebar-simple text-base leading-none" style="transform:rotate(90deg)"></i>
+      </button>
+      <span class="text-xs font-semibold text-neutral-500 tracking-wide ml-1" style="-webkit-app-region: drag">MoreInfo</span>
+    </div>
 
     <div class="flex items-center gap-1.5" style="-webkit-app-region: no-drag">
-
-      <!-- File actions -->
-      <button
-        id="btn-open"
-        title="Open  Ctrl+O"
-        class="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 border border-neutral-600 transition-colors"
-      >
-        <i class="ph ph-folder-open text-sm leading-none"></i>
-        Open
-      </button>
-
-      <button
-        id="btn-save"
-        title="Save  Ctrl+S"
-        class="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 border border-neutral-600 transition-colors"
-      >
-        <i class="ph ph-floppy-disk text-sm leading-none"></i>
-        Save
-      </button>
-
-      <button
-        id="btn-save-as"
-        title="Save As  Ctrl+Shift+S"
-        class="flex items-center gap-1.5 px-2.5 py-1 text-xs rounded bg-neutral-700 hover:bg-neutral-600 border border-neutral-600 transition-colors"
-      >
-        <i class="ph ph-floppy-disk-back text-sm leading-none"></i>
-        Save As
-      </button>
+      <div class="flex rounded border border-neutral-700 overflow-hidden text-xs">
+        <button data-mode="edit" title="Edit only"
+          class="flex items-center gap-1.5 px-2.5 py-1 text-neutral-400 hover:bg-neutral-700 transition-colors data-active:bg-sky-600 data-active:text-white">
+          <i class="ph ph-pencil-simple text-sm leading-none"></i>Edit
+        </button>
+        <button data-mode="render" title="Editor + Markdown preview"
+          class="flex items-center gap-1.5 px-2.5 py-1 text-neutral-400 border-l border-neutral-700 hover:bg-neutral-700 transition-colors data-active:bg-sky-600 data-active:text-white">
+          <i class="ph ph-eye text-sm leading-none"></i>Render
+        </button>
+      </div>
 
       <div class="w-px h-4 bg-neutral-700 mx-1"></div>
 
-      <!-- View mode toggle -->
-      <div class="flex rounded border border-neutral-700 overflow-hidden text-xs">
-        <button
-          data-mode="edit"
-          title="Edit only"
-          class="flex items-center gap-1.5 px-2.5 py-1 text-neutral-400 hover:bg-neutral-700 transition-colors data-[active]:bg-sky-600 data-[active]:text-white"
-        >
-          <i class="ph ph-pencil-simple text-sm leading-none"></i>
-          Edit
-        </button>
-        <button
-          data-mode="render"
-          title="Editor + Markdown preview"
-          class="flex items-center gap-1.5 px-2.5 py-1 text-neutral-400 border-l border-neutral-700 hover:bg-neutral-700 transition-colors data-[active]:bg-sky-600 data-[active]:text-white"
-        >
-          <i class="ph ph-eye text-sm leading-none"></i>
-          Render
-        </button>
-      </div>
-
+      <button id="btn-toggle-right" title="Toggle right sidebar" data-active
+        class="flex items-center justify-center w-6 h-6 rounded text-neutral-400 hover:bg-neutral-700 hover:text-white transition-colors data-active:text-neutral-200">
+        <i class="ph ph-sidebar-simple text-base leading-none" style="transform:scaleX(-1)"></i>
+      </button>
     </div>
   </header>
 
-  <!-- ── Content row (editor + sidebar) ───────────────── -->
-  <div class="flex flex-1 min-h-0 overflow-hidden">
+  <!-- ── Breadcrumb bar ───────────────────────────────────────────── -->
+  <nav id="breadcrumbs" class="flex items-center gap-0.5 px-3 text-xs text-neutral-500 bg-neutral-850 border-b border-neutral-700/60 overflow-x-auto whitespace-nowrap shrink-0" style="display:none; min-height:1.75rem"></nav>
 
-  <!-- ── Editor area ───────────────────────────────────── -->
-  <main
-    id="editor-area"
-    data-mode="edit"
-    class="flex flex-col flex-1 min-h-0 overflow-hidden"
-  >
-    <!-- Editor (top, fills remaining height) -->
-    <div id="editor-pane" class="flex-1 min-h-0 overflow-hidden">
-      <textarea
-        id="editor"
-        class="w-full h-full resize-none bg-neutral-900 text-neutral-300 font-mono text-sm leading-relaxed p-6 outline-none border-none select-text"
-        placeholder="Start writing Markdown…"
-        spellcheck="false"
-        autocomplete="off"
-        autocorrect="off"
-      ></textarea>
-    </div>
+  <!-- ── Content row ──────────────────────────────────────────────
+       flex-row: left-sidebar | center-column | right-sidebar
+       position:relative so L/R flyouts are contained here.
+  ──────────────────────────────────────────────────────────────── -->
+  <div id="content-row" class="flex flex-1 min-h-0 overflow-hidden relative">
 
-    <!-- Vertical resize handle (render mode only) -->
-    <div
-      id="v-divider"
-      class="flex-shrink-0 w-[5px] bg-neutral-800 border-l border-r border-neutral-700/60 cursor-col-resize group hover:bg-sky-950 transition-colors"
-      title="Drag to resize"
-    >
-      <div class="flex flex-col items-center justify-center h-full gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-        <span class="block w-1 h-1 rounded-full bg-neutral-500"></span>
-        <span class="block w-1 h-1 rounded-full bg-neutral-500"></span>
-        <span class="block w-1 h-1 rounded-full bg-neutral-500"></span>
+    <!-- Collapsed edge tabs for L/R (anchored to content-row) -->
+    <div id="collapsed-left"  class="sb-collapsed"><i class="ph ph-caret-right sb-caret"></i></div>
+    <div id="collapsed-right" class="sb-collapsed"><i class="ph ph-caret-left  sb-caret"></i></div>
+
+    <!-- ── Left sidebar (full height) ───────────────────────── -->
+    <aside id="left-sidebar" data-sb-state="pinned"
+      class="shrink-0 border-r border-neutral-700 flex flex-col bg-neutral-900 data-[sb-state=flyout]:bg-neutral-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
+      style="width:208px">
+
+      <!-- Right resize handle -->
+      <div class="sb-resize" data-sb-resize="left">
+        <div class="sb-resize-dots"><span></span><span></span><span></span></div>
       </div>
-    </div>
-
-    <!-- Markdown preview pane (render mode only) -->
-    <div id="markdown-pane" class="overflow-auto bg-neutral-900">
-      <div id="markdown-content" class="prose prose-invert prose-sm max-w-none p-6 select-text"></div>
-    </div>
-
-  </main>
-
-  <!-- ── Sidebar ───────────────────────────────────────── -->
-  <aside
-    id="sidebar"
-    class="w-52 flex-shrink-0 border-l border-neutral-700 overflow-y-auto flex flex-col"
-    style="background:#1a1a1a"
-  >
-    <div id="calendar-widget"></div>
-
-    <!-- Front Matter widget -->
-    <div id="frontmatter-widget" class="flex flex-col border-t border-neutral-700 flex-1 min-h-0">
-      <div class="flex items-center justify-between px-3 py-1.5 border-b border-neutral-700 flex-shrink-0" style="background:#1c1c1c">
-        <span class="flex items-center gap-1.5 text-xs font-semibold text-neutral-500 tracking-wide uppercase">
-          <i class="ph ph-list-dashes text-sm leading-none"></i>
-          Front Matter
-        </span>
-        <span id="metadata-count" class="text-xs text-neutral-600 tabular-nums"></span>
+      <!-- Header: label + action button -->
+      <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-neutral-700/60" style="background:#1c1c1c">
+        <span class="text-xs font-semibold text-neutral-600 tracking-wider uppercase">Left Sidebar</span>
+        <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-neutral-600 hover:text-neutral-300 hover:bg-neutral-700 transition-colors">
+          <i class="sb-icon-pin ph ph-push-pin text-xs leading-none"></i>
+          <i class="sb-icon-close ph ph-x text-xs leading-none"></i>
+        </button>
       </div>
-      <div id="metadata-list" class="flex-1 overflow-y-auto select-text"></div>
-    </div>
-  </aside>
+      <!-- Widget stack -->
+      <div class="widget-stack flex-1 min-h-0 flex flex-col" data-widgets="left"></div>
+    </aside>
 
-  </div><!-- end content row -->
+    <!-- ── Center column ─────────────────────────────────────────
+         flex-col: top-sidebar | editor-area | bottom-sidebar
+         position:relative so T/B flyouts are contained here.
+    ──────────────────────────────────────────────────────────── -->
+    <div id="center-column" class="flex flex-col flex-1 min-h-0 overflow-hidden relative">
 
-  <!-- ── Status bar ────────────────────────────────────── -->
-  <footer
-    id="status-bar"
-    class="flex items-center gap-2 px-3 py-0.5 bg-sky-700 text-white text-xs flex-shrink-0"
-  >
+      <!-- Collapsed edge tabs for T/B (anchored to center-column) -->
+      <div id="collapsed-top"    class="sb-collapsed"><i class="ph ph-caret-down sb-caret"></i></div>
+      <div id="collapsed-bottom" class="sb-collapsed"><i class="ph ph-caret-up   sb-caret"></i></div>
+
+      <!-- ── Top sidebar ────────────────────────────────────── -->
+      <div id="top-sidebar" data-sb-state="hidden"
+        class="shrink-0 border-b border-neutral-700 flex flex-col bg-neutral-900 data-[sb-state=flyout]:bg-neutral-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
+        style="height:160px">
+
+        <!-- Bottom resize handle -->
+        <div class="sb-resize" data-sb-resize="top">
+          <div class="sb-resize-dots"><span></span><span></span><span></span></div>
+        </div>
+        <!-- Header -->
+        <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-neutral-700/60" style="background:#1c1c1c">
+          <span class="text-xs font-semibold text-neutral-600 tracking-wider uppercase">Top Panel</span>
+          <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-neutral-600 hover:text-neutral-300 hover:bg-neutral-700 transition-colors">
+            <i class="sb-icon-pin ph ph-push-pin text-xs leading-none"></i>
+            <i class="sb-icon-close ph ph-x text-xs leading-none"></i>
+          </button>
+        </div>
+        <!-- Widget stack -->
+        <div class="widget-stack flex-1 min-h-0 flex flex-col" data-widgets="top"></div>
+      </div>
+
+      <!-- ── Editor area ─────────────────────────────────────── -->
+      <main id="editor-area" data-mode="edit"
+        class="flex flex-col flex-1 min-h-0 overflow-hidden">
+
+        <!-- Editor pane -->
+        <div id="editor-pane" class="flex-1 min-h-0 flex flex-col overflow-hidden">
+          <div id="doc-title" class="shrink-0 px-6 pt-5 pb-2 text-xl font-semibold text-neutral-100 leading-tight select-text border-b border-neutral-800"></div>
+          <textarea id="editor"
+            class="flex-1 min-h-0 w-full resize-none bg-neutral-900 text-neutral-300 font-mono text-sm leading-relaxed p-6 outline-none border-none select-text"
+            placeholder="Start writing Markdown…"
+            spellcheck="false" autocomplete="off" autocorrect="off"
+          ></textarea>
+        </div>
+
+        <!-- Vertical resize handle (render mode only) -->
+        <div id="v-divider"
+          class="shrink-0 w-1.25 bg-neutral-800 border-l border-r border-neutral-700/60 cursor-col-resize group hover:bg-sky-950 transition-colors"
+          title="Drag to resize">
+          <div class="flex flex-col items-center justify-center h-full gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+            <span class="block w-1 h-1 rounded-full bg-neutral-500"></span>
+            <span class="block w-1 h-1 rounded-full bg-neutral-500"></span>
+            <span class="block w-1 h-1 rounded-full bg-neutral-500"></span>
+          </div>
+        </div>
+
+        <!-- Markdown preview pane (render mode only) -->
+        <div id="markdown-pane" class="overflow-auto bg-neutral-900">
+          <div id="markdown-content" class="prose prose-invert prose-sm max-w-none p-6 select-text"></div>
+        </div>
+      </main>
+
+      <!-- ── Bottom sidebar ─────────────────────────────────── -->
+      <div id="bottom-sidebar" data-sb-state="hidden"
+        class="shrink-0 border-t border-neutral-700 flex flex-col bg-neutral-900 data-[sb-state=flyout]:bg-neutral-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
+        style="height:180px">
+
+        <!-- Top resize handle -->
+        <div class="sb-resize" data-sb-resize="bottom">
+          <div class="sb-resize-dots"><span></span><span></span><span></span></div>
+        </div>
+        <!-- Header -->
+        <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-neutral-700/60" style="background:#1c1c1c">
+          <span class="text-xs font-semibold text-neutral-600 tracking-wider uppercase">Bottom Panel</span>
+          <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-neutral-600 hover:text-neutral-300 hover:bg-neutral-700 transition-colors">
+            <i class="sb-icon-pin ph ph-push-pin text-xs leading-none"></i>
+            <i class="sb-icon-close ph ph-x text-xs leading-none"></i>
+          </button>
+        </div>
+        <!-- Widget stack -->
+        <div class="widget-stack flex-1 min-h-0 flex flex-col" data-widgets="bottom"></div>
+      </div>
+
+    </div><!-- end center-column -->
+
+    <!-- ── Right sidebar (full height) ──────────────────────── -->
+    <aside id="right-sidebar" data-sb-state="pinned"
+      class="shrink-0 border-l border-neutral-700 flex flex-col bg-neutral-900 data-[sb-state=flyout]:bg-neutral-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
+      style="width:208px">
+
+      <!-- Left resize handle -->
+      <div class="sb-resize" data-sb-resize="right">
+        <div class="sb-resize-dots"><span></span><span></span><span></span></div>
+      </div>
+      <!-- Header: label + action button -->
+      <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-neutral-700/60" style="background:#1c1c1c">
+        <span class="text-xs font-semibold text-neutral-600 tracking-wider uppercase">Right Sidebar</span>
+        <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-neutral-600 hover:text-neutral-300 hover:bg-neutral-700 transition-colors">
+          <i class="sb-icon-pin ph ph-push-pin text-xs leading-none"></i>
+          <i class="sb-icon-close ph ph-x text-xs leading-none"></i>
+        </button>
+      </div>
+      <!-- Widget stack (populated by mountWidgets in main.js) -->
+      <div class="widget-stack flex-1 min-h-0 flex flex-col" data-widgets="right"></div>
+    </aside>
+
+  </div><!-- end content-row -->
+
+  <!-- ── Status bar ──────────────────────────────────────────── -->
+  <footer id="status-bar"
+    class="flex items-center gap-2 px-3 py-0.5 bg-sky-700 text-white text-xs shrink-0">
     <i class="ph ph-file-text text-sm leading-none"></i>
     <span id="file-name">Untitled</span>
     <span id="modified-indicator" class="text-yellow-300 text-sm leading-none"></span>
-    <span id="cursor-info" class="ml-auto tabular-nums"></span>
+    <span id="index-status" class="ml-auto flex items-center gap-1 tabular-nums opacity-70"></span>
+    <span id="cursor-info" class="tabular-nums"></span>
   </footer>
 
-  <script src="src/main.js"></script>
+  <!-- Wiki-link autocomplete popup -->
+  <div id="wiki-ac" style="display:none; position:fixed; z-index:1000"
+    class="bg-neutral-800 border border-neutral-600 rounded-md shadow-xl overflow-hidden min-w-48 max-w-xs">
+    <ul id="wiki-ac-list" class="max-h-52 overflow-y-auto py-1"></ul>
+  </div>
+
+  <script type="module" src="src/main.js"></script>
 </body>
 </html>

@@ -1,0 +1,21 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+/* Custom mono font stack (replaces tailwind.config theme.extend) */
+@theme {
+  --font-family-mono: "JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, ui-monospace, monospace;
+}
+
+/* Wiki links rendered inside the markdown preview */
+.wiki-link {
+  color: theme(colors.sky.400);
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.wiki-link:hover {
+  color: theme(colors.sky.300);
+  text-decoration-style: solid;
+}
+

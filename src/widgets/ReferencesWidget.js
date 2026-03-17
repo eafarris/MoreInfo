@@ -40,7 +40,7 @@ export class ReferencesWidget extends Widget {
   get wrapperClass() { return 'flex flex-col flex-1 min-h-0'; }
 
   get headerAction() {
-    return `<span class="widget-ref-count text-xs text-neutral-600 tabular-nums"></span>`;
+    return `<span class="widget-ref-count text-xs text-olive-600 tabular-nums"></span>`;
   }
 
   onMount() {
@@ -92,12 +92,12 @@ export class ReferencesWidget extends Widget {
     const items = entries.map(e => {
       const title = e.source_title || basename(e.source_path).replace(/\.[^.]+$/, '');
       const ctx   = e.context
-        ? `<p class="mt-0.5 ml-3.5 text-xs text-neutral-500 italic leading-snug">${esc(e.context)}</p>`
+        ? `<p class="mt-0.5 ml-3.5 text-xs text-olive-500 italic leading-snug">${esc(e.context)}</p>`
         : '';
       return `
-        <div class="px-3 py-2 border-b border-neutral-800/60 last:border-0">
-          <a class="text-sky-400 text-xs underline decoration-dotted underline-offset-2
-                    hover:text-sky-300 hover:decoration-solid cursor-pointer"
+        <div class="px-3 py-2 border-b border-olive-800/60 last:border-0">
+          <a class="text-amber-400 text-xs underline decoration-dotted underline-offset-2
+                    hover:text-amber-300 hover:decoration-solid cursor-pointer"
              data-path="${esc(e.source_path)}">${esc(title)}</a>
           ${ctx}
         </div>`;
@@ -110,7 +110,7 @@ export class ReferencesWidget extends Widget {
     if (!this._body) return;
     if (this._countEl) this._countEl.textContent = '';
     this._body.innerHTML = `
-      <div class="flex items-center gap-2 h-full px-4 text-neutral-700">
+      <div class="flex items-center gap-2 h-full px-4 text-olive-700">
         <i class="ph ph-arrows-in text-lg leading-none shrink-0"></i>
         <p class="text-xs">No linked references to this page.</p>
       </div>`;

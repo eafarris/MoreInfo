@@ -28,7 +28,7 @@ Template
 : A special type of page that exists within the 'templates' folder of the datastore. Template pages can be used to quickly create other pages via "File->New from template" in the menu system. A page can be saved as a template via "File->Save as template" in the menu system. Templates retain their metadata variables, but not the values. Other content within the template page is retained when creating a page based on the template.
 
 Category
-: While "Wiki" is a catch-all term for generic pages, users may find that more structure is beneficial to them. Users may create one or more "categories" for pages. A page "category" will exist on the filesystem in its own top-level directory (like "wiki," "journal," and "template" with a pluralized name. Categories can (and probably will) be based on a specific template. For example, my own personal use would have a "Person" category. These pages would be based on a 'person' template, and the "Person" markdown files would exist in a "~/.moreinfo/people" folder, 'people' being the pluralized version of 'person'. I could also see myself having a "Room" category, based on a "room" template, and the files living in the datastore in a "rooms" folder. Other categories users may utilize would be "Recipe," "Album," "Artist," etc. Note that categories are a completely optional feature. If the user cares less about the filesystem organization, all data pages that make up the user's Personal Knowledge Base could be in the 'wiki' folder. 
+: While "Wiki" is a catch-all term for generic pages, users may find that more structure is beneficial to them. Users may create one or more "categories" for pages. A page "category" will exist on the filesystem in its own top-level directory (like "wiki," "journal," and "template" with a pluralized name. Categories can (and probably will) be based on a specific template. For example, my own personal use would have a "Person" category. These pages would be based on a 'person' template, and the "Person" markdown files would exist in a "~/.moreinfo/people" folder, 'people' being the pluralized version of 'person'. I could also see myself having a "Room" category, based on a "room" template, and the files living in the datastore in a "rooms" folder. Other categories users may utilize would be "Meeting," "Recipe," "Album," "Artist," etc. Note that categories are a completely optional feature. If the user cares less about the filesystem organization, all data pages that make up the user's Personal Knowledge Base could be in the 'wiki' folder. 
 
 Metadata
 : A series of key/value pairs that describe the document in a structured way. Some metadata variables are based on filesystem data by default and can be read-only. Most variables can be set within a YAML-like front-matter structure. The variable name and its value are delimited by zero or more spaces, followed by a colon ("`:`"), followed by zero or more spaces (regex `\s+:\s+`). The structure itself is delimited by triple-dashes ("`---`") alone on a line, followed by the variable assignments, followed by another line of only triple dashes. In typical YAML front-matter, this section must be at the beginning of the file; for MI pages this structure could be anywhere, including multiple places. A final structure for defining metadata comes at the end of a file, using the "email .sig" delimiter of double dashes followed by a space ("`-- `") alone on a line, then continuing to the end of the file. Any variable that is defined more than once will use its last definition, from top to bottom through the file. Variable names are _case-insensitive_, and stored in the db cache as such. Values are _case sensitive_, though reserved metadata variables can change this behavior (eg., "tags" are _case insensitive_).
@@ -100,6 +100,9 @@ Tags
 Aliases
 : An array of aliases for this page. Can _only_ be set within metadata; there is no default. Aliases are treated the same as page titles when linking; they can be defined as linked references, or found as unlinked references. Aliases are treated as surrounded by whitespace (regex `\s+alias\s+`. That is, a page with an alias of "eric" will hit on the string "Eric said this" but not on the string "The future of America."  The reserved "aliases" variable name has special behavior in that the array values are treated and stored as _case insensitive_, ie., there is no difference between the aliases "Eric" and "eric".
 
+Alias
+: Same as "aliases," but holds only one string instead of an array.
+
 Category
 : Used as an 'uber-tag' for a page, a "category" corresponds to the type of data represented by this page. While pages can have an arbitrary number of 'tags,' a page can have up to one category. Setting a category for a page automatically moves it in the filesystem to a top-level folder in the datastore named after the category. 
 
@@ -143,17 +146,17 @@ Search
 - [X] Resizable sidebars
 - [ ] Full-text search
 - [X] SQLite database as cache for linked references
-- [ ] SQLite database as cache for full-text search
+- [X] SQLite database as cache for full-text search
 - [ ] SQLite database as cache for unlinked references
 - [ ] SQLite database as cache for exposed tasks
-- [ ] Filesystem watcher to keep DB up to date and autosave
+- [X] Filesystem watcher to keep DB up to date and autosave
 - [X] Basic widget API
 - [ ] Counter widget
 - [ ] Outline widget
 - [ ] Page widget
 - [ ] Browser widget
 - [ ] Search widget
-- [X    ] Wiki links
+- [X] Wiki links
 - [ ] Page aliases
 - [ ] Page templates
 - [ ] Basic tasks

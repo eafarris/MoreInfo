@@ -81,7 +81,7 @@ export class CalendarWidget extends Widget {
 
     for (let i = firstDow - 1; i >= 0; i--) {
       cells += `<span class="flex flex-col items-center py-0.5">
-        <span class="w-6 h-6 flex items-center justify-center mx-auto text-neutral-600">${daysInPrev - i}</span>
+        <span class="w-6 h-6 flex items-center justify-center mx-auto text-olive-600">${daysInPrev - i}</span>
         <span class="block w-1 h-1 mx-auto mt-px invisible"></span>
       </span>`;
     }
@@ -94,11 +94,11 @@ export class CalendarWidget extends Widget {
 
       // Active page → bright blue fill; today only → subdued ring; neither → plain
       const numClass = isActive
-        ? 'bg-sky-500 text-white font-semibold group-hover:bg-sky-400'
+        ? 'bg-amber-500 text-white font-semibold group-hover:bg-amber-400'
         : isToday
-          ? 'bg-neutral-700 text-neutral-100 font-medium group-hover:bg-neutral-600'
-          : 'text-neutral-300 group-hover:bg-neutral-700 group-hover:text-white';
-      const dotClass = hasJournal ? (isActive ? 'bg-sky-300' : 'bg-sky-500') : 'invisible';
+          ? 'bg-olive-700 text-olive-100 font-medium group-hover:bg-olive-600'
+          : 'text-olive-300 group-hover:bg-olive-700 group-hover:text-white';
+      const dotClass = hasJournal ? (isActive ? 'bg-amber-300' : 'bg-amber-500') : 'invisible';
 
       cells += `<button data-date="${dateStr}" class="group flex flex-col items-center py-0.5">
         <span class="w-6 h-6 rounded-full flex items-center justify-center mx-auto transition-colors ${numClass}">${d}</span>
@@ -110,22 +110,22 @@ export class CalendarWidget extends Widget {
     const trailing = total % 7 === 0 ? 0 : 7 - (total % 7);
     for (let d = 1; d <= trailing; d++) {
       cells += `<span class="flex flex-col items-center py-0.5">
-        <span class="w-6 h-6 flex items-center justify-center mx-auto text-neutral-600">${d}</span>
+        <span class="w-6 h-6 flex items-center justify-center mx-auto text-olive-600">${d}</span>
         <span class="block w-1 h-1 mx-auto mt-px invisible"></span>
       </span>`;
     }
 
     const dayHeaders = DAYS.map(d =>
-      `<span class="text-neutral-500 text-xs font-semibold">${d}</span>`
+      `<span class="text-olive-500 text-xs font-semibold">${d}</span>`
     ).join('');
 
     return `
       <div class="flex items-center justify-between px-3 py-2">
-        <button class="cal-prev text-neutral-400 hover:text-white px-1">&#8249;</button>
-        <button class="cal-title text-xs font-semibold text-neutral-200 hover:text-sky-400 transition-colors">
+        <button class="cal-prev text-olive-400 hover:text-white px-1">&#8249;</button>
+        <button class="cal-title text-xs font-semibold text-olive-200 hover:text-amber-400 transition-colors">
           ${MONTHS[month]} ${year}
         </button>
-        <button class="cal-next text-neutral-400 hover:text-white px-1">&#8250;</button>
+        <button class="cal-next text-olive-400 hover:text-white px-1">&#8250;</button>
       </div>
       <div class="grid grid-cols-7 gap-y-1 px-2 pb-3 text-center text-xs">
         ${dayHeaders}
@@ -137,23 +137,23 @@ export class CalendarWidget extends Widget {
     const { pickerYear } = this._cal;
     const monthBtns = MONTHS.map((m, i) =>
       `<button data-pick-month="${i}"
-        class="text-xs py-1 rounded hover:bg-neutral-700 text-neutral-300 hover:text-white transition-colors">
+        class="text-xs py-1 rounded hover:bg-olive-700 text-olive-300 hover:text-white transition-colors">
         ${m.slice(0, 3)}
       </button>`
     ).join('');
 
     return `
       <div class="flex items-center justify-between px-3 py-2">
-        <button class="cal-picker-prev text-neutral-400 hover:text-white px-1">&#8249;</button>
-        <span class="text-xs font-semibold text-neutral-200">${pickerYear}</span>
-        <button class="cal-picker-next text-neutral-400 hover:text-white px-1">&#8250;</button>
+        <button class="cal-picker-prev text-olive-400 hover:text-white px-1">&#8249;</button>
+        <span class="text-xs font-semibold text-olive-200">${pickerYear}</span>
+        <button class="cal-picker-next text-olive-400 hover:text-white px-1">&#8250;</button>
       </div>
       <div class="grid grid-cols-3 gap-1 px-2 pb-3">
         ${monthBtns}
       </div>
       <div class="px-2 pb-2 flex gap-1.5">
-        <button class="cal-picker-today flex-1 text-xs py-1 rounded bg-sky-700 hover:bg-sky-600 text-white transition-colors">Today</button>
-        <button class="cal-picker-cancel flex-1 text-xs py-1 rounded bg-neutral-800 hover:bg-neutral-700 text-neutral-400 hover:text-white transition-colors">Cancel</button>
+        <button class="cal-picker-today flex-1 text-xs py-1 rounded bg-amber-700 hover:bg-amber-600 text-white transition-colors">Today</button>
+        <button class="cal-picker-cancel flex-1 text-xs py-1 rounded bg-olive-800 hover:bg-olive-700 text-olive-400 hover:text-white transition-colors">Cancel</button>
       </div>`;
   }
 

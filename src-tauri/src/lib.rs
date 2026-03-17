@@ -228,6 +228,37 @@ fn extract_page_title(content: &str, path: &str) -> String {
         .replace('-', " ")
 }
 
+/// Extract inline hashtags from body text: `#word` preceded by whitespace or
+/// start-of-text, with the character after `#` being a letter (not a digit or
+/// space — this excludes `# Heading` Markdown headings and `#123` ordinals).
+/// Returns lowercase, deduplicated tags in sorted order.
+fn extract_hashtags(body: &str) -> Vec<String> {
+    let mut tags = std::collections::BTreeSet::new();
+    let chars: Vec<char> = body.chars().collect();
+    let len = chars.len();
+    let mut i = 0;
+
+    while i < len {
+        if chars[i] == '#' {
+            let preceded_by_ws = i == 0 || chars[i - 1].is_whitespace();
+            let next_is_alpha  = i + 1 < len && chars[i + 1].is_alphabetic();
+            if preceded_by_ws && next_is_alpha {
+                let mut j = i + 1;
+                while j < len && (chars[j].is_alphanumeric() || chars[j] == '_' || chars[j] == '-') {
+                    j += 1;
+                }
+                let tag: String = chars[i + 1..j].iter().collect();
+                tags.insert(tag.to_lowercase());
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    tags.into_iter().collect()
+}
+
 // ── Database helpers ────────────────────────────────────────────────────────
 
 fn db_path() -> Result<std::path::PathBuf, String> {
@@ -244,7 +275,7 @@ fn open_db() -> Result<Connection, String> {
 
 /// Bump this whenever the schema or indexing logic changes in a way that
 /// requires existing cached data to be discarded and rebuilt.
-const SCHEMA_VERSION: i64 = 2;
+const SCHEMA_VERSION: i64 = 4;
 
 fn init_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch("
@@ -255,7 +286,8 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         CREATE TABLE IF NOT EXISTS files (
             path     TEXT NOT NULL PRIMARY KEY,
             modified INTEGER NOT NULL,
-            title    TEXT NOT NULL DEFAULT ''
+            title    TEXT NOT NULL DEFAULT '',
+            body     TEXT NOT NULL DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS wiki_links (
             source_path  TEXT NOT NULL,
@@ -265,12 +297,25 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         );
         CREATE INDEX IF NOT EXISTS idx_wl_source ON wiki_links(source_path);
         CREATE INDEX IF NOT EXISTS idx_wl_slug   ON wiki_links(target_slug);
+        CREATE VIRTUAL TABLE IF NOT EXISTS fts USING fts5(
+            path  UNINDEXED,
+            title,
+            body,
+            tokenize = 'unicode61'
+        );
+        CREATE TABLE IF NOT EXISTS file_tags (
+            path TEXT NOT NULL,
+            tag  TEXT NOT NULL,
+            PRIMARY KEY (path, tag)
+        );
+        CREATE INDEX IF NOT EXISTS idx_ft_tag ON file_tags(tag);
     ").map_err(|e| e.to_string())?;
 
     // Migrate columns added after initial release (silently ignored if present).
     for sql in [
         "ALTER TABLE files      ADD COLUMN title   TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE wiki_links ADD COLUMN context TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE files      ADD COLUMN body    TEXT NOT NULL DEFAULT ''",
     ] {
         let _ = conn.execute_batch(sql);
     }
@@ -284,8 +329,9 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
     ).ok();
 
     if stored != Some(SCHEMA_VERSION) {
-        conn.execute_batch("DELETE FROM wiki_links; DELETE FROM files;")
-            .map_err(|e| e.to_string())?;
+        conn.execute_batch(
+            "DELETE FROM wiki_links; DELETE FROM files; DELETE FROM fts; DELETE FROM file_tags;"
+        ).map_err(|e| e.to_string())?;
         conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
             [SCHEMA_VERSION.to_string()],
@@ -303,7 +349,11 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
     if !path.exists() {
         conn.execute("DELETE FROM wiki_links WHERE source_path = ?1", [path_str])
             .map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM fts WHERE path = ?1", [path_str])
+            .map_err(|e| e.to_string())?;
         conn.execute("DELETE FROM files WHERE path = ?1", [path_str])
+            .map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM file_tags WHERE path = ?1", [path_str])
             .map_err(|e| e.to_string())?;
         return Ok(());
     }
@@ -316,6 +366,7 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
         .as_secs() as i64;
 
     let content = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
+    let body    = front_matter::strip(&content).to_string();
     let links   = extract_wiki_links(&content);
     let title   = extract_page_title(&content, path_str);
 
@@ -330,9 +381,46 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
     }
 
     conn.execute(
-        "INSERT OR REPLACE INTO files (path, modified, title) VALUES (?1, ?2, ?3)",
-        rusqlite::params![path_str, modified, title],
+        "INSERT OR REPLACE INTO files (path, modified, title, body) VALUES (?1, ?2, ?3, ?4)",
+        rusqlite::params![path_str, modified, title, body],
     ).map_err(|e| e.to_string())?;
+
+    // FTS5 doesn't support UPDATE — delete the old entry then insert the new one.
+    conn.execute("DELETE FROM fts WHERE path = ?1", [path_str])
+        .map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO fts(path, title, body) VALUES (?1, ?2, ?3)",
+        rusqlite::params![path_str, title, body],
+    ).map_err(|e| e.to_string())?;
+
+    // Tags: merge front-matter `tags` array with inline #hashtags, normalised to lowercase.
+    let fm = front_matter::parse(&content);
+    let mut tag_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+    for key in ["tags", "Tags", "TAGS"] {
+        if let Some(front_matter::Value::Array(arr)) = fm.get(key) {
+            for t in arr {
+                let normalized = t.trim().to_lowercase();
+                if !normalized.is_empty() {
+                    tag_set.insert(normalized);
+                }
+            }
+            break;
+        }
+    }
+
+    for tag in extract_hashtags(&body) {
+        tag_set.insert(tag);
+    }
+
+    conn.execute("DELETE FROM file_tags WHERE path = ?1", [path_str])
+        .map_err(|e| e.to_string())?;
+    for tag in &tag_set {
+        conn.execute(
+            "INSERT OR IGNORE INTO file_tags (path, tag) VALUES (?1, ?2)",
+            rusqlite::params![path_str, tag],
+        ).map_err(|e| e.to_string())?;
+    }
 
     Ok(())
 }
@@ -426,6 +514,8 @@ fn index_datastore() -> Result<u32, String> {
     for path_str in db_paths {
         if !disk_paths.contains(&path_str) {
             conn.execute("DELETE FROM wiki_links WHERE source_path = ?1", [&path_str])
+                .map_err(|e| e.to_string())?;
+            conn.execute("DELETE FROM fts WHERE path = ?1", [&path_str])
                 .map_err(|e| e.to_string())?;
             conn.execute("DELETE FROM files WHERE path = ?1", [&path_str])
                 .map_err(|e| e.to_string())?;

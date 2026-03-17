@@ -57,8 +57,8 @@ export class Widget {
   mount(container) {
     this._container = container;
     container.innerHTML = `
-      <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-neutral-700" style="background:#1c1c1c">
-        <span class="flex items-center gap-1.5 text-xs font-semibold text-neutral-500 tracking-wide uppercase">
+      <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700" style="background:#1c1c1c">
+        <span class="flex items-center gap-1.5 text-xs font-semibold text-olive-500 tracking-wide uppercase">
           <i class="ph ${this.icon} text-sm leading-none"></i>
           ${this.title}
         </span>

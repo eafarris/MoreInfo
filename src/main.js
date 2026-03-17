@@ -1,7 +1,9 @@
+import './input.css';
 import { invoke } from './tauri.js';
 import { CalendarWidget }    from './widgets/CalendarWidget.js';
 import { MetadataWidget }    from './widgets/MetadataWidget.js';
 import { ReferencesWidget }  from './widgets/ReferencesWidget.js';
+import { createEditor, setEditorPages } from './editor.js';
 
 // ── State ─────────────────────────────────────────
 
@@ -13,9 +15,9 @@ let mdTimer       = null;
 
 // ── DOM refs ──────────────────────────────────────
 
-const editor          = document.getElementById('editor');
-const editorArea      = document.getElementById('editor-area');
-const editorPane      = document.getElementById('editor-pane');
+const editorDiv           = document.getElementById('editor');
+const editorArea          = document.getElementById('editor-area');
+const editorPane          = document.getElementById('editor-pane');
 const vDivider        = document.getElementById('v-divider');
 const markdownContent = document.getElementById('markdown-content');
 const docTitle        = document.getElementById('doc-title');
@@ -69,12 +71,7 @@ function setModified(val) {
   modifiedEl.textContent = val ? '●' : '';
 }
 
-function updateCursor() {
-  const val    = editor.value;
-  const pos    = editor.selectionStart;
-  const before = val.slice(0, pos);
-  const line   = before.split('\n').length;
-  const col    = before.length - before.lastIndexOf('\n');
+function updateCursor(line, col) {
   cursorEl.textContent = `Ln ${line}, Col ${col}`;
 }
 
@@ -119,6 +116,44 @@ function updateDocTitle(fm, content) {
   docTitle.textContent = title;
 }
 
+// ── Floating title bar: keep CM content paddingTop in sync ─────────────────
+{
+  const syncTitlePad = () => {
+    const pt = docTitle.offsetHeight + 'px';
+    const content = editorDiv.querySelector('.cm-content');
+    if (content) content.style.paddingTop = pt;
+  };
+  new ResizeObserver(syncTitlePad).observe(docTitle);
+  // Also observe the CM editor itself so we retry once CM is mounted
+  new ResizeObserver(syncTitlePad).observe(editorDiv);
+}
+
+// ── CodeMirror editor ─────────────────────────────────────────────────────
+
+let cmDocChangeTimer = null;
+let cmAutoSaveTimer  = null;
+
+const cmView = createEditor({
+  parent: editorDiv,
+  onDocChange(content) {
+    setModified(true);
+    clearTimeout(cmDocChangeTimer);
+    cmDocChangeTimer = setTimeout(() => handleDocumentChange(content), 200);
+    clearTimeout(cmAutoSaveTimer);
+    cmAutoSaveTimer  = setTimeout(() => { if (currentFile) autoSave(content); }, 1000);
+    if (editorArea.dataset.mode === 'render') scheduleMarkdown();
+  },
+  onCursorChange(line, col) {
+    updateCursor(line, col);
+  },
+  onCmdClick(title) {
+    openWikiPage(title);
+  },
+});
+
+// Populate wiki-link autocomplete with all pages from DB
+invoke('list_pages').then(pages => setEditorPages(pages)).catch(console.error);
+
 // ── Render-mode v-divider resize ──────────────────
 
 const MIN_W = 120;
@@ -154,7 +189,7 @@ vDivider.addEventListener('mousedown', e => {
 
 async function renderMarkdown() {
   try {
-    const html = await invoke('parse_markdown', { markdown: editor.value });
+    const html = await invoke('parse_markdown', { markdown: cmView.state.doc.toString() });
     markdownContent.innerHTML = html;
   } catch (e) {
     console.error('parse_markdown failed:', e);
@@ -182,10 +217,6 @@ async function handleDocumentChange(content) {
   }
 }
 
-function scheduleDocumentChange() {
-  clearTimeout(changeTimer);
-  changeTimer = setTimeout(() => handleDocumentChange(editor.value), 200);
-}
 
 // ── Auto-save ─────────────────────────────────────
 //
@@ -225,8 +256,7 @@ function deriveWikiSlug(content, metadata) {
   return null;
 }
 
-async function autoSave() {
-  const content = editor.value;
+async function autoSave(content) {
   if (!content.trim()) return;
 
   let path = currentFile;
@@ -248,10 +278,6 @@ async function autoSave() {
   }
 }
 
-function scheduleAutoSave() {
-  clearTimeout(saveTimer);
-  saveTimer = setTimeout(autoSave, 1500);
-}
 
 // ── View mode ─────────────────────────────────────
 
@@ -431,9 +457,9 @@ function renderBreadcrumbs() {
   breadcrumbsEl.style.display = 'flex';
   breadcrumbsEl.innerHTML = navHistory.map((entry, i) => {
     const label = escapeHtml(entry.title || basename(entry.path).replace(/\.[^.]+$/, ''));
-    return `<a class="bc-item hover:text-neutral-300 cursor-pointer transition-colors" data-index="${i}">${label}</a>`
-         + `<span class="bc-sep mx-1 text-neutral-700">›</span>`;
-  }).join('') + `<span class="text-neutral-400">${escapeHtml(docTitle.textContent || basename(currentFile || '').replace(/\.[^.]+$/, ''))}</span>`;
+    return `<a class="bc-item hover:text-olive-300 cursor-pointer transition-colors" data-index="${i}">${label}</a>`
+         + `<span class="bc-sep mx-1 text-olive-700">›</span>`;
+  }).join('') + `<span class="text-olive-400">${escapeHtml(docTitle.textContent || basename(currentFile || '').replace(/\.[^.]+$/, ''))}</span>`;
 }
 
 breadcrumbsEl.addEventListener('click', async e => {
@@ -454,7 +480,10 @@ breadcrumbsEl.addEventListener('click', async e => {
 // ── Core file loader (does NOT touch navHistory) ──
 
 async function loadFile(path, content) {
-  editor.value = content;
+  cmView.dispatch({
+    changes: { from: 0, to: cmView.state.doc.length, insert: content },
+    selection: { anchor: 0 },
+  });
   setCurrentFile(path);
   setModified(false);
   const metadata = await invoke('get_metadata', { content });
@@ -462,7 +491,7 @@ async function loadFile(path, content) {
   mountedWidgets.forEach(w => w.onFileOpen(path, content, metadata));
   if (editorArea.dataset.mode === 'render') await renderMarkdown();
   renderBreadcrumbs();
-  editor.focus();
+  cmView.focus();
 }
 
 // Push current page onto history, then load `path`.
@@ -518,210 +547,6 @@ markdownContent.addEventListener('click', e => {
   if (wikiLink) { e.preventDefault(); openWikiPage(wikiLink.dataset.wikiTitle); }
 });
 
-
-// Edit mode: Cmd/Ctrl+Click anywhere in the textarea detects [[...]] at cursor
-editor.addEventListener('click', e => {
-  if (!e.metaKey && !e.ctrlKey) return;
-  const val = editor.value;
-  const pos = editor.selectionStart;
-
-  // Search backward for [[
-  let start = pos;
-  while (start > 1 && !(val[start - 2] === '[' && val[start - 1] === '[')) start--;
-  if (start < 2) return;
-  start -= 2; // point at first [
-
-  // Search forward for ]]
-  let end = pos;
-  while (end + 1 < val.length && !(val[end] === ']' && val[end + 1] === ']')) end++;
-  if (end + 1 >= val.length && !(val[end] === ']' && val[end + 1] === ']')) return;
-
-  const title = val.slice(start + 2, end).trim();
-  if (title) openWikiPage(title);
-});
-
-// ── Wiki-link autocomplete ────────────────────────
-
-const acPopup  = document.getElementById('wiki-ac');
-const acList   = document.getElementById('wiki-ac-list');
-let   allPages = [];
-let   ac       = { active: false, items: [], index: 0 };
-
-invoke('list_pages').then(pages => { allPages = pages; }).catch(console.error);
-
-// Returns { query, bracketStart } if the cursor is inside an open [[...
-// The [[ must be preceded by whitespace or be at position 0.
-function getAcContext() {
-  const pos    = editor.selectionStart;
-  const before = editor.value.slice(0, pos);
-  const idx    = before.lastIndexOf('[[');
-  if (idx === -1) return null;
-  if (before.slice(idx + 2).includes(']]')) return null;
-  if (idx > 0 && !/[\s\n]/.test(before[idx - 1])) return null;
-  return { query: before.slice(idx + 2), bracketStart: idx };
-}
-
-function filterPages(query) {
-  if (!allPages.length) return [];
-  const q = query.toLowerCase();
-  return allPages.filter(p => p.title.toLowerCase().startsWith(q)).slice(0, 8);
-}
-
-// Mirror-div trick: returns { top, left } in viewport coords for the caret.
-function caretCoords() {
-  const ta    = editor;
-  const cs    = window.getComputedStyle(ta);
-  const m     = document.createElement('div');
-  for (const p of ['fontFamily','fontSize','fontWeight','lineHeight',
-                    'letterSpacing','paddingTop','paddingRight','paddingBottom','paddingLeft',
-                    'borderTopWidth','borderRightWidth','borderBottomWidth','borderLeftWidth',
-                    'boxSizing']) {
-    m.style[p] = cs[p];
-  }
-  m.style.position     = 'absolute';
-  m.style.visibility   = 'hidden';
-  m.style.top          = '-9999px';
-  m.style.left         = '-9999px';
-  m.style.width        = ta.clientWidth + 'px';
-  m.style.whiteSpace   = 'pre-wrap';
-  m.style.wordBreak    = 'break-word';
-  m.style.overflowWrap = 'break-word';
-  m.style.overflow     = 'hidden';
-
-  const pos  = ta.selectionStart;
-  const span = document.createElement('span');
-  span.textContent = ta.value.slice(pos) || '\u200b';
-  m.textContent = ta.value.slice(0, pos);
-  m.appendChild(span);
-  document.body.appendChild(m);
-
-  const rect = ta.getBoundingClientRect();
-  const top  = rect.top  + span.offsetTop  - ta.scrollTop;
-  const left = rect.left + span.offsetLeft - ta.scrollLeft;
-  document.body.removeChild(m);
-  return { top, left };
-}
-
-function renderAcItems() {
-  acList.innerHTML = ac.items.map((p, i) => {
-    const sel = i === ac.index;
-    return `<li data-ac-index="${i}"
-      class="px-3 py-1.5 text-xs cursor-pointer select-none truncate
-             ${sel ? 'bg-sky-700 text-white' : 'text-neutral-200 hover:bg-neutral-700'}"
-    >${escapeHtml(p.title)}</li>`;
-  }).join('');
-}
-
-function showAc(items) {
-  ac.active = true;
-  ac.items  = items;
-  ac.index  = 0;
-  renderAcItems();
-  acPopup.style.display = 'block';
-
-  const lh     = parseFloat(window.getComputedStyle(editor).lineHeight) || 20;
-  const coords = caretCoords();
-  const popW   = 192; // min-w-48
-  let top  = coords.top  + lh + 4;
-  let left = coords.left;
-  if (left + popW > window.innerWidth  - 8) left = window.innerWidth  - popW - 8;
-  if (top  + 208  > window.innerHeight - 8) top  = coords.top - 208 - 4;
-  acPopup.style.top  = top  + 'px';
-  acPopup.style.left = left + 'px';
-}
-
-function hideAc() {
-  ac.active = false;
-  ac.items  = [];
-  ac.index  = 0;
-  acPopup.style.display = 'none';
-}
-
-function commitAc(item) {
-  const ctx = getAcContext();
-  if (!ctx) { hideAc(); return; }
-  const val    = editor.value;
-  const pos    = editor.selectionStart;
-  const insert = `[[${item.title}]] `;
-  editor.value = val.slice(0, ctx.bracketStart) + insert + val.slice(pos);
-  const newPos = ctx.bracketStart + insert.length;
-  editor.setSelectionRange(newPos, newPos);
-  hideAc();
-  scheduleDocumentChange();
-  scheduleAutoSave();
-}
-
-acList.addEventListener('click', e => {
-  const li = e.target.closest('[data-ac-index]');
-  if (!li) return;
-  commitAc(ac.items[parseInt(li.dataset.acIndex, 10)]);
-  editor.focus();
-});
-
-acList.addEventListener('mousemove', e => {
-  const li = e.target.closest('[data-ac-index]');
-  if (!li) return;
-  const i = parseInt(li.dataset.acIndex, 10);
-  if (i !== ac.index) { ac.index = i; renderAcItems(); }
-});
-
-document.addEventListener('click', e => {
-  if (ac.active && !acPopup.contains(e.target)) hideAc();
-});
-
-// ── Event listeners ───────────────────────────────
-
-editor.addEventListener('input', () => {
-  setModified(true);
-  scheduleDocumentChange();
-  scheduleAutoSave();
-  if (editorArea.dataset.mode === 'render') scheduleMarkdown();
-  // Autocomplete: check context after every keystroke
-  const ctx = getAcContext();
-  if (!ctx) { hideAc(); return; }
-  const items = filterPages(ctx.query);
-  if (items.length) showAc(items); else hideAc();
-});
-
-editor.addEventListener('keyup',   updateCursor);
-editor.addEventListener('click',   updateCursor);
-editor.addEventListener('mouseup', updateCursor);
-
-// Autocomplete keyboard navigation (capture phase — runs before all other handlers).
-editor.addEventListener('keydown', e => {
-  if (!ac.active) return;
-  switch (e.key) {
-    case 'Escape':
-      e.preventDefault();
-      hideAc();
-      break;
-    case 'ArrowDown':
-      e.preventDefault();
-      ac.index = (ac.index + 1) % ac.items.length;
-      renderAcItems();
-      break;
-    case 'ArrowUp':
-      e.preventDefault();
-      ac.index = (ac.index - 1 + ac.items.length) % ac.items.length;
-      renderAcItems();
-      break;
-    case 'Enter':
-    case ' ':
-    case 'Tab':
-      e.preventDefault();
-      commitAc(ac.items[ac.index]);
-      break;
-  }
-}, true);
-
-editor.addEventListener('keydown', e => {
-  if (e.key !== 'Tab') return;
-  e.preventDefault();
-  const s   = editor.selectionStart;
-  const end = editor.selectionEnd;
-  editor.value = editor.value.slice(0, s) + '  ' + editor.value.slice(end);
-  editor.selectionStart = editor.selectionEnd = s + 2;
-});
 
 document.querySelectorAll('[data-mode]').forEach(btn => {
   btn.addEventListener('click', () => setMode(btn.dataset.mode));
@@ -783,7 +608,7 @@ mountWidgets('bottom', [
 ]);
 
 setMode('edit');
-updateCursor();
+updateCursor(1, 1);
 
 const _d = new Date();
 const _todayStr = `${_d.getFullYear()}-${String(_d.getMonth() + 1).padStart(2, '0')}-${String(_d.getDate()).padStart(2, '0')}`;

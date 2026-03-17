@@ -5,8 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MoreInfo</title>
 
-  <!-- Compiled Tailwind CSS (run: npm run css:watch during dev) -->
-  <link rel="stylesheet" href="src/style.css" />
 
   <!-- Phosphor Icons (regular weight) -->
   <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css" />
@@ -27,10 +25,6 @@
     #markdown-pane { display: none; }
     [data-mode="render"] #v-divider     { display: flex; }
     [data-mode="render"] #markdown-pane { display: flex; flex: 1; min-width: 0; flex-direction: column; }
-
-    /* Textarea */
-    #editor { tab-size: 2; caret-color: #38bdf8; }
-    #editor::placeholder { color: #3f3f46; }
 
     /* ── Sidebar layout ───────────────────────────────────────
        VS Code model:
@@ -162,53 +156,53 @@
   </style>
 </head>
 
-<body class="bg-neutral-900 text-neutral-300 h-screen flex flex-col overflow-hidden select-none">
+<body class="bg-olive-900 text-olive-300 h-screen flex flex-col overflow-hidden select-none">
 
   <!-- ── Toolbar ──────────────────────────────────────────────── -->
   <header
     id="toolbar"
-    class="flex items-center justify-between px-3 py-1.5 bg-neutral-800 border-b border-neutral-700 shrink-0"
+    class="flex items-center justify-between px-3 py-1.5 bg-olive-800 border-b border-olive-700 shrink-0"
     style="-webkit-app-region: drag"
   >
     <div class="flex items-center gap-1" style="-webkit-app-region: no-drag">
       <button id="btn-toggle-left" title="Toggle left sidebar" data-active
-        class="flex items-center justify-center w-6 h-6 rounded text-neutral-400 hover:bg-neutral-700 hover:text-white transition-colors data-active:text-neutral-200">
+        class="flex items-center justify-center w-6 h-6 rounded text-olive-400 hover:bg-olive-700 hover:text-white transition-colors data-active:text-olive-200">
         <i class="ph ph-sidebar-simple text-base leading-none"></i>
       </button>
       <button id="btn-toggle-top" title="Toggle top panel"
-        class="flex items-center justify-center w-6 h-6 rounded text-neutral-400 hover:bg-neutral-700 hover:text-white transition-colors data-active:text-neutral-200">
+        class="flex items-center justify-center w-6 h-6 rounded text-olive-400 hover:bg-olive-700 hover:text-white transition-colors data-active:text-olive-200">
         <i class="ph ph-sidebar-simple text-base leading-none" style="transform:rotate(-90deg)"></i>
       </button>
       <button id="btn-toggle-bottom" title="Toggle bottom panel"
-        class="flex items-center justify-center w-6 h-6 rounded text-neutral-400 hover:bg-neutral-700 hover:text-white transition-colors data-active:text-neutral-200">
+        class="flex items-center justify-center w-6 h-6 rounded text-olive-400 hover:bg-olive-700 hover:text-white transition-colors data-active:text-olive-200">
         <i class="ph ph-sidebar-simple text-base leading-none" style="transform:rotate(90deg)"></i>
       </button>
-      <span class="text-xs font-semibold text-neutral-500 tracking-wide ml-1" style="-webkit-app-region: drag">MoreInfo</span>
+      <span class="text-xs font-semibold text-olive-500 tracking-wide ml-1" style="-webkit-app-region: drag">MoreInfo</span>
     </div>
 
     <div class="flex items-center gap-1.5" style="-webkit-app-region: no-drag">
-      <div class="flex rounded border border-neutral-700 overflow-hidden text-xs">
+      <div class="flex rounded border border-olive-700 overflow-hidden text-xs">
         <button data-mode="edit" title="Edit only"
-          class="flex items-center gap-1.5 px-2.5 py-1 text-neutral-400 hover:bg-neutral-700 transition-colors data-active:bg-sky-600 data-active:text-white">
+          class="flex items-center gap-1.5 px-2.5 py-1 text-olive-400 hover:bg-olive-700 transition-colors data-active:bg-amber-600 data-active:text-white">
           <i class="ph ph-pencil-simple text-sm leading-none"></i>Edit
         </button>
         <button data-mode="render" title="Editor + Markdown preview"
-          class="flex items-center gap-1.5 px-2.5 py-1 text-neutral-400 border-l border-neutral-700 hover:bg-neutral-700 transition-colors data-active:bg-sky-600 data-active:text-white">
+          class="flex items-center gap-1.5 px-2.5 py-1 text-olive-400 border-l border-olive-700 hover:bg-olive-700 transition-colors data-active:bg-amber-600 data-active:text-white">
           <i class="ph ph-eye text-sm leading-none"></i>Render
         </button>
       </div>
 
-      <div class="w-px h-4 bg-neutral-700 mx-1"></div>
+      <div class="w-px h-4 bg-olive-700 mx-1"></div>
 
       <button id="btn-toggle-right" title="Toggle right sidebar" data-active
-        class="flex items-center justify-center w-6 h-6 rounded text-neutral-400 hover:bg-neutral-700 hover:text-white transition-colors data-active:text-neutral-200">
+        class="flex items-center justify-center w-6 h-6 rounded text-olive-400 hover:bg-olive-700 hover:text-white transition-colors data-active:text-olive-200">
         <i class="ph ph-sidebar-simple text-base leading-none" style="transform:scaleX(-1)"></i>
       </button>
     </div>
   </header>
 
   <!-- ── Breadcrumb bar ───────────────────────────────────────────── -->
-  <nav id="breadcrumbs" class="flex items-center gap-0.5 px-3 text-xs text-neutral-500 bg-neutral-850 border-b border-neutral-700/60 overflow-x-auto whitespace-nowrap shrink-0" style="display:none; min-height:1.75rem"></nav>
+  <nav id="breadcrumbs" class="flex items-center gap-0.5 px-3 text-xs text-olive-500 bg-olive-850 border-b border-olive-700/60 overflow-x-auto whitespace-nowrap shrink-0" style="display:none; min-height:1.75rem"></nav>
 
   <!-- ── Content row ──────────────────────────────────────────────
        flex-row: left-sidebar | center-column | right-sidebar
@@ -222,7 +216,7 @@
 
     <!-- ── Left sidebar (full height) ───────────────────────── -->
     <aside id="left-sidebar" data-sb-state="pinned"
-      class="shrink-0 border-r border-neutral-700 flex flex-col bg-neutral-900 data-[sb-state=flyout]:bg-neutral-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
+      class="shrink-0 border-r border-olive-700 flex flex-col bg-olive-900 data-[sb-state=flyout]:bg-olive-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
       style="width:208px">
 
       <!-- Right resize handle -->
@@ -230,9 +224,9 @@
         <div class="sb-resize-dots"><span></span><span></span><span></span></div>
       </div>
       <!-- Header: label + action button -->
-      <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-neutral-700/60" style="background:#1c1c1c">
-        <span class="text-xs font-semibold text-neutral-600 tracking-wider uppercase">Left Sidebar</span>
-        <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-neutral-600 hover:text-neutral-300 hover:bg-neutral-700 transition-colors">
+      <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700/60" style="background:#1c1c1c">
+        <span class="text-xs font-semibold text-olive-600 tracking-wider uppercase">Left Sidebar</span>
+        <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-300 hover:bg-olive-700 transition-colors">
           <i class="sb-icon-pin ph ph-push-pin text-xs leading-none"></i>
           <i class="sb-icon-close ph ph-x text-xs leading-none"></i>
         </button>
@@ -253,7 +247,7 @@
 
       <!-- ── Top sidebar ────────────────────────────────────── -->
       <div id="top-sidebar" data-sb-state="hidden"
-        class="shrink-0 border-b border-neutral-700 flex flex-col bg-neutral-900 data-[sb-state=flyout]:bg-neutral-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
+        class="shrink-0 border-b border-olive-700 flex flex-col bg-olive-900 data-[sb-state=flyout]:bg-olive-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
         style="height:160px">
 
         <!-- Bottom resize handle -->
@@ -261,9 +255,9 @@
           <div class="sb-resize-dots"><span></span><span></span><span></span></div>
         </div>
         <!-- Header -->
-        <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-neutral-700/60" style="background:#1c1c1c">
-          <span class="text-xs font-semibold text-neutral-600 tracking-wider uppercase">Top Panel</span>
-          <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-neutral-600 hover:text-neutral-300 hover:bg-neutral-700 transition-colors">
+        <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700/60" style="background:#1c1c1c">
+          <span class="text-xs font-semibold text-olive-600 tracking-wider uppercase">Top Panel</span>
+          <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-300 hover:bg-olive-700 transition-colors">
             <i class="sb-icon-pin ph ph-push-pin text-xs leading-none"></i>
             <i class="sb-icon-close ph ph-x text-xs leading-none"></i>
           </button>
@@ -277,35 +271,31 @@
         class="flex flex-col flex-1 min-h-0 overflow-hidden">
 
         <!-- Editor pane -->
-        <div id="editor-pane" class="flex-1 min-h-0 flex flex-col overflow-hidden">
-          <div id="doc-title" class="shrink-0 px-6 pt-5 pb-2 text-xl font-semibold text-neutral-100 leading-tight select-text border-b border-neutral-800"></div>
-          <textarea id="editor"
-            class="flex-1 min-h-0 w-full resize-none bg-neutral-900 text-neutral-300 font-mono text-sm leading-relaxed p-6 outline-none border-none select-text"
-            placeholder="Start writing Markdown…"
-            spellcheck="false" autocomplete="off" autocorrect="off"
-          ></textarea>
+        <div id="editor-pane" class="flex-1 min-h-0 relative overflow-hidden">
+          <div id="doc-title" class="px-6 pt-5 pb-3 text-xl font-semibold text-olive-100 leading-tight select-text"></div>
+          <div id="editor" class="absolute inset-0"></div>
         </div>
 
         <!-- Vertical resize handle (render mode only) -->
         <div id="v-divider"
-          class="shrink-0 w-1.25 bg-neutral-800 border-l border-r border-neutral-700/60 cursor-col-resize group hover:bg-sky-950 transition-colors"
+          class="shrink-0 w-1.25 bg-olive-800 border-l border-r border-olive-700/60 cursor-col-resize group hover:bg-amber-950 transition-colors"
           title="Drag to resize">
           <div class="flex flex-col items-center justify-center h-full gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <span class="block w-1 h-1 rounded-full bg-neutral-500"></span>
-            <span class="block w-1 h-1 rounded-full bg-neutral-500"></span>
-            <span class="block w-1 h-1 rounded-full bg-neutral-500"></span>
+            <span class="block w-1 h-1 rounded-full bg-olive-500"></span>
+            <span class="block w-1 h-1 rounded-full bg-olive-500"></span>
+            <span class="block w-1 h-1 rounded-full bg-olive-500"></span>
           </div>
         </div>
 
         <!-- Markdown preview pane (render mode only) -->
-        <div id="markdown-pane" class="overflow-auto bg-neutral-900">
+        <div id="markdown-pane" class="overflow-auto bg-olive-900">
           <div id="markdown-content" class="prose prose-invert prose-sm max-w-none p-6 select-text"></div>
         </div>
       </main>
 
       <!-- ── Bottom sidebar ─────────────────────────────────── -->
       <div id="bottom-sidebar" data-sb-state="hidden"
-        class="shrink-0 border-t border-neutral-700 flex flex-col bg-neutral-900 data-[sb-state=flyout]:bg-neutral-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
+        class="shrink-0 border-t border-olive-700 flex flex-col bg-olive-900 data-[sb-state=flyout]:bg-olive-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
         style="height:180px">
 
         <!-- Top resize handle -->
@@ -313,9 +303,9 @@
           <div class="sb-resize-dots"><span></span><span></span><span></span></div>
         </div>
         <!-- Header -->
-        <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-neutral-700/60" style="background:#1c1c1c">
-          <span class="text-xs font-semibold text-neutral-600 tracking-wider uppercase">Bottom Panel</span>
-          <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-neutral-600 hover:text-neutral-300 hover:bg-neutral-700 transition-colors">
+        <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700/60" style="background:#1c1c1c">
+          <span class="text-xs font-semibold text-olive-600 tracking-wider uppercase">Bottom Panel</span>
+          <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-300 hover:bg-olive-700 transition-colors">
             <i class="sb-icon-pin ph ph-push-pin text-xs leading-none"></i>
             <i class="sb-icon-close ph ph-x text-xs leading-none"></i>
           </button>
@@ -328,7 +318,7 @@
 
     <!-- ── Right sidebar (full height) ──────────────────────── -->
     <aside id="right-sidebar" data-sb-state="pinned"
-      class="shrink-0 border-l border-neutral-700 flex flex-col bg-neutral-900 data-[sb-state=flyout]:bg-neutral-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
+      class="shrink-0 border-l border-olive-700 flex flex-col bg-olive-900 data-[sb-state=flyout]:bg-olive-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
       style="width:208px">
 
       <!-- Left resize handle -->
@@ -336,9 +326,9 @@
         <div class="sb-resize-dots"><span></span><span></span><span></span></div>
       </div>
       <!-- Header: label + action button -->
-      <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-neutral-700/60" style="background:#1c1c1c">
-        <span class="text-xs font-semibold text-neutral-600 tracking-wider uppercase">Right Sidebar</span>
-        <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-neutral-600 hover:text-neutral-300 hover:bg-neutral-700 transition-colors">
+      <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700/60" style="background:#1c1c1c">
+        <span class="text-xs font-semibold text-olive-600 tracking-wider uppercase">Right Sidebar</span>
+        <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-300 hover:bg-olive-700 transition-colors">
           <i class="sb-icon-pin ph ph-push-pin text-xs leading-none"></i>
           <i class="sb-icon-close ph ph-x text-xs leading-none"></i>
         </button>
@@ -351,7 +341,7 @@
 
   <!-- ── Status bar ──────────────────────────────────────────── -->
   <footer id="status-bar"
-    class="flex items-center gap-2 px-3 py-0.5 bg-sky-700 text-white text-xs shrink-0">
+    class="flex items-center gap-2 px-3 py-0.5 bg-amber-700 text-white text-xs shrink-0">
     <i class="ph ph-file-text text-sm leading-none"></i>
     <span id="file-name">Untitled</span>
     <span id="modified-indicator" class="text-yellow-300 text-sm leading-none"></span>
@@ -359,12 +349,6 @@
     <span id="cursor-info" class="tabular-nums"></span>
   </footer>
 
-  <!-- Wiki-link autocomplete popup -->
-  <div id="wiki-ac" style="display:none; position:fixed; z-index:1000"
-    class="bg-neutral-800 border border-neutral-600 rounded-md shadow-xl overflow-hidden min-w-48 max-w-xs">
-    <ul id="wiki-ac-list" class="max-h-52 overflow-y-auto py-1"></ul>
-  </div>
-
-  <script type="module" src="src/main.js"></script>
+  <script type="module" src="/src/main.js"></script>
 </body>
 </html>

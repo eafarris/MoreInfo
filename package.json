@@ -3,15 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "css:watch": "tailwindcss -i src/input.css -o src/style.css --watch",
-    "css:build": "tailwindcss -i src/input.css -o src/style.css --minify",
+    "dev:vite": "vite",
+    "build:vite": "vite build",
     "dev": "tauri dev",
     "build": "tauri build"
   },
   "devDependencies": {
-    "@tailwindcss/cli": "^4.2.1",
     "@tailwindcss/typography": "^0.5.19",
+    "@tailwindcss/vite": "^4.2.1",
     "@tauri-apps/cli": "^2",
-    "tailwindcss": "^4.2.1"
+    "tailwindcss": "^4.2.1",
+    "vite": "^7.3.1"
+  },
+  "dependencies": {
+    "@codemirror/autocomplete": "^6.20.1",
+    "@codemirror/commands": "^6.10.3",
+    "@codemirror/lang-markdown": "^6.5.0",
+    "@codemirror/language": "^6.12.2",
+    "@codemirror/state": "^6.6.0",
+    "@codemirror/view": "^6.40.0",
+    "@lezer/highlight": "^1.2.3"
   }
 }

@@ -21,7 +21,7 @@ import {
   bracketMatching,
 } from '@codemirror/language';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
-import { autocompletion, closeBrackets } from '@codemirror/autocomplete';
+import { autocompletion, closeBrackets, acceptCompletion } from '@codemirror/autocomplete';
 import { tags } from '@lezer/highlight';
 
 // ── Theme ──────────────────────────────────────────────────────────────────
@@ -103,7 +103,6 @@ export const miHighlightStyle = HighlightStyle.define([
   { tag: tags.processingInstruction, color: 'oklch(46.6% 0.025 107.3)'                   },
   { tag: tags.contentSeparator, color: 'oklch(39.4% 0.023 107.4)' /* olive-700 */       },
   { tag: tags.atom,            color: '#fbbf24'                                           },
-  { tag: tags.list,            color: '#fbbf24'                                           },
 ]);
 
 // ── Wiki-link decoration ───────────────────────────────────────────────────
@@ -166,6 +165,34 @@ const hashtagPlugin = ViewPlugin.fromClass(class {
   }
 }, { decorations: v => v.decorations });
 
+// ── List item spacing ──────────────────────────────────────────────────────
+// Adds bottom padding to list-item lines so bulleted/numbered lists breathe
+// more than ordinary prose. Uses a regex scan rather than the syntax tree so
+// decorations are always present, even before the parser finishes.
+
+const LIST_ITEM_RE = /^[ \t]*(?:[-*+]|\d+[.)]) /;
+
+const listSpacingPlugin = ViewPlugin.fromClass(class {
+  constructor(view) { this.decorations = this._build(view); }
+  update(u) {
+    if (u.docChanged || u.viewportChanged) this.decorations = this._build(u.view);
+  }
+  _build(view) {
+    const deco = [];
+    for (const { from, to } of view.visibleRanges) {
+      let pos = from;
+      while (pos <= to) {
+        const line = view.state.doc.lineAt(pos);
+        if (LIST_ITEM_RE.test(line.text)) {
+          deco.push(Decoration.line({ class: 'cm-list-item' }).range(line.from));
+        }
+        pos = line.to + 1;
+      }
+    }
+    return Decoration.set(deco, true);
+  }
+}, { decorations: v => v.decorations });
+
 // ── Auto-surround keymap ───────────────────────────────────────────────────
 // When text is selected and an opening char is typed, wrap the selection.
 
@@ -207,7 +234,12 @@ function wikiLinkSource(context) {
       label:  p.title,
       detail: '[[link]]',
       apply(view, _completion, from, to) {
-        const insert = `[[${p.title}]] `;
+        // Read the actual typed text from the doc (not match.text, which may
+        // be stale if CM6 used client-side validFor filtering after the last
+        // source invocation). Append only the untyped suffix from the title.
+        const typed  = view.state.doc.sliceString(match.from + 2, to);
+        const rest   = p.title.slice(typed.length);
+        const insert = `[[${typed}${rest}]] `;
         view.dispatch({
           changes: { from: match.from, to, insert },
           selection: { anchor: match.from + insert.length },
@@ -224,9 +256,15 @@ export function createEditor({ parent, onDocChange, onCursorChange, onCmdClick }
   const tabKeymap = {
     key: 'Tab',
     run(view) {
+      if (acceptCompletion(view)) return true;
       view.dispatch(view.state.replaceSelection('  '));
       return true;
     },
+  };
+
+  const spaceKeymap = {
+    key: 'Space',
+    run: acceptCompletion,
   };
 
   const cmdClickHandler = EditorView.domEventHandlers({
@@ -270,10 +308,12 @@ export function createEditor({ parent, onDocChange, onCursorChange, onCmdClick }
       autocompletion({ override: [wikiLinkSource] }),
       wikilinkPlugin,
       hashtagPlugin,
+      listSpacingPlugin,
       EditorView.lineWrapping,
       keymap.of([
         ...wrapSelectionKeymap,
         tabKeymap,
+        spaceKeymap,
         ...defaultKeymap,
         ...historyKeymap,
       ]),

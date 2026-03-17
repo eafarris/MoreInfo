@@ -477,7 +477,194 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// Return byte offsets (in `body`) of every word-boundary, case-insensitive
+/// occurrence of `term` that is NOT inside a `[[...]]` wiki-link span.
+fn find_unlinked_occurrences(body: &str, term: &str) -> Vec<usize> {
+    let lower_body = body.to_lowercase();
+    let lower_term = term.to_lowercase();
+    if lower_term.is_empty() { return vec![]; }
+
+    // Collect [[...]] byte spans so we can exclude them.
+    let mut wiki_spans: Vec<(usize, usize)> = Vec::new();
+    let bytes = body.as_bytes();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        if bytes[i] == b'[' && bytes[i + 1] == b'[' {
+            let start = i;
+            i += 2;
+            while i + 1 < bytes.len() {
+                if bytes[i] == b']' && bytes[i + 1] == b']' {
+                    wiki_spans.push((start, i + 2));
+                    i += 2;
+                    break;
+                }
+                i += 1;
+            }
+        } else {
+            i += 1;
+        }
+    }
+
+    let term_len = lower_term.len();
+    let mut results = Vec::new();
+    let mut pos = 0;
+
+    while pos + term_len <= lower_body.len() {
+        if !lower_body.is_char_boundary(pos) { pos += 1; continue; }
+
+        if lower_body[pos..].starts_with(lower_term.as_str()) {
+            let end = pos + term_len;
+            if lower_body.is_char_boundary(end) {
+                let pre_ok  = body[..pos].chars().next_back().map_or(true, |c| !is_word_char(c));
+                let post_ok = body[end..].chars().next().map_or(true, |c| !is_word_char(c));
+                if pre_ok && post_ok {
+                    let in_wiki = wiki_spans.iter().any(|&(s, e)| pos >= s && end <= e);
+                    if !in_wiki {
+                        results.push(pos);
+                    }
+                }
+            }
+            let step = body[pos..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+            pos += step;
+        } else {
+            let step = lower_body[pos..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+            pos += step;
+        }
+    }
+
+    results
+}
+
+/// Extract a plain-text context snippet around a match at `[match_start, match_end)`
+/// in `text`, trimming to ≈60 chars each side within the same line.
+fn extract_plain_context(text: &str, match_start: usize, match_end: usize) -> String {
+    const HALF: usize = 60;
+
+    let line_start = text[..match_start].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let line_end   = text[match_end..].find('\n')
+        .map(|i| match_end + i)
+        .unwrap_or(text.len());
+
+    let mut snip_start = match_start.saturating_sub(HALF).max(line_start);
+    let mut snip_end   = (match_end + HALF).min(line_end);
+    while snip_start < match_start && !text.is_char_boundary(snip_start) { snip_start += 1; }
+    while snip_end > match_end && !text.is_char_boundary(snip_end) { snip_end -= 1; }
+
+    let before = text[snip_start..match_start]
+        .trim_start_matches(|c: char| "#>*-!| \t".contains(c));
+    let matched = &text[match_start..match_end];
+    let after   = &text[match_end..snip_end];
+
+    let pre_dots  = if snip_start > line_start { "…" } else { "" };
+    let post_dots = if snip_end < line_end { "…" } else { "" };
+
+    format!("{}{}{}{}{}", pre_dots, before, matched, after, post_dots)
+}
+
 // ── Commands ────────────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+struct UnlinkedEntry {
+    source_path:  String,
+    source_title: String,
+    context:      String,
+    matched_term: String,
+}
+
+/// Return all pages that mention this page's title or aliases in plain text
+/// (i.e., not inside `[[...]]` wiki links).
+#[tauri::command]
+fn get_unlinked_references(path: String) -> Result<Vec<UnlinkedEntry>, String> {
+    let conn = open_db()?;
+    init_schema(&conn)?;
+
+    let title: String = conn.query_row(
+        "SELECT title FROM files WHERE path = ?1",
+        [&path],
+        |row| row.get(0),
+    ).unwrap_or_default();
+
+    let mut alias_stmt = conn.prepare(
+        "SELECT alias FROM file_aliases WHERE path = ?1"
+    ).map_err(|e| e.to_string())?;
+    let aliases: Vec<String> = alias_stmt
+        .query_map([&path], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    let mut terms: Vec<String> = Vec::new();
+    if !title.trim().is_empty() { terms.push(title.clone()); }
+    terms.extend(aliases);
+    if terms.is_empty() { return Ok(vec![]); }
+
+    // One result entry per source page — first matching term wins.
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut results: Vec<UnlinkedEntry> = Vec::new();
+
+    for term in &terms {
+        if term.trim().is_empty() { continue; }
+
+        // FTS5 phrase query: quoted term matches exact token sequence,
+        // which naturally enforces word boundaries via the unicode61 tokenizer.
+        let fts_query = format!("\"{}\"", term.replace('"', "\"\""));
+
+        let mut stmt = conn.prepare(
+            "SELECT fts.path, COALESCE(f.title, ''), fts.body
+             FROM fts
+             JOIN files f ON f.path = fts.path
+             WHERE fts MATCH ?1
+               AND fts.path != ?2"
+        ).map_err(|e| e.to_string())?;
+
+        let rows = stmt.query_map(
+            rusqlite::params![fts_query, &path],
+            |row| Ok((
+                row.get::<_, String>(0)?,
+                row.get::<_, String>(1)?,
+                row.get::<_, String>(2)?,
+            )),
+        ).map_err(|e| e.to_string())?;
+
+        for row in rows.filter_map(|r| r.ok()) {
+            let (src_path, src_title, body) = row;
+            if seen.contains(&src_path) { continue; }
+
+            let occs = find_unlinked_occurrences(&body, term);
+            if occs.is_empty() { continue; }
+
+            seen.insert(src_path.clone());
+
+            let match_end = occs[0] + term.len();
+            let context   = extract_plain_context(&body, occs[0], match_end);
+
+            let display_title = if src_title.trim().is_empty() {
+                std::path::Path::new(&src_path)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("")
+                    .replace('-', " ")
+                    .replace('_', " ")
+            } else {
+                src_title
+            };
+
+            results.push(UnlinkedEntry {
+                source_path:  src_path,
+                source_title: display_title,
+                context,
+                matched_term: term.clone(),
+            });
+        }
+    }
+
+    results.sort_by(|a, b| a.source_path.cmp(&b.source_path));
+    Ok(results)
+}
 
 /// Render Markdown to HTML, stripping front-matter and expanding wiki links.
 #[tauri::command]
@@ -853,6 +1040,7 @@ pub fn run() {
             open_wiki_page,
             index_datastore,
             get_backlinks,
+            get_unlinked_references,
             list_pages,
         ])
         .run(tauri::generate_context!())

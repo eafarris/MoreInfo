@@ -390,6 +390,7 @@ function initSbResize(name, handle) {
 
   function stopDrag() {
     isResizing = false;
+    handle.classList.remove('is-resizing');
     document.removeEventListener('mousemove', onDrag);
     document.removeEventListener('mouseup',   stopDrag);
     document.body.style.cursor     = '';
@@ -398,6 +399,7 @@ function initSbResize(name, handle) {
 
   handle.addEventListener('mousedown', e => {
     isResizing = true;
+    handle.classList.add('is-resizing');
     dragStart  = horiz ? e.clientX : e.clientY;
     sizeStart  = sbSizes[name];
     document.addEventListener('mousemove', onDrag);

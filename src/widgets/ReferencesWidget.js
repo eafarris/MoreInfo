@@ -9,7 +9,6 @@ function esc(s) {
     .replace(/"/g, '&quot;');
 }
 
-
 function basename(path) {
   return path.replace(/\\/g, '/').split('/').pop();
 }
@@ -48,35 +47,45 @@ export class ReferencesWidget extends Widget {
     this._load(path);
   }
 
+  onFileSaved(_path) {
+    // Re-query on every save: the saved file may have gained/lost aliases
+    // (changing what counts as a reference to it) or new links to the
+    // current page (changing what shows as a backlink here).
+    this._load(this._currentPath);
+  }
+
   async _load(path) {
     if (!path) { this._renderEmpty(); return; }
 
     try {
-      const entries = await invoke('get_backlinks', { path });
+      const [linked, unlinked] = await Promise.all([
+        invoke('get_backlinks',           { path }),
+        invoke('get_unlinked_references', { path }),
+      ]);
       if (path !== this._currentPath) return; // stale response
-      this._render(entries);
+      this._render(linked, unlinked);
     } catch (e) {
-      console.error('[ReferencesWidget] get_backlinks failed:', e);
+      console.error('[ReferencesWidget] load failed:', e);
       this._renderEmpty();
     }
   }
 
-  _render(entries) {
+  _render(linked, unlinked) {
     if (!this._body) return;
 
+    const total = linked.length + unlinked.length;
     if (this._countEl) {
-      this._countEl.textContent = entries.length === 0
-        ? '' : `${entries.length}`;
+      this._countEl.textContent = total === 0 ? '' : `${total}`;
     }
 
-    if (entries.length === 0) {
+    if (total === 0) {
       this._renderEmpty();
       return;
     }
 
     this._onHasReferences();
 
-    const items = entries.map(e => {
+    const renderItem = (e) => {
       const title = e.source_title || basename(e.source_path).replace(/\.[^.]+$/, '');
       const ctx   = e.context
         ? `<p class="mt-0.5 ml-3.5 text-xs text-olive-500 italic leading-snug">${esc(e.context)}</p>`
@@ -88,9 +97,22 @@ export class ReferencesWidget extends Widget {
              data-path="${esc(e.source_path)}">${esc(title)}</a>
           ${ctx}
         </div>`;
-    }).join('');
+    };
 
-    this._body.innerHTML = `<div class="flex flex-col">${items}</div>`;
+    const renderSection = (label, count, items) =>
+      `<div class="flex-1 min-w-44 flex flex-col border-r border-olive-700/50 last:border-r-0">
+         <div class="px-3 py-1 text-xs font-semibold tracking-wide uppercase text-olive-600
+                     border-b border-olive-700 bg-olive-900/60 shrink-0">${label}
+           <span class="font-normal normal-case">(${count})</span>
+         </div>
+         <div class="flex flex-col">${items.map(renderItem).join('')}</div>
+       </div>`;
+
+    let sections = '';
+    if (linked.length > 0)   sections += renderSection('Linked',   linked.length,   linked);
+    if (unlinked.length > 0) sections += renderSection('Unlinked', unlinked.length, unlinked);
+
+    this._body.innerHTML = `<div class="flex flex-wrap">${sections}</div>`;
   }
 
   _renderEmpty() {
@@ -99,7 +121,7 @@ export class ReferencesWidget extends Widget {
     this._body.innerHTML = `
       <div class="flex items-center gap-2 h-full px-4 text-olive-700">
         <i class="ph ph-arrows-in text-lg leading-none shrink-0"></i>
-        <p class="text-xs">No linked references to this page.</p>
+        <p class="text-xs">No references to this page.</p>
       </div>`;
   }
 }

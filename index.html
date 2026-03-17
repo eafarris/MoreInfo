@@ -101,7 +101,8 @@
       background: transparent;
       transition: background 150ms;
     }
-    .sb-resize:hover { background: rgba(14,165,233,0.15); }
+    .sb-resize:hover    { background: rgba(245,158,11,0.12); }
+    .sb-resize.is-resizing { background: rgba(245,158,11,0.22); }
 
     [data-sb-resize="left"]   { right:  0; top: 0; bottom: 0; width:  5px; cursor: ew-resize; }
     [data-sb-resize="right"]  { left:   0; top: 0; bottom: 0; width:  5px; cursor: ew-resize; }
@@ -117,10 +118,11 @@
     [data-sb-resize="right"] .sb-resize-dots  { flex-direction: column; }
     [data-sb-resize="top"]   .sb-resize-dots,
     [data-sb-resize="bottom"].sb-resize-dots  { flex-direction: row; }
-    .sb-resize:hover .sb-resize-dots { opacity: 1; }
+    .sb-resize:hover .sb-resize-dots,
+    .sb-resize.is-resizing .sb-resize-dots { opacity: 1; }
     .sb-resize-dots span {
       display: block; width: 3px; height: 3px;
-      border-radius: 50%; background: #71717a;
+      border-radius: 50%; background: #f59e0b;
     }
 
     /* ── Action button icons ────────────────────────────────── */

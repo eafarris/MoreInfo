@@ -28,6 +28,9 @@
 .cm-hashtag-punct { color: var(--color-olive-600); }
 .cm-hashtag       { color: var(--color-amber-400); }
 
+/* List item spacing: extra breathing room below each item */
+.cm-list-item { margin-bottom: 1em; }
+
 /* CodeMirror editor fills its container */
 .cm-editor {
   height: 100%;

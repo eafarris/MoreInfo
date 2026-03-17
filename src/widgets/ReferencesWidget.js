@@ -9,15 +9,6 @@ function esc(s) {
     .replace(/"/g, '&quot;');
 }
 
-function slugify(text) {
-  return text
-    .toLowerCase()
-    .trim()
-    .replace(/[^\w\s-]/g, '')
-    .replace(/[\s_]+/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-+|-+$/g, '');
-}
 
 function basename(path) {
   return path.replace(/\\/g, '/').split('/').pop();
@@ -60,12 +51,8 @@ export class ReferencesWidget extends Widget {
   async _load(path) {
     if (!path) { this._renderEmpty(); return; }
 
-    const stem = basename(path).replace(/\.[^.]+$/, '');
-    const slug = slugify(stem);
-    if (!slug) { this._renderEmpty(); return; }
-
     try {
-      const entries = await invoke('get_backlinks', { slug });
+      const entries = await invoke('get_backlinks', { path });
       if (path !== this._currentPath) return; // stale response
       this._render(entries);
     } catch (e) {

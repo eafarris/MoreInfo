@@ -275,7 +275,7 @@ fn open_db() -> Result<Connection, String> {
 
 /// Bump this whenever the schema or indexing logic changes in a way that
 /// requires existing cached data to be discarded and rebuilt.
-const SCHEMA_VERSION: i64 = 4;
+const SCHEMA_VERSION: i64 = 5;
 
 fn init_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch("
@@ -309,6 +309,13 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
             PRIMARY KEY (path, tag)
         );
         CREATE INDEX IF NOT EXISTS idx_ft_tag ON file_tags(tag);
+        CREATE TABLE IF NOT EXISTS file_aliases (
+            path       TEXT NOT NULL,
+            alias      TEXT NOT NULL,
+            alias_slug TEXT NOT NULL,
+            PRIMARY KEY (path, alias)
+        );
+        CREATE INDEX IF NOT EXISTS idx_fa_slug ON file_aliases(alias_slug);
     ").map_err(|e| e.to_string())?;
 
     // Migrate columns added after initial release (silently ignored if present).
@@ -330,7 +337,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
 
     if stored != Some(SCHEMA_VERSION) {
         conn.execute_batch(
-            "DELETE FROM wiki_links; DELETE FROM files; DELETE FROM fts; DELETE FROM file_tags;"
+            "DELETE FROM wiki_links; DELETE FROM files; DELETE FROM fts; DELETE FROM file_tags; DELETE FROM file_aliases;"
         ).map_err(|e| e.to_string())?;
         conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
@@ -354,6 +361,8 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
         conn.execute("DELETE FROM files WHERE path = ?1", [path_str])
             .map_err(|e| e.to_string())?;
         conn.execute("DELETE FROM file_tags WHERE path = ?1", [path_str])
+            .map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM file_aliases WHERE path = ?1", [path_str])
             .map_err(|e| e.to_string())?;
         return Ok(());
     }
@@ -420,6 +429,49 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
             "INSERT OR IGNORE INTO file_tags (path, tag) VALUES (?1, ?2)",
             rusqlite::params![path_str, tag],
         ).map_err(|e| e.to_string())?;
+    }
+
+    // Aliases: collect from `alias` (string) and `aliases` (array), normalised to lowercase.
+    let mut alias_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+
+    for key in ["alias", "Alias", "ALIAS"] {
+        if let Some(val) = fm.get(key) {
+            match val {
+                front_matter::Value::Text(t) | front_matter::Value::Date(t) => {
+                    let a = t.trim().to_lowercase();
+                    if !a.is_empty() { alias_set.insert(a); }
+                }
+                front_matter::Value::Array(arr) => {
+                    for a in arr {
+                        let a = a.trim().to_lowercase();
+                        if !a.is_empty() { alias_set.insert(a); }
+                    }
+                }
+            }
+            break;
+        }
+    }
+
+    for key in ["aliases", "Aliases", "ALIASES"] {
+        if let Some(front_matter::Value::Array(arr)) = fm.get(key) {
+            for a in arr {
+                let a = a.trim().to_lowercase();
+                if !a.is_empty() { alias_set.insert(a); }
+            }
+            break;
+        }
+    }
+
+    conn.execute("DELETE FROM file_aliases WHERE path = ?1", [path_str])
+        .map_err(|e| e.to_string())?;
+    for alias in &alias_set {
+        let alias_slug = slugify(alias);
+        if !alias_slug.is_empty() {
+            conn.execute(
+                "INSERT OR IGNORE INTO file_aliases (path, alias, alias_slug) VALUES (?1, ?2, ?3)",
+                rusqlite::params![path_str, alias, alias_slug],
+            ).map_err(|e| e.to_string())?;
+        }
     }
 
     Ok(())
@@ -547,19 +599,30 @@ struct BacklinkEntry {
 }
 
 #[tauri::command]
-fn get_backlinks(slug: String) -> Result<Vec<BacklinkEntry>, String> {
+fn get_backlinks(path: String) -> Result<Vec<BacklinkEntry>, String> {
     let conn = open_db()?;
     init_schema(&conn)?;
 
+    // Derive the title slug for this page so we can match [[Title]] links.
+    let title: String = conn.query_row(
+        "SELECT title FROM files WHERE path = ?1",
+        [&path],
+        |row| row.get(0),
+    ).unwrap_or_default();
+    let title_slug = slugify(&title);
+
+    // Match wiki_links whose target_slug equals the title slug OR any alias slug.
     let mut stmt = conn.prepare(
         "SELECT wl.source_path, COALESCE(f.title, ''), wl.context
          FROM wiki_links wl
          LEFT JOIN files f ON f.path = wl.source_path
-         WHERE wl.target_slug = ?1
+         WHERE wl.source_path != ?1
+           AND (wl.target_slug = ?2
+                OR wl.target_slug IN (SELECT alias_slug FROM file_aliases WHERE path = ?1))
          ORDER BY wl.source_path"
     ).map_err(|e| e.to_string())?;
 
-    let rows = stmt.query_map([&slug], |row| {
+    let rows = stmt.query_map(rusqlite::params![&path, &title_slug], |row| {
         Ok(BacklinkEntry {
             source_path:  row.get(0)?,
             source_title: row.get(1)?,
@@ -574,8 +637,9 @@ fn get_backlinks(slug: String) -> Result<Vec<BacklinkEntry>, String> {
 /// Return all indexed pages as (title, path) pairs for autocomplete.
 #[derive(serde::Serialize)]
 struct PageEntry {
-    title: String,
-    path:  String,
+    title:   String,
+    path:    String,
+    aliases: Vec<String>,
 }
 
 #[tauri::command]
@@ -583,17 +647,19 @@ fn list_pages() -> Result<Vec<PageEntry>, String> {
     let conn = open_db()?;
     init_schema(&conn)?;
     let mut stmt = conn.prepare(
-        "SELECT path, title FROM files"
+        "SELECT f.path, f.title, COALESCE(GROUP_CONCAT(fa.alias, '|||'), '') AS aliases
+         FROM files f
+         LEFT JOIN file_aliases fa ON fa.path = f.path
+         GROUP BY f.path"
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map([], |row| {
-        let path:  String = row.get(0)?;
-        let title: String = row.get(1)?;
-        Ok((path, title))
+        let path:        String = row.get(0)?;
+        let title:       String = row.get(1)?;
+        let aliases_raw: String = row.get(2)?;
+        Ok((path, title, aliases_raw))
     }).map_err(|e| e.to_string())?;
 
-    let mut entries: Vec<PageEntry> = rows.filter_map(|r| r.ok()).map(|(path, title)| {
-        // Fall back to filename stem when the DB has no title, so pages
-        // without front-matter or an H1 are still discoverable.
+    let mut entries: Vec<PageEntry> = rows.filter_map(|r| r.ok()).map(|(path, title, aliases_raw)| {
         let display = if title.trim().is_empty() {
             std::path::Path::new(&path)
                 .file_stem()
@@ -604,7 +670,12 @@ fn list_pages() -> Result<Vec<PageEntry>, String> {
         } else {
             title
         };
-        PageEntry { path, title: display }
+        let aliases: Vec<String> = if aliases_raw.is_empty() {
+            vec![]
+        } else {
+            aliases_raw.split("|||").map(|s| s.to_string()).collect()
+        };
+        PageEntry { path, title: display, aliases }
     }).collect();
 
     entries.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));

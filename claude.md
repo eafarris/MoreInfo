@@ -153,7 +153,7 @@ Search
 - [X] Basic widget API
 - [ ] Counter widget
 - [ ] Outline widget
-- [ ] Page widget
+- [X] Page widget
 - [ ] Browser widget
 - [ ] Search widget
 - [X] Wiki links

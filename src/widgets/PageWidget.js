@@ -179,14 +179,13 @@ export class PageWidget extends Widget {
       items.push({ _journal: true, date: parsedDate, title: `Journal: ${formatJournalDate(parsedDate)}` });
     }
 
-    // Match against title OR filename slug — pages whose title differs from
-    // their filename (e.g. zoom-tips.md titled "Removing screen detritus")
-    // are still discoverable by typing part of the filename.
+    // Match against title, filename slug, or any alias.
     this._allPages
       .filter(p => {
         const titleMatch = p.title.toLowerCase().includes(lq);
         const slugMatch  = this._slug(p.path).includes(lq);
-        return titleMatch || slugMatch;
+        const aliasMatch = (p.aliases || []).some(a => a.includes(lq));
+        return titleMatch || slugMatch || aliasMatch;
       })
       .slice(0, 10)
       .forEach(p => items.push(p));
@@ -306,8 +305,10 @@ export class PageWidget extends Widget {
         a.addEventListener('click', e => {
           e.preventDefault();
           const linkTitle = a.dataset.wikiTitle;
-          const target    = this._allPages.find(
-            p => p.title.toLowerCase() === linkTitle.toLowerCase()
+          const lc = linkTitle.toLowerCase();
+          const target = this._allPages.find(
+            p => p.title.toLowerCase() === lc ||
+                 (p.aliases || []).some(al => al === lc)
           );
           if (target) {
             this._searchInput.value    = target.title;

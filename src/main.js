@@ -3,7 +3,9 @@ import { invoke } from './tauri.js';
 import { CalendarWidget }    from './widgets/CalendarWidget.js';
 import { MetadataWidget }    from './widgets/MetadataWidget.js';
 import { ReferencesWidget }  from './widgets/ReferencesWidget.js';
+import { PageWidget }        from './widgets/PageWidget.js';
 import { createEditor, setEditorPages } from './editor.js';
+import { formatJournalDate } from './dateUtils.js';
 
 // ── State ─────────────────────────────────────────
 
@@ -76,15 +78,8 @@ function updateCursor(line, col) {
 }
 
 // ── Date formatting ───────────────────────────────
-
-const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
-function formatDateLong(iso) {
-  try {
-    const d = new Date(iso + 'T12:00:00');
-    return `${d.getDate()} ${MONTH_ABBR[d.getMonth()]} ${d.getFullYear()}`;
-  } catch { return iso; }
-}
+// formatJournalDate() imported from dateUtils.js — use that as the single source.
+const formatDateLong = formatJournalDate;
 
 // ── Title derivation ──────────────────────────────
 
@@ -273,6 +268,7 @@ async function autoSave(content) {
     await invoke('write_file', { path, content });
     if (!currentFile) setCurrentFile(path);
     setModified(false);
+    mountedWidgets.forEach(w => w.onFileSaved(path));
   } catch (e) {
     console.error('autoSave failed:', e);
   }
@@ -594,6 +590,14 @@ invoke('get_datastore_path').then(p => { datastorePath = p; }).catch(console.err
       setIndexStatus('<i class="ph ph-warning leading-none text-yellow-300"></i><span class="text-yellow-300">Index failed</span>');
     });
 }());
+
+mountWidgets('left', [
+  new PageWidget({
+    onOpenInEditor: openWikiPage,
+    onOpenJournal:  openJournalDate,
+    onEditPage:     openFilePath,
+  }),
+]);
 
 mountWidgets('right', [
   new CalendarWidget({ onDateSelected: openJournalDate }),

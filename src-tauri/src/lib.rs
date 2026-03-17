@@ -459,6 +459,23 @@ fn get_datastore_path() -> Result<String, String> {
     Ok(datastore_dir()?.to_string_lossy().to_string())
 }
 
+/// Recursively collect all `.md` files under `dir` into `out`.
+/// Skips hidden entries (names starting with `.`) to avoid `.git`, `.DS_Store`, etc.
+fn collect_md_files(dir: &std::path::Path, out: &mut std::collections::HashSet<String>) -> Result<(), String> {
+    if !dir.exists() { return Ok(()); }
+    for entry in std::fs::read_dir(dir).map_err(|e| e.to_string())?.filter_map(|e| e.ok()) {
+        let path = entry.path();
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        if name.starts_with('.') { continue; }
+        if path.is_dir() {
+            collect_md_files(&path, out)?;
+        } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
+            out.insert(path.to_string_lossy().to_string());
+        }
+    }
+    Ok(())
+}
+
 /// Scan the datastore for new or modified markdown files and update the
 /// wiki-link cache in `moreinfo.sqlite`.
 ///
@@ -471,31 +488,27 @@ fn index_datastore() -> Result<u32, String> {
     let mut disk_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut to_index:   Vec<String>                       = Vec::new();
 
-    for dir in [journal_dir()?, wiki_dir()?] {
-        if !dir.exists() { continue; }
-        for entry in std::fs::read_dir(&dir).map_err(|e| e.to_string())?.filter_map(|e| e.ok()) {
-            let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("md") { continue; }
+    // Walk the entire datastore so category folders and any future
+    // top-level directories are included automatically.
+    collect_md_files(&datastore_dir()?, &mut disk_paths)?;
 
-            let path_str = path.to_string_lossy().to_string();
-            disk_paths.insert(path_str.clone());
+    for path_str in &disk_paths {
+        let path = std::path::Path::new(path_str);
+        let meta     = std::fs::metadata(path).map_err(|e| e.to_string())?;
+        let modified = meta.modified()
+            .map_err(|e| e.to_string())?
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_secs() as i64;
 
-            let meta     = std::fs::metadata(&path).map_err(|e| e.to_string())?;
-            let modified = meta.modified()
-                .map_err(|e| e.to_string())?
-                .duration_since(std::time::UNIX_EPOCH)
-                .map_err(|e| e.to_string())?
-                .as_secs() as i64;
+        let cached: Option<i64> = conn.query_row(
+            "SELECT modified FROM files WHERE path = ?1",
+            [path_str],
+            |row| row.get(0),
+        ).ok();
 
-            let cached: Option<i64> = conn.query_row(
-                "SELECT modified FROM files WHERE path = ?1",
-                [&path_str],
-                |row| row.get(0),
-            ).ok();
-
-            if cached != Some(modified) {
-                to_index.push(path_str);
-            }
+        if cached != Some(modified) {
+            to_index.push(path_str.clone());
         }
     }
 
@@ -570,12 +583,32 @@ fn list_pages() -> Result<Vec<PageEntry>, String> {
     let conn = open_db()?;
     init_schema(&conn)?;
     let mut stmt = conn.prepare(
-        "SELECT path, title FROM files ORDER BY title COLLATE NOCASE"
+        "SELECT path, title FROM files"
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map([], |row| {
-        Ok(PageEntry { path: row.get(0)?, title: row.get(1)? })
+        let path:  String = row.get(0)?;
+        let title: String = row.get(1)?;
+        Ok((path, title))
     }).map_err(|e| e.to_string())?;
-    Ok(rows.filter_map(|r| r.ok()).collect())
+
+    let mut entries: Vec<PageEntry> = rows.filter_map(|r| r.ok()).map(|(path, title)| {
+        // Fall back to filename stem when the DB has no title, so pages
+        // without front-matter or an H1 are still discoverable.
+        let display = if title.trim().is_empty() {
+            std::path::Path::new(&path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .replace('-', " ")
+                .replace('_', " ")
+        } else {
+            title
+        };
+        PageEntry { path, title: display }
+    }).collect();
+
+    entries.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+    Ok(entries)
 }
 
 /// Read the raw content of any file by absolute path.

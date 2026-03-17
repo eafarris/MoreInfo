@@ -105,4 +105,11 @@ export class Widget {
    * @param {object} metadata  Parsed front-matter key→{type, value} map
    */
   onFileOpen(path, content, metadata) {}
+
+  /**
+   * Called after a file is successfully saved (auto-save or explicit).
+   * The DB index is already updated by the time this fires.
+   * @param {string} path  Absolute path of the file that was saved
+   */
+  onFileSaved(path) {}
 }

@@ -19,6 +19,7 @@ import {
   HighlightStyle,
   indentOnInput,
   bracketMatching,
+  syntaxTree,
 } from '@codemirror/language';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { autocompletion, closeBrackets, acceptCompletion } from '@codemirror/autocomplete';
@@ -95,12 +96,12 @@ export const miHighlightStyle = HighlightStyle.define([
   { tag: tags.strong,          fontWeight: 'bold'                                         },
   { tag: tags.emphasis,        fontStyle: 'italic'                                        },
   { tag: tags.strikethrough,   textDecoration: 'line-through'                             },
-  { tag: tags.link,            color: '#fbbf24'                                           },
-  { tag: tags.url,             color: '#fbbf24', textDecoration: 'underline'              },
-  { tag: tags.monospace,       color: 'oklch(73.7% 0.021 106.9)'  /* olive-400 */        },
-  { tag: tags.meta,            color: 'oklch(46.6% 0.025 107.3)'  /* olive-600 */        },
-  { tag: tags.comment,         color: 'oklch(46.6% 0.025 107.3)',  fontStyle: 'italic'   },
-  { tag: tags.processingInstruction, color: 'oklch(46.6% 0.025 107.3)'                   },
+  { tag: tags.link,            color: 'inherit'                                           }, // via linkPlugin
+  { tag: tags.url,             color: 'inherit'                                           }, // via linkPlugin
+  { tag: tags.monospace,       color: 'inherit'                                          }, // colored via inlineCodePlugin
+  { tag: tags.meta,                  color: 'oklch(46.6% 0.025 107.3)' /* fallback */   },
+  { tag: tags.comment,               color: 'oklch(46.6% 0.025 107.3)', fontStyle: 'italic' },
+  { tag: tags.processingInstruction, color: 'oklch(46.6% 0.025 107.3)' /* fallback */   },
   { tag: tags.contentSeparator, color: 'oklch(39.4% 0.023 107.4)' /* olive-700 */       },
   { tag: tags.list,             color: 'inherit'                                         }, // colored via listMarkerPlugin instead
   { tag: tags.atom,            color: '#fbbf24'                                           },
@@ -191,6 +192,149 @@ const listMarkerPlugin = ViewPlugin.fromClass(class {
         }
         pos = line.to + 1;
       }
+    }
+    return Decoration.set(deco, true);
+  }
+}, { decorations: v => v.decorations });
+
+// ── Delimiter (decorative markup) decoration ───────────────────────────────
+// Stamps cm-meta on delimiter nodes so they are dimmed consistently whether
+// they appear in normal paragraphs or inside list items.  The HighlightStyle
+// entries for tags.meta / tags.processingInstruction serve as fallback only.
+
+const DELIMITER_NODES = new Set([
+  'EmphasisMark',      // * _ ** __
+  'StrikethroughMark', // ~~
+  'CodeMark',          // `  (backtick — inside InlineCode)
+]);
+
+const delimiterPlugin = ViewPlugin.fromClass(class {
+  constructor(view) { this.decorations = this._build(view); }
+  update(u) {
+    if (u.docChanged || u.viewportChanged) this.decorations = this._build(u.view);
+  }
+  _build(view) {
+    const deco = [];
+    const tree = syntaxTree(view.state);
+    for (const { from, to } of view.visibleRanges) {
+      tree.iterate({
+        from, to,
+        enter(node) {
+          if (DELIMITER_NODES.has(node.name)) {
+            deco.push(Decoration.mark({ class: 'cm-meta' }).range(node.from, node.to));
+          }
+        },
+      });
+    }
+    return Decoration.set(deco, true);
+  }
+}, { decorations: v => v.decorations });
+
+// ── Markdown link decoration ───────────────────────────────────────────────
+// [link text](url)
+//  ↑         ↑↑↑ — cm-meta (dimmed)
+//   ↑↑↑↑↑↑↑↑    — cm-link-text (amber)
+// Not handled by delimiterPlugin so LinkMark is not in DELIMITER_NODES.
+
+const linkPlugin = ViewPlugin.fromClass(class {
+  constructor(view) { this.decorations = this._build(view); }
+  update(u) {
+    if (u.docChanged || u.viewportChanged) this.decorations = this._build(u.view);
+  }
+  _build(view) {
+    const deco = [];
+    const tree = syntaxTree(view.state);
+    for (const { from, to } of view.visibleRanges) {
+      tree.iterate({
+        from, to,
+        enter(node) {
+          if (node.name !== 'Link') return;
+          const cursor = node.node.cursor();
+          if (!cursor.firstChild()) return;
+          let textEnd = null;
+          do {
+            if (cursor.name === 'LinkMark') {
+              deco.push(Decoration.mark({ class: 'cm-meta' }).range(cursor.from, cursor.to));
+              // First ']' marks the end of the link text
+              if (textEnd === null &&
+                  view.state.doc.sliceString(cursor.from, cursor.to) === ']') {
+                textEnd = cursor.from;
+              }
+            } else if (cursor.name === 'URL') {
+              deco.push(Decoration.mark({ class: 'cm-meta' }).range(cursor.from, cursor.to));
+            }
+          } while (cursor.nextSibling());
+          // Highlight the link display text (between [ and ])
+          if (textEnd !== null && node.from + 1 < textEnd) {
+            deco.push(Decoration.mark({ class: 'cm-link-text' }).range(node.from + 1, textEnd));
+          }
+        },
+      });
+    }
+    return Decoration.set(deco, true);
+  }
+}, { decorations: v => v.decorations });
+
+// ── URL decoration ─────────────────────────────────────────────────────────
+// Styles bare URLs (GFM autolinks) and <angle-bracket> autolinks.
+// URL nodes that are children of Link are handled by linkPlugin — skip them.
+//
+// GFM bare URL  →  URL node directly in inline content  →  cm-url
+// <url> autolink → Autolink wrapping URL child;
+//                  '<' / '>' are outside URL bounds     →  cm-meta
+
+const urlPlugin = ViewPlugin.fromClass(class {
+  constructor(view) { this.decorations = this._build(view); }
+  update(u) {
+    if (u.docChanged || u.viewportChanged) this.decorations = this._build(u.view);
+  }
+  _build(view) {
+    const deco = [];
+    const tree = syntaxTree(view.state);
+    for (const { from, to } of view.visibleRanges) {
+      tree.iterate({
+        from, to,
+        enter(node) {
+          if (node.name !== 'URL') return;
+          const parent = node.node.parent;
+          if (parent && parent.name === 'Link') return; // handled by linkPlugin
+          deco.push(Decoration.mark({ class: 'cm-url' }).range(node.from, node.to));
+          // Dim the < > angle brackets of <url> autolinks
+          if (parent && parent.name === 'Autolink') {
+            if (parent.from < node.from)
+              deco.push(Decoration.mark({ class: 'cm-meta' }).range(parent.from, node.from));
+            if (node.to < parent.to)
+              deco.push(Decoration.mark({ class: 'cm-meta' }).range(node.to, parent.to));
+          }
+        },
+      });
+    }
+    return Decoration.set(deco, true);
+  }
+}, { decorations: v => v.decorations });
+
+// ── Inline code decoration ─────────────────────────────────────────────────
+// Applies cm-inline-code to every InlineCode node in the syntax tree,
+// regardless of whether it sits inside a list item or regular paragraph.
+// Sharing one class makes theming straightforward.
+
+const inlineCodePlugin = ViewPlugin.fromClass(class {
+  constructor(view) { this.decorations = this._build(view); }
+  update(u) {
+    if (u.docChanged || u.viewportChanged) this.decorations = this._build(u.view);
+  }
+  _build(view) {
+    const deco = [];
+    const tree = syntaxTree(view.state);
+    for (const { from, to } of view.visibleRanges) {
+      tree.iterate({
+        from, to,
+        enter(node) {
+          if (node.name === 'InlineCode') {
+            deco.push(Decoration.mark({ class: 'cm-inline-code' }).range(node.from, node.to));
+          }
+        },
+      });
     }
     return Decoration.set(deco, true);
   }
@@ -365,6 +509,10 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
       wikilinkPlugin,
       hashtagPlugin,
       listMarkerPlugin,
+      delimiterPlugin,
+      linkPlugin,
+      urlPlugin,
+      inlineCodePlugin,
       EditorView.lineWrapping,
       surroundHandler,
       wikiLinkPunctHandler,

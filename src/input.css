@@ -24,6 +24,10 @@
 .cm-hashtag-punct  { color: var(--color-olive-600); }
 .cm-hashtag        { color: var(--color-amber-400); }
 .cm-list-marker    { color: var(--color-amber-300); }
+.cm-meta           { color: var(--color-olive-600); }
+.cm-link-text      { color: var(--color-amber-400); }
+.cm-url            { color: var(--color-olive-500); text-decoration: underline; text-decoration-style: dotted; text-decoration-color: var(--color-olive-600); text-underline-offset: 3px; }
+.cm-inline-code    { color: var(--color-amber-300); background: color-mix(in srgb, var(--color-olive-700) 50%, transparent); border-radius: 3px; padding: 0 3px; }
 
 
 /* CodeMirror editor fills its container */

@@ -67,7 +67,12 @@ export class PageWidget extends Widget {
 
     this._renderEmpty();
 
-    invoke('list_pages').then(p => { this._allPages = p; }).catch(console.error);
+    invoke('list_pages').then(p => {
+      this._allPages = p;
+      // Restore the last open page now that we have the page list
+      const state = this.loadState();
+      if (state?.path) this.loadPath(state.path, state.title || '');
+    }).catch(console.error);
 
     // ── Input events ────────────────────────────────────────────────────────
 
@@ -111,6 +116,7 @@ export class PageWidget extends Widget {
       this._clearBtn.style.display = 'none';
       this._hideAc();
       this._renderEmpty();
+      this.clearState();
       this._searchInput.focus();
     });
 
@@ -268,6 +274,7 @@ export class PageWidget extends Widget {
 
   async _loadPage(path, title) {
     this._currentPath = path;
+    this.saveState({ path, title });
     this._contentEl.innerHTML = `
       <div class="flex items-center justify-center py-10 text-olive-700">
         <i class="ph ph-circle-notch animate-spin text-xl leading-none"></i>

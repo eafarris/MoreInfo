@@ -6,15 +6,16 @@
   <title>MoreInfo</title>
 
 
-  <!-- Phosphor Icons (regular weight) -->
+  <!-- Phosphor Icons (regular + bold weights) -->
   <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css" />
+  <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/bold/style.css" />
 
   <style>
     /* Scrollbars */
     ::-webkit-scrollbar            { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track      { background: transparent; }
-    ::-webkit-scrollbar-thumb      { background: #3f3f46; border-radius: 3px; }
-    ::-webkit-scrollbar-thumb:hover{ background: #52525b; }
+    ::-webkit-scrollbar-thumb      { background: var(--color-olive-700); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover{ background: var(--color-olive-600); }
 
     /* Render mode: side-by-side editor + preview */
     [data-mode="render"] #h-divider,
@@ -28,15 +29,16 @@
 
     /* ── Sidebar layout ───────────────────────────────────────
        VS Code model:
-         content-row (flex-row)
-           left-sidebar   (full height flex child)
-           center-column  (flex-col, flex-1)
-             top-sidebar
-             editor-area
-             bottom-sidebar
-           right-sidebar  (full height flex child)
-       This means T/B sidebars only span the center column width,
-       never overlapping the L/R sidebars.
+         main-area (flex-col, position:relative — top flyout anchored here)
+           top-sidebar   (full width, above content-row)
+           content-row   (flex-row)
+             left-sidebar   (full height flex child)
+             center-column  (flex-col, flex-1, position:relative — bottom flyout anchored here)
+               editor-area
+               bottom-sidebar
+             right-sidebar  (full height flex child)
+       The top sidebar lives above content-row so it frames the window
+       and does not overlap the editor title bar.
     ─────────────────────────────────────────────────────────── */
 
     /* Give every sidebar position:relative so its absolute resize
@@ -52,12 +54,12 @@
     #top-sidebar[data-sb-state="hidden"],
     #bottom-sidebar[data-sb-state="hidden"] { display: none; }
 
-    /* flyout: overlays the center column; does not affect layout.
+    /* flyout: overlays adjacent content.
        L/R are contained by #content-row (position:relative).
-       T/B are contained by #center-column (position:relative).
+       Top is contained by #main-area (position:relative).
+       Bottom is contained by #center-column (position:relative).
        Background opacity + backdrop-blur are applied via Tailwind
-       data-attribute variants on the element itself, so the blur
-       is geometrically scoped to only the content behind that sidebar. */
+       data-attribute variants on the element itself. */
     #left-sidebar[data-sb-state="flyout"] {
       position: absolute; left: 0; top: 0; bottom: 0; z-index: 20;
       box-shadow: 4px 0 24px rgba(0,0,0,0.65);
@@ -133,8 +135,11 @@
     [data-sb-state="pinned"] .sb-icon-close { display: inline; }
 
     /* ── Collapsed edge tabs ──────────────────────────────────
-       Thin strips at each edge shown when the sidebar is hidden.
-       L/R tabs live inside #content-row; T/B inside #center-column.
+       Invisible hit areas at each edge when the sidebar is hidden.
+       On mouse-in they fade into view (peek state); after a short
+       delay the flyout opens. Mouse-out cancels and fades back out.
+       L/R tabs live inside #content-row (position:relative).
+       Bottom tab lives inside #center-column (position:relative).
     ─────────────────────────────────────────────────────────── */
 
     .sb-collapsed {
@@ -142,18 +147,32 @@
       display: none;
       align-items: center; justify-content: center;
       cursor: pointer;
-      transition: background 120ms;
     }
-    .sb-collapsed.sb-visible { display: flex; }
+    /* Visible (sidebar hidden): present but invisible until hovered */
+    .sb-collapsed.sb-visible {
+      display: flex;
+      opacity: 0;
+      transition: opacity 150ms, background 150ms;
+    }
+    /* Peek state: strip fades in on mouse-in */
+    .sb-collapsed.sb-peek {
+      opacity: 1;
+      background: rgba(245, 158, 11, 0.12);
+    }
 
-    #collapsed-left   { left:   0; top:    0; bottom: 0; width:  14px; background:#1a1a1a; border-right:  1px solid #3f3f46; }
-    #collapsed-right  { right:  0; top:    0; bottom: 0; width:  14px; background:#1a1a1a; border-left:   1px solid #3f3f46; }
-    #collapsed-top    { top:    0; left:   0; right:  0; height: 14px; background:#1a1a1a; border-bottom: 1px solid #3f3f46; }
-    #collapsed-bottom { bottom: 0; left:   0; right:  0; height: 14px; background:#1a1a1a; border-top:    1px solid #3f3f46; }
+    /* Top collapsed tab: disabled — kept in flow but never shown */
+    #collapsed-top {
+      position: relative; top: auto; left: auto; right: auto;
+      width: 100%; height: 8px;
+    }
 
-    .sb-collapsed:hover           { background: #232323 !important; }
-    .sb-collapsed:hover .sb-caret { color: #a1a1aa; }
-    .sb-caret { color: #52525b; font-size: 9px; line-height: 1; }
+    #collapsed-left   { left:   0; top: 0; bottom: 0; width:  8px; }
+    #collapsed-right  { right:  0; top: 0; bottom: 0; width:  8px; }
+    #collapsed-bottom { bottom: 0; left: 0; right:  0; height: 8px; }
+
+    /* Caret: invisible until peek, then amber */
+    .sb-caret { color: transparent; font-size: 9px; line-height: 1; transition: color 150ms; }
+    .sb-collapsed.sb-peek .sb-caret { color: rgba(245, 158, 11, 0.7); }
 
   </style>
 </head>
@@ -171,7 +190,7 @@
         class="flex items-center justify-center w-6 h-6 rounded text-olive-400 hover:bg-olive-700 hover:text-white transition-colors data-active:text-olive-200">
         <i class="ph ph-sidebar-simple text-base leading-none"></i>
       </button>
-      <button id="btn-toggle-top" title="Toggle top panel"
+      <button id="btn-toggle-top" title="Toggle top panel" style="display:none"
         class="flex items-center justify-center w-6 h-6 rounded text-olive-400 hover:bg-olive-700 hover:text-white transition-colors data-active:text-olive-200">
         <i class="ph ph-sidebar-simple text-base leading-none" style="transform:rotate(-90deg)"></i>
       </button>
@@ -183,6 +202,13 @@
     </div>
 
     <div class="flex items-center gap-1.5" style="-webkit-app-region: no-drag">
+      <button id="btn-today" title="Open today's journal"
+        class="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs text-olive-400 hover:bg-olive-700 hover:text-white transition-colors border border-olive-700">
+        <i class="ph ph-calendar-star text-sm leading-none"></i>Today
+      </button>
+
+      <div class="w-px h-4 bg-olive-700"></div>
+
       <div class="flex rounded border border-olive-700 overflow-hidden text-xs">
         <button data-mode="edit" title="Edit only"
           class="flex items-center gap-1.5 px-2.5 py-1 text-olive-400 hover:bg-olive-700 transition-colors data-active:bg-amber-600 data-active:text-white">
@@ -206,140 +232,151 @@
   <!-- ── Breadcrumb bar ───────────────────────────────────────────── -->
   <nav id="breadcrumbs" class="flex items-center gap-0.5 px-3 text-xs text-olive-500 bg-olive-850 border-b border-olive-700/60 overflow-x-auto whitespace-nowrap shrink-0" style="display:none; min-height:1.75rem"></nav>
 
-  <!-- ── Content row ──────────────────────────────────────────────
-       flex-row: left-sidebar | center-column | right-sidebar
-       position:relative so L/R flyouts are contained here.
+  <!-- ── Main area ────────────────────────────────────────────────
+       flex-col: top-sidebar | content-row
+       position:relative so the top flyout is anchored here.
   ──────────────────────────────────────────────────────────────── -->
-  <div id="content-row" class="flex flex-1 min-h-0 overflow-hidden relative">
+  <div id="main-area" class="flex flex-col flex-1 min-h-0 overflow-hidden relative">
 
-    <!-- Collapsed edge tabs for L/R (anchored to content-row) -->
-    <div id="collapsed-left"  class="sb-collapsed"><i class="ph ph-caret-right sb-caret"></i></div>
-    <div id="collapsed-right" class="sb-collapsed"><i class="ph ph-caret-left  sb-caret"></i></div>
+    <!-- Collapsed edge tab for top (in normal flow, sits above content-row
+         so the strip appears between the toolbar and the editor title bar) -->
+    <div id="collapsed-top" class="sb-collapsed" style="display:none !important"><i class="ph ph-caret-down sb-caret"></i></div>
 
-    <!-- ── Left sidebar (full height) ───────────────────────── -->
-    <aside id="left-sidebar" data-sb-state="pinned"
-      class="shrink-0 border-r border-olive-700 flex flex-col bg-olive-900 data-[sb-state=flyout]:bg-olive-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
-      style="width:208px">
+    <!-- ── Top sidebar (full width, above content-row) ────────── -->
+    <div id="top-sidebar" data-sb-state="hidden"
+      class="shrink-0 border-b border-olive-700 flex flex-col bg-olive-900 data-[sb-state=flyout]:bg-olive-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
+      style="height:160px">
 
-      <!-- Right resize handle -->
-      <div class="sb-resize" data-sb-resize="left">
+      <!-- Bottom resize handle -->
+      <div class="sb-resize" data-sb-resize="top">
         <div class="sb-resize-dots"><span></span><span></span><span></span></div>
       </div>
-      <!-- Header: label + action button -->
-      <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700/60" style="background:#1c1c1c">
-        <span class="text-xs font-semibold text-olive-600 tracking-wider uppercase">Left Sidebar</span>
+      <!-- Header -->
+      <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700/60 bg-olive-800">
+        <span class="text-xs font-semibold text-olive-600 tracking-wider uppercase">Top Panel</span>
         <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-300 hover:bg-olive-700 transition-colors">
           <i class="sb-icon-pin ph ph-push-pin text-xs leading-none"></i>
           <i class="sb-icon-close ph ph-x text-xs leading-none"></i>
         </button>
       </div>
       <!-- Widget stack -->
-      <div class="widget-stack flex-1 min-h-0 flex flex-col" data-widgets="left"></div>
-    </aside>
+      <div class="widget-stack flex-1 min-h-0 flex flex-col" data-widgets="top"></div>
+    </div>
 
-    <!-- ── Center column ─────────────────────────────────────────
-         flex-col: top-sidebar | editor-area | bottom-sidebar
-         position:relative so T/B flyouts are contained here.
-    ──────────────────────────────────────────────────────────── -->
-    <div id="center-column" class="flex flex-col flex-1 min-h-0 overflow-hidden relative">
+    <!-- ── Content row ──────────────────────────────────────────────
+         flex-row: left-sidebar | center-column | right-sidebar
+         position:relative so L/R flyouts are contained here.
+    ──────────────────────────────────────────────────────────────── -->
+    <div id="content-row" class="flex flex-1 min-h-0 overflow-hidden relative">
 
-      <!-- Collapsed edge tabs for T/B (anchored to center-column) -->
-      <div id="collapsed-top"    class="sb-collapsed"><i class="ph ph-caret-down sb-caret"></i></div>
-      <div id="collapsed-bottom" class="sb-collapsed"><i class="ph ph-caret-up   sb-caret"></i></div>
+      <!-- Collapsed edge tabs for L/R (anchored to content-row) -->
+      <div id="collapsed-left"  class="sb-collapsed"><i class="ph ph-caret-right sb-caret"></i></div>
+      <div id="collapsed-right" class="sb-collapsed"><i class="ph ph-caret-left  sb-caret"></i></div>
 
-      <!-- ── Top sidebar ────────────────────────────────────── -->
-      <div id="top-sidebar" data-sb-state="hidden"
-        class="shrink-0 border-b border-olive-700 flex flex-col bg-olive-900 data-[sb-state=flyout]:bg-olive-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
-        style="height:160px">
+      <!-- ── Left sidebar (full height) ───────────────────────── -->
+      <aside id="left-sidebar" data-sb-state="pinned"
+        class="shrink-0 border-r border-olive-700 flex flex-col bg-olive-900 data-[sb-state=flyout]:bg-olive-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
+        style="width:208px">
 
-        <!-- Bottom resize handle -->
-        <div class="sb-resize" data-sb-resize="top">
+        <!-- Right resize handle -->
+        <div class="sb-resize" data-sb-resize="left">
           <div class="sb-resize-dots"><span></span><span></span><span></span></div>
         </div>
-        <!-- Header -->
-        <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700/60" style="background:#1c1c1c">
-          <span class="text-xs font-semibold text-olive-600 tracking-wider uppercase">Top Panel</span>
+        <!-- Header: label + action button -->
+        <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700/60 bg-olive-800">
+          <span class="text-xs font-semibold text-olive-600 tracking-wider uppercase">Left Sidebar</span>
           <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-300 hover:bg-olive-700 transition-colors">
             <i class="sb-icon-pin ph ph-push-pin text-xs leading-none"></i>
             <i class="sb-icon-close ph ph-x text-xs leading-none"></i>
           </button>
         </div>
         <!-- Widget stack -->
-        <div class="widget-stack flex-1 min-h-0 flex flex-col" data-widgets="top"></div>
-      </div>
+        <div class="widget-stack flex-1 min-h-0 flex flex-col" data-widgets="left"></div>
+      </aside>
 
-      <!-- ── Editor area ─────────────────────────────────────── -->
-      <main id="editor-area" data-mode="edit"
-        class="flex flex-col flex-1 min-h-0 overflow-hidden">
+      <!-- ── Center column ─────────────────────────────────────────
+           flex-col: editor-area | bottom-sidebar
+           position:relative so the bottom flyout is anchored here.
+      ──────────────────────────────────────────────────────────── -->
+      <div id="center-column" class="flex flex-col flex-1 min-h-0 overflow-hidden relative">
 
-        <!-- Editor pane -->
-        <div id="editor-pane" class="flex-1 min-h-0 relative overflow-hidden">
-          <div id="doc-title" class="px-6 pt-5 pb-3 text-xl font-semibold text-olive-100 leading-tight select-text"></div>
-          <div id="editor" class="absolute inset-0"></div>
-        </div>
+        <!-- Collapsed edge tab for bottom (anchored to center-column) -->
+        <div id="collapsed-bottom" class="sb-collapsed"><i class="ph ph-caret-up sb-caret"></i></div>
 
-        <!-- Vertical resize handle (render mode only) -->
-        <div id="v-divider"
-          class="shrink-0 w-1.25 bg-olive-800 border-l border-r border-olive-700/60 cursor-col-resize group hover:bg-amber-950 transition-colors"
-          title="Drag to resize">
-          <div class="flex flex-col items-center justify-center h-full gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-            <span class="block w-1 h-1 rounded-full bg-olive-500"></span>
-            <span class="block w-1 h-1 rounded-full bg-olive-500"></span>
-            <span class="block w-1 h-1 rounded-full bg-olive-500"></span>
+        <!-- ── Editor area ─────────────────────────────────────── -->
+        <main id="editor-area" data-mode="edit"
+          class="flex flex-col flex-1 min-h-0 overflow-hidden">
+
+          <!-- Editor pane -->
+          <div id="editor-pane" class="flex-1 min-h-0 relative overflow-hidden">
+            <div id="doc-title" class="px-6 pt-5 pb-3 text-xl font-semibold text-olive-100 leading-tight select-text"></div>
+            <div id="editor" class="absolute inset-0"></div>
           </div>
+
+          <!-- Vertical resize handle (render mode only) -->
+          <div id="v-divider"
+            class="shrink-0 w-1.25 bg-olive-800 border-l border-r border-olive-700/60 cursor-col-resize group hover:bg-amber-950 transition-colors"
+            title="Drag to resize">
+            <div class="flex flex-col items-center justify-center h-full gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+              <span class="block w-1 h-1 rounded-full bg-olive-500"></span>
+              <span class="block w-1 h-1 rounded-full bg-olive-500"></span>
+              <span class="block w-1 h-1 rounded-full bg-olive-500"></span>
+            </div>
+          </div>
+
+          <!-- Markdown preview pane (render mode only) -->
+          <div id="markdown-pane" class="overflow-auto bg-olive-900">
+            <div id="markdown-content" class="prose prose-invert prose-sm max-w-none p-6 select-text"></div>
+          </div>
+        </main>
+
+        <!-- ── Bottom sidebar ─────────────────────────────────── -->
+        <div id="bottom-sidebar" data-sb-state="hidden"
+          class="shrink-0 border-t border-olive-700 flex flex-col bg-olive-900 data-[sb-state=flyout]:bg-olive-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
+          style="height:180px">
+
+          <!-- Top resize handle -->
+          <div class="sb-resize" data-sb-resize="bottom">
+            <div class="sb-resize-dots"><span></span><span></span><span></span></div>
+          </div>
+          <!-- Header -->
+          <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700/60 bg-olive-800">
+            <span class="text-xs font-semibold text-olive-600 tracking-wider uppercase">Bottom Panel</span>
+            <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-300 hover:bg-olive-700 transition-colors">
+              <i class="sb-icon-pin ph ph-push-pin text-xs leading-none"></i>
+              <i class="sb-icon-close ph ph-x text-xs leading-none"></i>
+            </button>
+          </div>
+          <!-- Widget stack: flex-row for side-by-side widgets -->
+          <div class="widget-stack flex-1 min-h-0 flex flex-row" data-widgets="bottom"></div>
         </div>
 
-        <!-- Markdown preview pane (render mode only) -->
-        <div id="markdown-pane" class="overflow-auto bg-olive-900">
-          <div id="markdown-content" class="prose prose-invert prose-sm max-w-none p-6 select-text"></div>
-        </div>
-      </main>
+      </div><!-- end center-column -->
 
-      <!-- ── Bottom sidebar ─────────────────────────────────── -->
-      <div id="bottom-sidebar" data-sb-state="hidden"
-        class="shrink-0 border-t border-olive-700 flex flex-col bg-olive-900 data-[sb-state=flyout]:bg-olive-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
-        style="height:180px">
+      <!-- ── Right sidebar (full height) ──────────────────────── -->
+      <aside id="right-sidebar" data-sb-state="pinned"
+        class="shrink-0 border-l border-olive-700 flex flex-col bg-olive-900 data-[sb-state=flyout]:bg-olive-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
+        style="width:208px">
 
-        <!-- Top resize handle -->
-        <div class="sb-resize" data-sb-resize="bottom">
+        <!-- Left resize handle -->
+        <div class="sb-resize" data-sb-resize="right">
           <div class="sb-resize-dots"><span></span><span></span><span></span></div>
         </div>
-        <!-- Header -->
-        <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700/60" style="background:#1c1c1c">
-          <span class="text-xs font-semibold text-olive-600 tracking-wider uppercase">Bottom Panel</span>
+        <!-- Header: label + action button -->
+        <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700/60 bg-olive-800">
+          <span class="text-xs font-semibold text-olive-600 tracking-wider uppercase">Right Sidebar</span>
           <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-300 hover:bg-olive-700 transition-colors">
             <i class="sb-icon-pin ph ph-push-pin text-xs leading-none"></i>
             <i class="sb-icon-close ph ph-x text-xs leading-none"></i>
           </button>
         </div>
-        <!-- Widget stack -->
-        <div class="widget-stack flex-1 min-h-0 flex flex-col" data-widgets="bottom"></div>
-      </div>
+        <!-- Widget stack (populated by mountWidgets in main.js) -->
+        <div class="widget-stack flex-1 min-h-0 flex flex-col" data-widgets="right"></div>
+      </aside>
 
-    </div><!-- end center-column -->
+    </div><!-- end content-row -->
 
-    <!-- ── Right sidebar (full height) ──────────────────────── -->
-    <aside id="right-sidebar" data-sb-state="pinned"
-      class="shrink-0 border-l border-olive-700 flex flex-col bg-olive-900 data-[sb-state=flyout]:bg-olive-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
-      style="width:208px">
-
-      <!-- Left resize handle -->
-      <div class="sb-resize" data-sb-resize="right">
-        <div class="sb-resize-dots"><span></span><span></span><span></span></div>
-      </div>
-      <!-- Header: label + action button -->
-      <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700/60" style="background:#1c1c1c">
-        <span class="text-xs font-semibold text-olive-600 tracking-wider uppercase">Right Sidebar</span>
-        <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-300 hover:bg-olive-700 transition-colors">
-          <i class="sb-icon-pin ph ph-push-pin text-xs leading-none"></i>
-          <i class="sb-icon-close ph ph-x text-xs leading-none"></i>
-        </button>
-      </div>
-      <!-- Widget stack (populated by mountWidgets in main.js) -->
-      <div class="widget-stack flex-1 min-h-0 flex flex-col" data-widgets="right"></div>
-    </aside>
-
-  </div><!-- end content-row -->
+  </div><!-- end main-area -->
 
   <!-- ── Status bar ──────────────────────────────────────────── -->
   <footer id="status-bar"

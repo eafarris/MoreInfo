@@ -45,7 +45,7 @@ export const miTheme = EditorView.theme({
     wordBreak: 'break-word',
   },
   '.cm-line': {
-    padding: '0',
+    padding: '0 0 1.25rem',
   },
   '.cm-cursor, .cm-dropCursor': {
     borderLeftColor: '#fbbf24',
@@ -102,6 +102,7 @@ export const miHighlightStyle = HighlightStyle.define([
   { tag: tags.comment,         color: 'oklch(46.6% 0.025 107.3)',  fontStyle: 'italic'   },
   { tag: tags.processingInstruction, color: 'oklch(46.6% 0.025 107.3)'                   },
   { tag: tags.contentSeparator, color: 'oklch(39.4% 0.023 107.4)' /* olive-700 */       },
+  { tag: tags.list,             color: 'inherit'                                         }, // colored via listMarkerPlugin instead
   { tag: tags.atom,            color: '#fbbf24'                                           },
 ]);
 
@@ -165,14 +166,13 @@ const hashtagPlugin = ViewPlugin.fromClass(class {
   }
 }, { decorations: v => v.decorations });
 
-// ── List item spacing ──────────────────────────────────────────────────────
-// Adds bottom padding to list-item lines so bulleted/numbered lists breathe
-// more than ordinary prose. Uses a regex scan rather than the syntax tree so
-// decorations are always present, even before the parser finishes.
 
-const LIST_ITEM_RE = /^[ \t]*(?:[-*+]|\d+[.)]) /;
+// ── List marker decoration ─────────────────────────────────────────────────
+// Colors only the bullet/number at the start of a list item, not the content.
 
-const listSpacingPlugin = ViewPlugin.fromClass(class {
+const LIST_MARKER_RE = /^([ \t]*)([-*+]|\d+[.)]) /;
+
+const listMarkerPlugin = ViewPlugin.fromClass(class {
   constructor(view) { this.decorations = this._build(view); }
   update(u) {
     if (u.docChanged || u.viewportChanged) this.decorations = this._build(u.view);
@@ -183,8 +183,11 @@ const listSpacingPlugin = ViewPlugin.fromClass(class {
       let pos = from;
       while (pos <= to) {
         const line = view.state.doc.lineAt(pos);
-        if (LIST_ITEM_RE.test(line.text)) {
-          deco.push(Decoration.line({ class: 'cm-list-item' }).range(line.from));
+        const m    = LIST_MARKER_RE.exec(line.text);
+        if (m) {
+          const start = line.from + m[1].length;        // after any indent
+          const end   = start    + m[2].length;         // just the - / * / 1.
+          deco.push(Decoration.mark({ class: 'cm-list-marker' }).range(start, end));
         }
         pos = line.to + 1;
       }
@@ -193,8 +196,10 @@ const listSpacingPlugin = ViewPlugin.fromClass(class {
   }
 }, { decorations: v => v.decorations });
 
-// ── Auto-surround keymap ───────────────────────────────────────────────────
+// ── Auto-surround ──────────────────────────────────────────────────────────
 // When text is selected and an opening char is typed, wrap the selection.
+// Uses EditorView.inputHandler (fires on beforeinput) rather than a keymap,
+// because CM6's contenteditable input bypasses keydown for printable chars.
 
 const WRAP_PAIRS = {
   '(': ')', '[': ']', '{': '}',
@@ -202,19 +207,50 @@ const WRAP_PAIRS = {
   '*': '*', '_': '_', '~': '~',
 };
 
-const wrapSelectionKeymap = Object.entries(WRAP_PAIRS).map(([open, close]) => ({
-  key: open,
-  run(view) {
+const surroundHandler = EditorView.domEventHandlers({
+  beforeinput(event, view) {
+    if (event.inputType !== 'insertText') return false;
+    const text = event.data;
+    if (!text || text.length !== 1) return false;
+    const close = WRAP_PAIRS[text];
+    if (!close) return false;
     const { from, to } = view.state.selection.main;
-    if (from === to) return false; // no selection — let normal insertion happen
+    if (from === to) return false;
+    event.preventDefault();
     view.dispatch({
-      changes: [{ from, insert: open }, { to, insert: close }],
+      changes: [{ from, insert: text }, { from: to, insert: close }],
       selection: { anchor: from + 1, head: to + 1 },
       userEvent: 'input',
     });
     return true;
   },
-}));
+});
+
+// ── Post-autocomplete punctuation cleanup ──────────────────────────────────
+// When the user types punctuation immediately after a completed [[link]] ,
+// remove the trailing space that the autocomplete inserted.
+
+const PUNCT_AFTER_LINK = /^[.,;:!?)\]]/;
+
+const wikiLinkPunctHandler = EditorView.domEventHandlers({
+  beforeinput(event, view) {
+    if (event.inputType !== 'insertText') return false;
+    const ch = event.data;
+    if (!ch || !PUNCT_AFTER_LINK.test(ch)) return false;
+    const { from, to } = view.state.selection.main;
+    if (from !== to || from < 3) return false;
+    const doc = view.state.doc;
+    if (doc.sliceString(from - 1, from) !== ' ')  return false;
+    if (doc.sliceString(from - 3, from - 1) !== ']]') return false;
+    event.preventDefault();
+    view.dispatch({
+      changes:   { from: from - 1, to: from, insert: ch },
+      selection: { anchor: from },
+      userEvent: 'input',
+    });
+    return true;
+  },
+});
 
 // ── Wiki-link autocomplete source ──────────────────────────────────────────
 // Activated by typing [[ and filters pages by prefix.
@@ -252,7 +288,7 @@ function wikiLinkSource(context) {
 
 // ── Editor factory ─────────────────────────────────────────────────────────
 
-export function createEditor({ parent, onDocChange, onCursorChange, onCmdClick }) {
+export function createEditor({ parent, onDocChange, onCursorChange, onPageClick, onCmdClick }) {
   const tabKeymap = {
     key: 'Tab',
     run(view) {
@@ -267,22 +303,42 @@ export function createEditor({ parent, onDocChange, onCursorChange, onCmdClick }
     run: acceptCompletion,
   };
 
-  const cmdClickHandler = EditorView.domEventHandlers({
+  // Resolve the wiki-link title at a given document position, or null.
+  // Constrained to the current line so cross-line false positives are impossible.
+  function wikiTitleAt(view, pos) {
+    const line    = view.state.doc.lineAt(pos);
+    const text    = line.text;
+    const linePos = pos - line.from;   // click offset within this line
+
+    // Scan backward within the line for [[
+    let s = linePos;
+    while (s > 1 && !(text[s - 2] === '[' && text[s - 1] === '[')) s--;
+    if (s < 2) return null;
+    s -= 2; // s now points at the first [
+
+    // If there is a ]] between [[ and the click, pos is outside any link
+    if (text.slice(s + 2, linePos).includes(']]')) return null;
+
+    // Scan forward within the line for ]]
+    let e = linePos;
+    while (e + 1 < text.length && !(text[e] === ']' && text[e + 1] === ']')) e++;
+    if (!(text[e] === ']' && text[e + 1] === ']')) return null;
+
+    return text.slice(s + 2, e).trim() || null;
+  }
+
+  const clickHandler = EditorView.domEventHandlers({
     click(event, view) {
-      if (!event.metaKey && !event.ctrlKey) return false;
       const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
       if (pos == null) return false;
-      const doc = view.state.doc.toString();
-      let start = pos;
-      while (start > 1 && !(doc[start - 2] === '[' && doc[start - 1] === '[')) start--;
-      if (start < 2) return false;
-      start -= 2;
-      let end = pos;
-      while (end + 1 < doc.length && !(doc[end] === ']' && doc[end + 1] === ']')) end++;
-      if (!(doc[end] === ']' && doc[end + 1] === ']')) return false;
-      const title = doc.slice(start + 2, end).trim();
-      if (title) { onCmdClick(title); return true; }
-      return false;
+      const title = wikiTitleAt(view, pos);
+      if (!title) return false;
+      if (event.metaKey || event.ctrlKey) {
+        onCmdClick(title);
+      } else {
+        onPageClick(title);
+      }
+      return true;
     },
   });
 
@@ -308,10 +364,11 @@ export function createEditor({ parent, onDocChange, onCursorChange, onCmdClick }
       autocompletion({ override: [wikiLinkSource] }),
       wikilinkPlugin,
       hashtagPlugin,
-      listSpacingPlugin,
+      listMarkerPlugin,
       EditorView.lineWrapping,
+      surroundHandler,
+      wikiLinkPunctHandler,
       keymap.of([
-        ...wrapSelectionKeymap,
         tabKeymap,
         spaceKeymap,
         ...defaultKeymap,
@@ -319,7 +376,7 @@ export function createEditor({ parent, onDocChange, onCursorChange, onCmdClick }
       ]),
       miTheme,
       updateListener,
-      cmdClickHandler,
+      clickHandler,
     ],
   });
 

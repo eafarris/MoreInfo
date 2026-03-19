@@ -6,36 +6,58 @@
   --font-family-mono: "JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, ui-monospace, monospace;
 }
 
-/* Doc-title: floats above the textarea so content scrolls beneath it.
-   Same frosted-glass technique as the flyout sidebars:
-   nearly-transparent bg + backdrop-blur so blurred content shows through.
-   Slightly higher opacity than sidebars so the title text stays legible. */
 #doc-title {
   position: absolute;
   top: 0; left: 0; right: 0;
   z-index: 10;
   pointer-events: none;
-  background: rgba(23, 23, 23, 0.25);
-  backdrop-filter: blur(28px);
-  -webkit-backdrop-filter: blur(28px);
+  background: color-mix(in srgb, var(--color-olive-900) 85%, transparent);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
 }
 
 /* CodeMirror wiki-link decoration: dim brackets, amber title */
-.cm-wikilink-bracket { color: var(--color-olive-600) !important; }
-.cm-wikilink-title   { color: var(--color-amber-400) !important; }
+.cm-wikilink-bracket { color: var(--color-olive-600) !important; cursor: pointer; }
+.cm-wikilink-title   { color: var(--color-amber-400) !important; cursor: pointer; }
 
 /* CodeMirror hashtag decoration: dim octothorpe, amber tag text */
-.cm-hashtag-punct { color: var(--color-olive-600); }
-.cm-hashtag       { color: var(--color-amber-400); }
+.cm-hashtag-punct  { color: var(--color-olive-600); }
+.cm-hashtag        { color: var(--color-amber-400); }
+.cm-list-marker    { color: var(--color-amber-300); }
 
-/* List item spacing: extra breathing room below each item */
-.cm-list-item { margin-bottom: 1em; }
 
 /* CodeMirror editor fills its container */
 .cm-editor {
   height: 100%;
   background: var(--color-olive-900);
 }
+
+/* ── Render pane: theme prose to match the olive editor palette ──
+   Typography uses :where() (zero specificity) for all its selectors,
+   so plain element rules here will always win.               ── */
+#markdown-content                                { color:            var(--color-olive-200); }
+#markdown-content h1,
+#markdown-content h2,
+#markdown-content h3,
+#markdown-content h4,
+#markdown-content h5,
+#markdown-content h6                            { color:            var(--color-olive-100); }
+#markdown-content strong                        { color:            var(--color-olive-100); }
+#markdown-content a                             { color:            var(--color-amber-400); }
+#markdown-content code                          { color:            var(--color-amber-300); }
+#markdown-content pre                           { background-color: var(--color-olive-950);
+                                                  color:            var(--color-olive-200); }
+#markdown-content blockquote                    { color:            var(--color-olive-300);
+                                                  border-color:     var(--color-olive-700); }
+#markdown-content hr                            { border-color:     var(--color-olive-700); }
+#markdown-content thead th                      { color:            var(--color-olive-100);
+                                                  border-color:     var(--color-olive-600); }
+#markdown-content tbody td                      { border-color:     var(--color-olive-700); }
+#markdown-content ol > li::before,
+#markdown-content ul > li::before,
+#markdown-content ul > li::marker,
+#markdown-content ol > li::marker              { color:            var(--color-olive-400); }
+#markdown-content figcaption                   { color:            var(--color-olive-500); }
 
 /* Wiki links rendered inside the markdown preview */
 .wiki-link {

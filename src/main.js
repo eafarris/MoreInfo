@@ -1,9 +1,14 @@
 import './input.css';
 import { invoke } from './tauri.js';
+import { restoreStateCurrent, StateFlags } from '@tauri-apps/plugin-window-state';
 import { CalendarWidget }    from './widgets/CalendarWidget.js';
 import { MetadataWidget }    from './widgets/MetadataWidget.js';
 import { ReferencesWidget }  from './widgets/ReferencesWidget.js';
 import { PageWidget }        from './widgets/PageWidget.js';
+import { ScratchPadWidget }  from './widgets/ScratchPadWidget.js';
+import { BrowserWidget }     from './widgets/BrowserWidget.js';
+import { CounterWidget }     from './widgets/CounterWidget.js';
+import { SearchWidget }      from './widgets/SearchWidget.js';
 import { createEditor, setEditorPages } from './editor.js';
 import { formatJournalDate } from './dateUtils.js';
 
@@ -84,7 +89,13 @@ const formatDateLong = formatJournalDate;
 // ── Title derivation ──────────────────────────────
 
 function isJournalFile(path) {
-  return path ? /[/\\]\.moreinfo[/\\]journal[/\\]\d{4}-\d{2}-\d{2}\.md$/.test(path) : false;
+  if (!path) return false;
+  const norm = path.replace(/\\/g, '/');
+  if (datastorePath) {
+    const ds = datastorePath.replace(/\\/g, '/');
+    return norm.startsWith(ds + '/journal/') && /\d{4}-\d{2}-\d{2}\.md$/.test(norm);
+  }
+  return /[/\\]journal[/\\]\d{4}-\d{2}-\d{2}\.md$/.test(norm);
 }
 
 function updateDocTitle(fm, content) {
@@ -108,7 +119,8 @@ function updateDocTitle(fm, content) {
       }
     }
   }
-  docTitle.textContent = title;
+  const icon = isJournalFile(currentFile) ? 'ph-calendar-dot' : 'ph-file-text';
+  docTitle.innerHTML = `<i class="ph-bold ${icon} leading-none mr-2"></i>${escapeHtml(title)}`;
 }
 
 // ── Floating title bar: keep CM content paddingTop in sync ─────────────────
@@ -141,13 +153,33 @@ const cmView = createEditor({
   onCursorChange(line, col) {
     updateCursor(line, col);
   },
+  onPageClick(title) {
+    openWikiPage(title);
+  },
   onCmdClick(title) {
+    const lc   = title.toLowerCase();
+    const page = allPages.find(
+      p => p.title.toLowerCase() === lc ||
+           (p.aliases || []).some(a => a === lc)
+    );
+    if (page) {
+      const pw = mountedWidgets.find(w => w.id === 'page');
+      if (pw) { pw.loadPath(page.path, page.title); return; }
+    }
+    // Page doesn't exist (or no PageWidget) — create/open in editor.
     openWikiPage(title);
   },
 });
 
-// Populate wiki-link autocomplete with all pages from DB
-invoke('list_pages').then(pages => setEditorPages(pages)).catch(console.error);
+// Populate wiki-link autocomplete and keep a local copy for Cmd+Click resolution.
+let allPages = [];
+function refreshPages() {
+  invoke('list_pages').then(pages => {
+    allPages = pages;
+    setEditorPages(pages);
+  }).catch(console.error);
+}
+refreshPages();
 
 // ── Render-mode v-divider resize ──────────────────
 
@@ -269,6 +301,7 @@ async function autoSave(content) {
     if (!currentFile) setCurrentFile(path);
     setModified(false);
     mountedWidgets.forEach(w => w.onFileSaved(path));
+    refreshPages();
   } catch (e) {
     console.error('autoSave failed:', e);
   }
@@ -301,6 +334,34 @@ const sbConfig = {
   bottom: { sidebar: bottomSidebar, collapsed: collapsedBottom, btn: btnToggleBottom },
 };
 
+// ── UI state persistence ──────────────────────────
+
+const UI_STATE_KEY = 'mi-ui-state';
+
+function saveUiState() {
+  try {
+    localStorage.setItem(UI_STATE_KEY, JSON.stringify({ sbState, sbSizes }));
+  } catch { /* storage unavailable */ }
+}
+
+function loadUiState() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(UI_STATE_KEY) || 'null');
+    if (!saved) return;
+    // Restore sidebar states (top is disabled, always keep hidden)
+    const validStates = ['hidden', 'pinned'];
+    for (const k of ['left', 'right', 'bottom']) {
+      if (validStates.includes(saved.sbState?.[k])) sbState[k] = saved.sbState[k];
+    }
+    // Restore sidebar sizes
+    for (const k of ['left', 'right', 'top', 'bottom']) {
+      if (typeof saved.sbSizes?.[k] === 'number') sbSizes[k] = saved.sbSizes[k];
+    }
+  } catch { /* ignore corrupt storage */ }
+}
+
+// ─────────────────────────────────────────────────
+
 const sbState = { left: 'hidden', right: 'pinned', top: 'hidden', bottom: 'hidden' };
 
 const flyoutTimers = {};
@@ -312,6 +373,7 @@ function applySbState(name) {
 
   sidebar.dataset.sbState = state;
   collapsed.classList.toggle('sb-visible', state === 'hidden');
+  if (state !== 'hidden') collapsed.classList.remove('sb-peek');
 
   if (state === 'pinned') btn.dataset.active = '';
   else                    delete btn.dataset.active;
@@ -320,6 +382,7 @@ function applySbState(name) {
 function setSbState(name, state) {
   sbState[name] = state;
   applySbState(name);
+  saveUiState();
 }
 
 function togglePin(name) {
@@ -341,8 +404,15 @@ function scheduleDismiss(name) {
 Object.keys(sbConfig).forEach(name => {
   const { sidebar, collapsed } = sbConfig[name];
 
-  collapsed.addEventListener('mouseenter', () => startFlyout(name));
-  collapsed.addEventListener('mouseleave', () => scheduleDismiss(name));
+  collapsed.addEventListener('mouseenter', () => {
+    collapsed.classList.add('sb-peek');
+    clearTimeout(flyoutTimers[name]);
+    flyoutTimers[name] = setTimeout(() => startFlyout(name), 300);
+  });
+  collapsed.addEventListener('mouseleave', () => {
+    collapsed.classList.remove('sb-peek');
+    clearTimeout(flyoutTimers[name]);
+  });
 
   sidebar.addEventListener('mouseenter', () => clearTimeout(flyoutTimers[name]));
   sidebar.addEventListener('mouseleave', () => scheduleDismiss(name));
@@ -360,6 +430,12 @@ btnToggleRight.addEventListener('click',  () => togglePin('right'));
 btnToggleTop.addEventListener('click',    () => togglePin('top'));
 btnToggleBottom.addEventListener('click', () => togglePin('bottom'));
 
+document.getElementById('btn-today').addEventListener('click', () => {
+  const d = new Date();
+  const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  openJournalDate(dateStr);
+});
+
 // ── Sidebar resize ────────────────────────────────
 
 const sbSizes = { left: 208, right: 208, top: 160, bottom: 180 };
@@ -369,6 +445,7 @@ function setSbSize(name, size) {
   const { sidebar } = sbConfig[name];
   if (name === 'left' || name === 'right') sidebar.style.width  = size + 'px';
   else                                     sidebar.style.height = size + 'px';
+  saveUiState();
 }
 
 function initSbResize(name, handle) {
@@ -563,10 +640,14 @@ window.__TAURI__.event.listen('menu', e => {
 
 // ── Init ──────────────────────────────────────────
 
+loadUiState(); // restore persisted sidebar state + sizes before applying
+
 Object.keys(sbConfig).forEach(name => {
   setSbSize(name, sbSizes[name]);
   applySbState(name);
 });
+
+restoreStateCurrent(StateFlags.ALL).catch(() => {}); // restore window position/size
 
 invoke('get_datastore_path').then(p => { datastorePath = p; }).catch(console.error);
 
@@ -593,17 +674,21 @@ invoke('get_datastore_path').then(p => { datastorePath = p; }).catch(console.err
     });
 }());
 
+const pageWidget = new PageWidget({
+  onOpenInEditor: openWikiPage,
+  onOpenJournal:  openJournalDate,
+  onEditPage:     openFilePath,
+});
+
 mountWidgets('left', [
-  new PageWidget({
-    onOpenInEditor: openWikiPage,
-    onOpenJournal:  openJournalDate,
-    onEditPage:     openFilePath,
-  }),
+  new SearchWidget({ onOpen: (path, title) => pageWidget.loadPath(path, title) }),
+  pageWidget,
+  // new BrowserWidget(),  // hidden by default
 ]);
 
 mountWidgets('right', [
   new CalendarWidget({ onDateSelected: openJournalDate }),
-  new MetadataWidget(),
+  new ScratchPadWidget(),
 ]);
 
 mountWidgets('bottom', [
@@ -611,6 +696,8 @@ mountWidgets('bottom', [
     onOpen: openFilePath,
     onHasReferences: () => { if (sbState.bottom !== 'pinned') setSbState('bottom', 'pinned'); },
   }),
+  new MetadataWidget(),
+  // new CounterWidget(),  // hidden by default
 ]);
 
 setMode('edit');

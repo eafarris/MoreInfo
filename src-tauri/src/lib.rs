@@ -112,12 +112,23 @@ fn process_wiki_links(text: &str) -> String {
                 result.push_str(&text[title_start..i]);
             }
         } else {
-            result.push(bytes[i] as char);
-            i += 1;
+            // Advance by a full UTF-8 character, not just one byte.
+            let ch_len = utf8_char_len(bytes[i]);
+            result.push_str(&text[i..i + ch_len]);
+            i += ch_len;
         }
     }
 
     result
+}
+
+/// Returns the byte length of the UTF-8 character starting with `b`.
+#[inline]
+fn utf8_char_len(b: u8) -> usize {
+    if b < 0x80 { 1 }
+    else if b < 0xE0 { 2 }
+    else if b < 0xF0 { 3 }
+    else { 4 }
 }
 
 /// Extract all `[[title]]` wiki links from a document, returning
@@ -196,11 +207,34 @@ fn extract_context(text: &str, link_start: usize, link_end: usize, title: &str) 
 /// Extract the display title of a page from its content and filesystem path.
 ///
 /// Resolution order:
-///   1. Front-matter `title:` key
-///   2. First `# h1` in the body
-///   3. Filename stem with hyphens replaced by spaces
+///   1. Journal pages — always use the date from the filename (YYYY-MM-DD)
+///   2. Front-matter `title:` key
+///   3. First `# h1` in the body
+///   4. Filename stem with hyphens replaced by spaces
 fn extract_page_title(content: &str, path: &str) -> String {
-    // 1. Front-matter title
+    // 1. Journal pages always use their date as the title
+    let p = std::path::Path::new(path);
+    if let Some(stem) = p.file_stem().and_then(|s| s.to_str()) {
+        let is_journal = p.parent()
+            .and_then(|d| d.file_name())
+            .and_then(|n| n.to_str())
+            .map(|n| n == "journal")
+            .unwrap_or(false);
+        if is_journal {
+            // stem is YYYY-MM-DD; validate before trusting it
+            let parts: Vec<&str> = stem.splitn(3, '-').collect();
+            if parts.len() == 3
+                && parts[0].len() == 4
+                && parts[1].len() == 2
+                && parts[2].len() == 2
+                && parts.iter().all(|p| p.chars().all(|c| c.is_ascii_digit()))
+            {
+                return stem.to_string();
+            }
+        }
+    }
+
+    // 2. Front-matter title
     let fm = front_matter::parse(content);
     for key in ["title", "Title", "TITLE"] {
         if let Some(val) = fm.get(key) {
@@ -212,7 +246,7 @@ fn extract_page_title(content: &str, path: &str) -> String {
         }
     }
 
-    // 2. First # h1 in body
+    // 3. First # h1 in body
     for line in front_matter::strip(content).lines() {
         if let Some(rest) = line.strip_prefix("# ") {
             let t = rest.trim();
@@ -220,9 +254,8 @@ fn extract_page_title(content: &str, path: &str) -> String {
         }
     }
 
-    // 3. Filename stem
-    std::path::Path::new(path)
-        .file_stem()
+    // 4. Filename stem
+    p.file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .replace('-', " ")
@@ -275,7 +308,7 @@ fn open_db() -> Result<Connection, String> {
 
 /// Bump this whenever the schema or indexing logic changes in a way that
 /// requires existing cached data to be discarded and rebuilt.
-const SCHEMA_VERSION: i64 = 5;
+const SCHEMA_VERSION: i64 = 6;
 
 fn init_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch("
@@ -965,9 +998,113 @@ fn write_file(path: String, content: String) -> Result<(), String> {
     Ok(())
 }
 
+/// Read the scratchpad file. Returns empty string if it doesn't exist yet.
+#[tauri::command]
+fn read_scratchpad() -> Result<String, String> {
+    let path = datastore_dir()?.join("scratchpad.md");
+    if path.exists() {
+        std::fs::read_to_string(&path).map_err(|e| e.to_string())
+    } else {
+        Ok(String::new())
+    }
+}
+
+/// Full-text search across all indexed pages.
+/// Returns up to 20 results ordered by FTS5 rank.
+#[derive(serde::Serialize)]
+struct SearchResult {
+    path:    String,
+    title:   String,
+    snippet: String,
+}
+
+#[tauri::command]
+fn search_pages(query: String) -> Result<Vec<SearchResult>, String> {
+    let db_path = datastore_dir()?.join("moreinfo.sqlite");
+    let conn    = Connection::open(&db_path).map_err(|e| e.to_string())?;
+
+    let query = query.trim();
+    if query.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Strip FTS5 operator characters to avoid syntax errors, then build a
+    // prefix-search query: every word becomes "word*" (implicit AND).
+    let safe: String = query
+        .chars()
+        .filter(|c| c.is_alphanumeric() || c.is_whitespace() || *c == '\'' || *c == '-')
+        .collect();
+    let fts_query: String = safe
+        .split_whitespace()
+        .map(|w| format!("{}*", w))
+        .collect::<Vec<_>>()
+        .join(" ");
+    if fts_query.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let mut stmt = conn
+        .prepare(
+            "SELECT fts.path,
+                    COALESCE(f.title, fts.title, ''),
+                    snippet(fts, 2, '', '', '…', 16)
+             FROM fts
+             JOIN files f ON f.path = fts.path
+             WHERE fts MATCH ?1
+             ORDER BY rank
+             LIMIT 20",
+        )
+        .map_err(|e| e.to_string())?;
+
+    let results: Vec<SearchResult> = stmt
+        .query_map(rusqlite::params![fts_query], |row| {
+            Ok(SearchResult {
+                path:    row.get(0)?,
+                title:   row.get(1)?,
+                snippet: row.get(2)?,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    Ok(results)
+}
+
+/// Write content to the scratchpad file (not indexed).
+#[tauri::command]
+fn write_scratchpad(content: String) -> Result<(), String> {
+    let path = datastore_dir()?.join("scratchpad.md");
+    std::fs::write(&path, content).map_err(|e| e.to_string())
+}
+
+/// Fetch raw HTML from a URL, server-side (bypasses CORS / X-Frame-Options).
+/// Sends a Safari-like User-Agent and requests dark-mode via the Sec-CH-Prefers-Color-Scheme hint.
+#[tauri::command]
+async fn fetch_page(url: String) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15")
+        .gzip(true)
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response = client
+        .get(&url)
+        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .header("Accept-Language", "en-US,en;q=0.9")
+        .header("Sec-CH-Prefers-Color-Scheme", "dark")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let text = response.text().await.map_err(|e| e.to_string())?;
+    Ok(text)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let handle = app.handle();
@@ -1042,6 +1179,10 @@ pub fn run() {
             get_backlinks,
             get_unlinked_references,
             list_pages,
+            read_scratchpad,
+            write_scratchpad,
+            search_pages,
+            fetch_page,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

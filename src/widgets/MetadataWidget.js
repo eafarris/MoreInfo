@@ -23,8 +23,7 @@ export class MetadataWidget extends Widget {
     this._countEl = null;
   }
 
-  // Takes all remaining height in the sidebar after CalendarWidget.
-  get wrapperClass() { return 'flex flex-col flex-1 min-h-0 border-t border-olive-700'; }
+  get wrapperClass() { return 'flex flex-col flex-1 min-h-0 border-l border-olive-700'; }
 
   // Adds a variable count at the trailing edge of the header.
   get headerAction() {

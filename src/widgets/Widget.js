@@ -57,7 +57,7 @@ export class Widget {
   mount(container) {
     this._container = container;
     container.innerHTML = `
-      <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700" style="background:#1c1c1c">
+      <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700 bg-olive-800">
         <span class="flex items-center gap-1.5 text-xs font-semibold text-olive-500 tracking-wide uppercase">
           <i class="ph ${this.icon} text-sm leading-none"></i>
           ${this.title}
@@ -79,6 +79,29 @@ export class Widget {
     if (this._container) this._container.innerHTML = '';
     this._container = null;
     this._body      = null;
+  }
+
+  // ── State persistence ────────────────────────────────────────
+
+  /**
+   * Persist arbitrary state for this widget across relaunches.
+   * @param {object} data  Must be JSON-serialisable.
+   */
+  saveState(data) {
+    try { localStorage.setItem(`mi-widget-${this.id}`, JSON.stringify(data)); } catch { /* ignore */ }
+  }
+
+  /**
+   * Retrieve the last saved state, or null if none exists.
+   * @returns {object|null}
+   */
+  loadState() {
+    try { return JSON.parse(localStorage.getItem(`mi-widget-${this.id}`) || 'null'); } catch { return null; }
+  }
+
+  /** Clear persisted state for this widget. */
+  clearState() {
+    try { localStorage.removeItem(`mi-widget-${this.id}`); } catch { /* ignore */ }
   }
 
   // ── Lifecycle hooks (override in subclasses) ────────────────

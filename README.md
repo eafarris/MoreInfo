@@ -47,10 +47,11 @@ A markdown-based personal knowledge base (PKB) for macOS, with Windows and Linux
 ## Screenshots
 
 Main window, daily journal:
-![Main window with daily journal open](.\MoreInfoScreenshot-Journal.png)
+![Main window with daily journal open](MoreInfoScreenshot-Journal.png)
 
 Page open with sidebar widgets:
-![Busy interface with widgets](.\MoreInfoScreenshot-Widgets.png)
+![Busy interface with widgets](MoreInfoScreenshot-Widgets.png)
+
 ---
 
 ## Tech stack

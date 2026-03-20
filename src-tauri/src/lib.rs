@@ -5,20 +5,100 @@ use rusqlite::Connection;
 use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
 use tauri::Emitter;
 
+// ── Preferences ─────────────────────────────────────────────────────────────
+
+/// User preferences, persisted to `moreinfo.json` in the OS config dir:
+///   macOS   ~/Library/Application Support/MoreInfo/moreinfo.json
+///   Windows %APPDATA%\MoreInfo\moreinfo.json
+///   Linux   $XDG_CONFIG_HOME/moreinfo/moreinfo.json
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
+struct Prefs {
+    /// Override for the datastore root directory.  When absent the app uses
+    /// the platform default (~/.moreinfo on macOS/Linux).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    datastore: Option<String>,
+}
+
+fn prefs_path() -> Result<std::path::PathBuf, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+        Ok(std::path::PathBuf::from(home)
+            .join("Library")
+            .join("Application Support")
+            .join("MoreInfo")
+            .join("moreinfo.json"))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let appdata = std::env::var("APPDATA").map_err(|e| e.to_string())?;
+        Ok(std::path::PathBuf::from(appdata)
+            .join("MoreInfo")
+            .join("moreinfo.json"))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let base = std::env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_default();
+            format!("{}/.config", home)
+        });
+        Ok(std::path::PathBuf::from(base)
+            .join("moreinfo")
+            .join("moreinfo.json"))
+    }
+}
+
+fn load_prefs_from_disk() -> Prefs {
+    let path = match prefs_path() {
+        Ok(p) => p,
+        Err(_) => return Prefs::default(),
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+        Err(_) => Prefs::default(),
+    }
+}
+
+/// In-process cache — loaded once on first access.  Mutable so a future
+/// preferences UI can update prefs at runtime without an app restart.
+static PREFS: std::sync::OnceLock<std::sync::RwLock<Prefs>> = std::sync::OnceLock::new();
+
+fn prefs_cache() -> &'static std::sync::RwLock<Prefs> {
+    PREFS.get_or_init(|| std::sync::RwLock::new(load_prefs_from_disk()))
+}
+
+fn current_prefs() -> Prefs {
+    prefs_cache().read().unwrap().clone()
+}
+
+fn persist_prefs(prefs: Prefs) -> Result<(), String> {
+    let path = prefs_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let json = serde_json::to_string_pretty(&prefs).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())?;
+    *prefs_cache().write().unwrap() = prefs;
+    Ok(())
+}
+
 // ── Datastore helpers ───────────────────────────────────────────────────────
 
-/// Returns the root of the MI datastore.
-/// ~/.moreinfo on Unix/macOS; ~/Documents/Moreinfo on Windows.
+/// Returns the root of the MI datastore.  Respects the `datastore` preference
+/// when set; otherwise falls back to ~/Documents/MoreInfo on all platforms.
 fn datastore_dir() -> Result<std::path::PathBuf, String> {
+    if let Some(custom) = current_prefs().datastore {
+        return Ok(std::path::PathBuf::from(custom));
+    }
     #[cfg(target_os = "windows")]
     {
         let home = std::env::var("USERPROFILE").map_err(|e| e.to_string())?;
-        Ok(std::path::PathBuf::from(home).join("Documents").join("Moreinfo"))
+        Ok(std::path::PathBuf::from(home).join("Documents").join("MoreInfo"))
     }
     #[cfg(not(target_os = "windows"))]
     {
         let home = std::env::var("HOME").map_err(|e| e.to_string())?;
-        Ok(std::path::PathBuf::from(home).join(".moreinfo"))
+        Ok(std::path::PathBuf::from(home).join("Documents").join("MoreInfo"))
     }
 }
 
@@ -748,7 +828,11 @@ fn get_unlinked_references(path: String) -> Result<Vec<UnlinkedEntry>, String> {
 // `restore_window_size` which also clamps to the current monitor.
 // The plugin is kept only for MAXIMIZED / FULLSCREEN state.
 
-#[derive(serde::Serialize, serde::Deserialize)]
+// ── Per-datastore user preferences ──────────────────────────────────────────
+// Stored at <datastore>/preferences.json.  Distinct from the app-level
+// moreinfo.json in Application Support (which holds the datastore path itself).
+
+#[derive(serde::Serialize, serde::Deserialize, Clone, Default)]
 struct WinState {
     width:  u32,
     height: u32,
@@ -756,12 +840,37 @@ struct WinState {
     y:      i32,
 }
 
-fn win_state_path() -> Result<std::path::PathBuf, String> {
-    Ok(datastore_dir()?.join("window.json"))
+#[derive(serde::Serialize, serde::Deserialize, Default)]
+struct UserPrefs {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    window: Option<WinState>,
+}
+
+fn user_prefs_path() -> Result<std::path::PathBuf, String> {
+    Ok(datastore_dir()?.join("preferences.json"))
+}
+
+fn read_user_prefs() -> UserPrefs {
+    let path = match user_prefs_path() {
+        Ok(p) => p,
+        Err(_) => return UserPrefs::default(),
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+        Err(_) => UserPrefs::default(),
+    }
+}
+
+fn write_user_prefs(prefs: &UserPrefs) -> Result<(), String> {
+    let path = user_prefs_path()?;
+    let json = serde_json::to_string_pretty(prefs).map_err(|e| e.to_string())?;
+    std::fs::write(&path, json).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Persist the current (non-maximised) window size and position to
-/// `<datastore>/window.json`.  Called from JS on a debounced resize/move.
+/// the `window` key in `<datastore>/preferences.json`.
+/// Called from JS on a debounced resize/move event.
 #[tauri::command]
 async fn save_window_size(window: tauri::WebviewWindow) -> Result<(), String> {
     if window.is_maximized().map_err(|e| e.to_string())? {
@@ -769,24 +878,22 @@ async fn save_window_size(window: tauri::WebviewWindow) -> Result<(), String> {
     }
     let size = window.outer_size().map_err(|e| e.to_string())?;
     let pos  = window.outer_position().map_err(|e| e.to_string())?;
-    let state = WinState { width: size.width, height: size.height, x: pos.x, y: pos.y };
-    let json  = serde_json::to_string(&state).map_err(|e| e.to_string())?;
-    std::fs::write(win_state_path()?, json).map_err(|e| e.to_string())?;
-    Ok(())
+    let mut prefs = read_user_prefs();
+    prefs.window  = Some(WinState { width: size.width, height: size.height, x: pos.x, y: pos.y });
+    write_user_prefs(&prefs)
 }
 
-/// Read the saved window size/position, clamp it to the current monitor, and
-/// apply it.  No-ops on first run (no file yet) or when maximised.
+/// Read the saved window size/position from `preferences.json`, clamp it to
+/// the current monitor, and apply it.  No-ops on first run or when maximised.
 #[tauri::command]
 async fn restore_window_size(window: tauri::WebviewWindow) -> Result<(), String> {
     if window.is_maximized().map_err(|e| e.to_string())? {
         return Ok(());
     }
-    let path = win_state_path()?;
-    if !path.exists() { return Ok(()); }
-
-    let json: String  = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    let saved: WinState = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    let saved = match read_user_prefs().window {
+        Some(w) => w,
+        None    => return Ok(()),
+    };
 
     // Find the monitor that owns the saved position, so we clamp relative to
     // the correct screen rather than whichever monitor the OS happened to place
@@ -872,6 +979,19 @@ fn get_metadata(content: &str) -> front_matter::FrontMatter {
     front_matter::parse(content)
 }
 
+/// Return the current preferences object.
+#[tauri::command]
+fn get_prefs() -> Result<Prefs, String> {
+    Ok(current_prefs())
+}
+
+/// Persist a new preferences object.  Updates the in-process cache
+/// immediately; the new datastore path takes effect on the next app launch.
+#[tauri::command]
+fn save_prefs(prefs: Prefs) -> Result<(), String> {
+    persist_prefs(prefs)
+}
+
 /// Return the absolute path to the MI datastore root.
 #[tauri::command]
 fn get_datastore_path() -> Result<String, String> {
@@ -896,6 +1016,17 @@ fn collect_md_files(dir: &std::path::Path, out: &mut std::collections::HashSet<S
 }
 
 /// Scan the datastore for new or modified markdown files and update the
+/// Delete `moreinfo.sqlite` entirely and rebuild it from scratch.
+/// Triggered by File → Reindex.  Returns the number of files indexed.
+#[tauri::command]
+fn full_reindex() -> Result<u32, String> {
+    let db_path = datastore_dir()?.join("moreinfo.sqlite");
+    if db_path.exists() {
+        std::fs::remove_file(&db_path).map_err(|e| e.to_string())?;
+    }
+    index_datastore()
+}
+
 /// wiki-link cache in `moreinfo.sqlite`.
 ///
 /// Returns the number of files that were re-indexed.
@@ -1004,9 +1135,10 @@ fn get_backlinks(path: String) -> Result<Vec<BacklinkEntry>, String> {
 /// Return all indexed pages as (title, path) pairs for autocomplete.
 #[derive(serde::Serialize)]
 struct PageEntry {
-    title:   String,
-    path:    String,
-    aliases: Vec<String>,
+    title:    String,
+    path:     String,
+    aliases:  Vec<String>,
+    favorite: bool,
 }
 
 #[tauri::command]
@@ -1014,7 +1146,7 @@ fn list_pages() -> Result<Vec<PageEntry>, String> {
     let conn = open_db()?;
     init_schema(&conn)?;
     let mut stmt = conn.prepare(
-        "SELECT f.path, f.title, COALESCE(GROUP_CONCAT(fa.alias, '|||'), '') AS aliases
+        "SELECT f.path, f.title, COALESCE(GROUP_CONCAT(fa.alias, '|||'), '') AS aliases, f.favorite
          FROM files f
          LEFT JOIN file_aliases fa ON fa.path = f.path
          GROUP BY f.path"
@@ -1023,10 +1155,11 @@ fn list_pages() -> Result<Vec<PageEntry>, String> {
         let path:        String = row.get(0)?;
         let title:       String = row.get(1)?;
         let aliases_raw: String = row.get(2)?;
-        Ok((path, title, aliases_raw))
+        let favorite:    bool   = row.get::<_, i64>(3).unwrap_or(0) != 0;
+        Ok((path, title, aliases_raw, favorite))
     }).map_err(|e| e.to_string())?;
 
-    let mut entries: Vec<PageEntry> = rows.filter_map(|r| r.ok()).map(|(path, title, aliases_raw)| {
+    let mut entries: Vec<PageEntry> = rows.filter_map(|r| r.ok()).map(|(path, title, aliases_raw, favorite)| {
         let display = if title.trim().is_empty() {
             std::path::Path::new(&path)
                 .file_stem()
@@ -1042,7 +1175,7 @@ fn list_pages() -> Result<Vec<PageEntry>, String> {
         } else {
             aliases_raw.split("|||").map(|s| s.to_string()).collect()
         };
-        PageEntry { path, title: display, aliases }
+        PageEntry { path, title: display, aliases, favorite }
     }).collect();
 
     entries.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
@@ -1261,6 +1394,9 @@ pub fn run() {
             let toggle_top    = MenuItem::with_id(handle, "toggle-top",    "Toggle Top Panel",      true, None::<&str>)?;
             let toggle_bottom = MenuItem::with_id(handle, "toggle-bottom", "Toggle Bottom Panel",   true, None::<&str>)?;
 
+            let file_new     = MenuItem::with_id(handle, "file-new",     "New Page\u{2026}", true, Some("CmdOrCtrl+N"))?;
+            let file_reindex = MenuItem::with_id(handle, "file-reindex", "Reindex Database", true, None::<&str>)?;
+
             let menu = MenuBuilder::new(handle)
                 .items(&[
                     // ── App menu (macOS convention) ──────────────────
@@ -1274,6 +1410,12 @@ pub fn run() {
                         .show_all()
                         .separator()
                         .quit()
+                        .build()?,
+                    // ── File ────────────────────────────────────────
+                    &SubmenuBuilder::new(handle, "File")
+                        .item(&file_new)
+                        .separator()
+                        .item(&file_reindex)
                         .build()?,
                     // ── Edit ────────────────────────────────────────
                     &SubmenuBuilder::new(handle, "Edit")
@@ -1316,12 +1458,15 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             parse_markdown,
             get_metadata,
+            get_prefs,
+            save_prefs,
             get_datastore_path,
             read_file,
             write_file,
             list_journal_dates,
             open_journal,
             open_wiki_page,
+            full_reindex,
             index_datastore,
             get_backlinks,
             get_unlinked_references,

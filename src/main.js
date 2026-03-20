@@ -10,7 +10,8 @@ import { FavoritesWidget }  from './widgets/FavoritesWidget.js';
 import { BrowserWidget }     from './widgets/BrowserWidget.js';
 import { CounterWidget }     from './widgets/CounterWidget.js';
 import { SearchWidget }      from './widgets/SearchWidget.js';
-import { createEditor, setEditorPages } from './editor.js';
+import { createEditor, setEditorPages, placeholderCompartment } from './editor.js';
+import { placeholder } from '@codemirror/view';
 import { formatJournalDate } from './dateUtils.js';
 
 // ── State ─────────────────────────────────────────
@@ -620,10 +621,16 @@ breadcrumbsEl.addEventListener('click', async e => {
 
 // ── Core file loader (does NOT touch navHistory) ──
 
+const JOURNAL_RE = /\d{4}-\d{2}-\d{2}\.md$/;
+
 async function loadFile(path, content) {
+  const journalPlaceholder = JOURNAL_RE.test(path) && content.length === 0
+    ? placeholder('Tell me about your day\u2026')
+    : [];
   cmView.dispatch({
     changes: { from: 0, to: cmView.state.doc.length, insert: content },
     selection: { anchor: 0 },
+    effects: placeholderCompartment.reconfigure(journalPlaceholder),
   });
   setCurrentFile(path);
   setModified(false);
@@ -693,14 +700,73 @@ document.querySelectorAll('[data-mode]').forEach(btn => {
   btn.addEventListener('click', () => setMode(btn.dataset.mode));
 });
 
+// ── Modal helpers ─────────────────────────────────
+
+/**
+ * Show a lightweight in-app prompt dialog (window.prompt is blocked by WKWebView).
+ * Returns the trimmed string the user entered, or null if they cancelled.
+ */
+function promptModal(message, placeholder = '') {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'fixed inset-0 z-[9999] flex items-center justify-center bg-black/60';
+
+    overlay.innerHTML = `
+      <div class="bg-olive-900 border border-olive-700 rounded-lg shadow-xl p-5 w-80 flex flex-col gap-4">
+        <p class="text-sm text-olive-200">${message}</p>
+        <input id="mi-prompt-input" type="text" placeholder="${placeholder}"
+          class="bg-olive-800 border border-olive-600 rounded px-3 py-1.5 text-sm text-olive-100
+                 placeholder-olive-600 focus:outline-none focus:border-amber-500 w-full" />
+        <div class="flex justify-end gap-2">
+          <button id="mi-prompt-cancel"
+            class="px-3 py-1.5 text-xs rounded bg-olive-700 text-olive-200 hover:bg-olive-600">
+            Cancel
+          </button>
+          <button id="mi-prompt-ok"
+            class="px-3 py-1.5 text-xs rounded bg-amber-700 text-white hover:bg-amber-600">
+            OK
+          </button>
+        </div>
+      </div>`;
+
+    document.body.appendChild(overlay);
+    const input  = overlay.querySelector('#mi-prompt-input');
+    const btnOk  = overlay.querySelector('#mi-prompt-ok');
+    const btnCan = overlay.querySelector('#mi-prompt-cancel');
+    input.focus();
+
+    const finish = val => { overlay.remove(); resolve(val); };
+
+    btnOk.addEventListener('click',  () => finish(input.value.trim() || null));
+    btnCan.addEventListener('click', () => finish(null));
+    overlay.addEventListener('click', e => { if (e.target === overlay) finish(null); });
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter')  finish(input.value.trim() || null);
+      if (e.key === 'Escape') finish(null);
+    });
+  });
+}
+
 // ── Menu event handling ───────────────────────────
 
-window.__TAURI__.event.listen('menu', e => {
+window.__TAURI__.event.listen('menu', async e => {
   switch (e.payload) {
     case 'toggle-left':   togglePin('left');   break;
     case 'toggle-right':  togglePin('right');  break;
     case 'toggle-top':    togglePin('top');    break;
     case 'toggle-bottom': togglePin('bottom'); break;
+
+    case 'file-new': {
+      const title = await promptModal('New page title:');
+      if (title) await openWikiPage(title);
+      break;
+    }
+
+    case 'file-reindex': {
+      const count = await invoke('full_reindex');
+      console.log(`Reindex complete — ${count} files indexed.`);
+      break;
+    }
   }
 });
 

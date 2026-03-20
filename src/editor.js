@@ -1,5 +1,6 @@
 import {
   EditorState,
+  Compartment,
 } from '@codemirror/state';
 import {
   EditorView,
@@ -8,6 +9,7 @@ import {
   keymap,
   drawSelection,
   highlightActiveLine,
+  placeholder,
 } from '@codemirror/view';
 import {
   history,
@@ -76,6 +78,11 @@ export const miTheme = EditorView.theme({
   // First line after a code block: restore the paragraph gap with top padding.
   '.cm-after-code-block': {
     paddingTop: '1.25rem',
+  },
+  // Journal placeholder ("Tell me about your day…")
+  '.cm-placeholder': {
+    color: 'oklch(47.1% 0.057 100)',  // ~olive-600
+    fontStyle: 'italic',
   },
   // Autocomplete popup styling
   '.cm-tooltip.cm-tooltip-autocomplete': {
@@ -523,6 +530,10 @@ let _allPages = [];
 
 export function setEditorPages(pages) { _allPages = pages; }
 
+// ── Journal placeholder ────────────────────────────────────────────────────
+// Reconfigure via placeholderCompartment.reconfigure(placeholder('…')) or []
+export const placeholderCompartment = new Compartment();
+
 function wikiLinkSource(context) {
   const match = context.matchBefore(/\[\[[^\]]*$/);
   if (!match) return null;
@@ -644,6 +655,7 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
         ...defaultKeymap,
         ...historyKeymap,
       ]),
+      placeholderCompartment.of([]),
       miTheme,
       updateListener,
       clickHandler,

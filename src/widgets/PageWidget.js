@@ -230,10 +230,13 @@ export class PageWidget extends Widget {
       const slugHint  = !item.title.toLowerCase().includes(lq)
         ? `<span class="ml-auto shrink-0 ${sel ? 'text-amber-200' : 'text-olive-600'} font-normal not-italic">${esc(this._slug(item.path))}</span>`
         : '';
+      const starIcon  = item.favorite
+        ? `<i class="ph-fill ph-star shrink-0 leading-none text-amber-400"></i>`
+        : '';
       return `<li data-ac-idx="${i}" class="${base} ${hi}">
         <i class="ph ph-file-text shrink-0 leading-none ${sel ? 'text-amber-200' : 'text-olive-600'}"></i>
         <span class="flex-1 truncate">${esc(item.title)}</span>
-        ${slugHint}
+        ${slugHint}${starIcon}
       </li>`;
     }).join('');
   }

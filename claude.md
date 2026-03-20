@@ -37,13 +37,16 @@ Category
 Metadata
 : A series of key/value pairs that describe the document in a structured way. Some metadata variables are based on filesystem data by default and can be read-only. Most variables can be set within a YAML-like front-matter structure. The variable name and its value are delimited by zero or more spaces, followed by a colon ("`:`"), followed by zero or more spaces (regex `\s+:\s+`). The structure itself is delimited by triple-dashes ("`---`") alone on a line, followed by the variable assignments, followed by another line of only triple dashes. In typical YAML front-matter, this section must be at the beginning of the file; for MI pages this structure could be anywhere, including multiple places. A final structure for defining metadata comes at the end of a file, using the "email .sig" delimiter of double dashes followed by a space ("`-- `") alone on a line, then continuing to the end of the file. Any variable that is defined more than once will use its last definition, from top to bottom through the file. Variable names are _case-insensitive_, and stored in the db cache as such. Values are _case sensitive_, though reserved metadata variables can change this behavior (eg., "tags" are _case insensitive_).
 
-: Variables are weakly typed, with three recognized types: string, date (or datetime), and array.
+: Variables are weakly typed, with four recognized types: string, date (or datetime), boolean, and array.
 
 Metadata string
-: A variable is defined as a string based on the data after the delimiter (regex '\s*:\s*'). If strings are surrounded by single or double quotes, the quotes themselves are not considered part of the string (so `string` would match `'string'` or `"string"`). If the string can be successfully parsed by "chrono_node," a pulled-in JS library, it is considered a metadata _date_ rather than a string. If the string can be successfully parsed as an array delimited by commas, it is considered a metadata _array_ rather than a string, _unless_ the string is surrounded in quotes. String values are _case sensitive_.
+: A variable is defined as a string based on the data after the delimiter (regex '\s*:\s*'). If strings are surrounded by single or double quotes, the quotes themselves are not considered part of the string (so `string` would match `'string'` or `"string"`). If the string can be successfully parsed by "chrono_node," a pulled-in JS library, it is considered a metadata _date_ rather than a string. If the string can be successfully parsed as an array delimited by commas, it is considered a metadata _array_ rather than a string, _unless_ the string is surrounded in quotes. String values are _case sensitive_. **The unquoted boolean literal values (`true`, `false`, `t`, `f`, `yes`, `no`, `y`, `n`, `on`, `off`, `1`, `0` — all case-insensitive) are reserved and will always be interpreted as booleans, never as strings. To use one of these words as a literal string value, surround it in quotes (e.g. `status: "true"`).**
 
 Metadata date
 : A variable is defined as a date based on the data after the delimiter (regex: '\s*:\s*'). If the data can be successfully parsed by the JS library "chromo-node," it is considered a Metadata date. This allows not only for date patterns (eg., "YYYY-MM-DD") but also human-parsable relative dates like "tomorrow," "last may," or "1st Tuesday each month."
+
+Metadata boolean
+: A variable is consider a boolean when its value is one and only one of the following pairs (_case insensitive_): True/False, T/F, 1/0, Yes/No, Y/N, On/Off. In each case, the former value results to a "TRUE" value and the latter to "FALSE."
 
 Metadata array
 : A variable is defined as an array based on the data after the delimiter (regex: '\s*:\s*'). If the data can be parsed into an array delimited by commas, it is considered a metadata array. While spaces around the commas are considered part of the delimiter, spaces not around the commas are considered significant to the element of the array. For example, the metadata `tags: tag one, two, three` is exploded into the array named `tags` consisting of three elements: `['tag one', 'two', 'three']`. A user may write a metadata array using brackets and quotes (eg., ['one', 'two', 'three']) for clarity or as their own style if they wish.
@@ -108,6 +111,9 @@ Aliases
 
 Alias
 : Same as "aliases," but holds only one string instead of an array.
+
+Favorite
+: A boolean value, when, if true, allows the page to show up in the FavoritesWidget.
 
 Category
 : Used as an 'uber-tag' for a page, a "category" corresponds to the type of data represented by this page. While pages can have an arbitrary number of 'tags,' a page can have up to one category. Setting a category for a page automatically moves it in the filesystem to a top-level folder in the datastore named after the category. 

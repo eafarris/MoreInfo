@@ -240,7 +240,7 @@ fn extract_page_title(content: &str, path: &str) -> String {
         if let Some(val) = fm.get(key) {
             let s = match val {
                 front_matter::Value::Text(t) | front_matter::Value::Date(t) => t.as_str(),
-                front_matter::Value::Array(_) => continue,
+                front_matter::Value::Array(_) | front_matter::Value::Bool(_) => continue,
             };
             if !s.is_empty() { return s.to_string(); }
         }
@@ -308,7 +308,7 @@ fn open_db() -> Result<Connection, String> {
 
 /// Bump this whenever the schema or indexing logic changes in a way that
 /// requires existing cached data to be discarded and rebuilt.
-const SCHEMA_VERSION: i64 = 6;
+const SCHEMA_VERSION: i64 = 8;
 
 fn init_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch("
@@ -320,7 +320,8 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
             path     TEXT NOT NULL PRIMARY KEY,
             modified INTEGER NOT NULL,
             title    TEXT NOT NULL DEFAULT '',
-            body     TEXT NOT NULL DEFAULT ''
+            body     TEXT NOT NULL DEFAULT '',
+            favorite INTEGER NOT NULL DEFAULT 0
         );
         CREATE TABLE IF NOT EXISTS wiki_links (
             source_path  TEXT NOT NULL,
@@ -349,13 +350,20 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
             PRIMARY KEY (path, alias)
         );
         CREATE INDEX IF NOT EXISTS idx_fa_slug ON file_aliases(alias_slug);
+        CREATE TABLE IF NOT EXISTS future_tasks (
+            id   INTEGER PRIMARY KEY AUTOINCREMENT,
+            path TEXT NOT NULL,
+            text TEXT NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_task_path ON future_tasks(path);
     ").map_err(|e| e.to_string())?;
 
     // Migrate columns added after initial release (silently ignored if present).
     for sql in [
-        "ALTER TABLE files      ADD COLUMN title   TEXT NOT NULL DEFAULT ''",
-        "ALTER TABLE wiki_links ADD COLUMN context TEXT NOT NULL DEFAULT ''",
-        "ALTER TABLE files      ADD COLUMN body    TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE files      ADD COLUMN title    TEXT    NOT NULL DEFAULT ''",
+        "ALTER TABLE wiki_links ADD COLUMN context  TEXT    NOT NULL DEFAULT ''",
+        "ALTER TABLE files      ADD COLUMN body     TEXT    NOT NULL DEFAULT ''",
+        "ALTER TABLE files      ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0",
     ] {
         let _ = conn.execute_batch(sql);
     }
@@ -370,7 +378,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
 
     if stored != Some(SCHEMA_VERSION) {
         conn.execute_batch(
-            "DELETE FROM wiki_links; DELETE FROM files; DELETE FROM fts; DELETE FROM file_tags; DELETE FROM file_aliases;"
+            "DELETE FROM wiki_links; DELETE FROM files; DELETE FROM fts; DELETE FROM file_tags; DELETE FROM file_aliases; DELETE FROM future_tasks; DELETE FROM meta WHERE key != 'schema_version';"
         ).map_err(|e| e.to_string())?;
         conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
@@ -397,6 +405,8 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
             .map_err(|e| e.to_string())?;
         conn.execute("DELETE FROM file_aliases WHERE path = ?1", [path_str])
             .map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM future_tasks WHERE path = ?1", [path_str])
+            .map_err(|e| e.to_string())?;
         return Ok(());
     }
 
@@ -422,9 +432,23 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
         ).map_err(|e| e.to_string())?;
     }
 
+    // Parse `favorite` boolean metadata variable.
+    let fm = front_matter::parse(&content);
+    let favorite: i64 = {
+        let mut fav = false;
+        for key in ["favorite", "Favorite", "FAVORITE"] {
+            match fm.get(key) {
+                Some(front_matter::Value::Bool(b))  => { fav = *b; break; }
+                Some(front_matter::Value::Text(t))  => { fav = t.trim().eq_ignore_ascii_case("true"); break; }
+                _ => {}
+            }
+        }
+        fav as i64
+    };
+
     conn.execute(
-        "INSERT OR REPLACE INTO files (path, modified, title, body) VALUES (?1, ?2, ?3, ?4)",
-        rusqlite::params![path_str, modified, title, body],
+        "INSERT OR REPLACE INTO files (path, modified, title, body, favorite) VALUES (?1, ?2, ?3, ?4, ?5)",
+        rusqlite::params![path_str, modified, title, body, favorite],
     ).map_err(|e| e.to_string())?;
 
     // FTS5 doesn't support UPDATE — delete the old entry then insert the new one.
@@ -436,7 +460,6 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
     ).map_err(|e| e.to_string())?;
 
     // Tags: merge front-matter `tags` array with inline #hashtags, normalised to lowercase.
-    let fm = front_matter::parse(&content);
     let mut tag_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     for key in ["tags", "Tags", "TAGS"] {
@@ -480,6 +503,7 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
                         if !a.is_empty() { alias_set.insert(a); }
                     }
                 }
+                front_matter::Value::Bool(_) => {}
             }
             break;
         }
@@ -504,6 +528,22 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
                 "INSERT OR IGNORE INTO file_aliases (path, alias, alias_slug) VALUES (?1, ?2, ?3)",
                 rusqlite::params![path_str, alias, alias_slug],
             ).map_err(|e| e.to_string())?;
+        }
+    }
+
+    // Extract TODO items: any line containing the literal string 'TODO'; the
+    // text captured is everything after 'TODO' on that line, trimmed.
+    conn.execute("DELETE FROM future_tasks WHERE path = ?1", [path_str])
+        .map_err(|e| e.to_string())?;
+    for line in content.lines() {
+        if let Some(pos) = line.find("TODO") {
+            let text = line[pos + 4..].trim();
+            if !text.is_empty() {
+                conn.execute(
+                    "INSERT INTO future_tasks (path, text) VALUES (?1, ?2)",
+                    rusqlite::params![path_str, text],
+                ).map_err(|e| e.to_string())?;
+            }
         }
     }
 
@@ -697,6 +737,113 @@ fn get_unlinked_references(path: String) -> Result<Vec<UnlinkedEntry>, String> {
 
     results.sort_by(|a, b| a.source_path.cmp(&b.source_path));
     Ok(results)
+}
+
+// ── Custom window size/position persistence ─────────────────────────────────
+//
+// tauri-plugin-window-state's exit-time save races with window teardown on
+// macOS, so the plugin can write stale (large-monitor) dimensions back to disk
+// on quit. We take over size/position management: JS saves on every
+// resize/move event (debounced) via `save_window_size`, and restores via
+// `restore_window_size` which also clamps to the current monitor.
+// The plugin is kept only for MAXIMIZED / FULLSCREEN state.
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct WinState {
+    width:  u32,
+    height: u32,
+    x:      i32,
+    y:      i32,
+}
+
+fn win_state_path() -> Result<std::path::PathBuf, String> {
+    Ok(datastore_dir()?.join("window.json"))
+}
+
+/// Persist the current (non-maximised) window size and position to
+/// `<datastore>/window.json`.  Called from JS on a debounced resize/move.
+#[tauri::command]
+async fn save_window_size(window: tauri::WebviewWindow) -> Result<(), String> {
+    if window.is_maximized().map_err(|e| e.to_string())? {
+        return Ok(()); // don't overwrite good dimensions with maximised ones
+    }
+    let size = window.outer_size().map_err(|e| e.to_string())?;
+    let pos  = window.outer_position().map_err(|e| e.to_string())?;
+    let state = WinState { width: size.width, height: size.height, x: pos.x, y: pos.y };
+    let json  = serde_json::to_string(&state).map_err(|e| e.to_string())?;
+    std::fs::write(win_state_path()?, json).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Read the saved window size/position, clamp it to the current monitor, and
+/// apply it.  No-ops on first run (no file yet) or when maximised.
+#[tauri::command]
+async fn restore_window_size(window: tauri::WebviewWindow) -> Result<(), String> {
+    if window.is_maximized().map_err(|e| e.to_string())? {
+        return Ok(());
+    }
+    let path = win_state_path()?;
+    if !path.exists() { return Ok(()); }
+
+    let json: String  = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let saved: WinState = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+
+    // Find the monitor that owns the saved position, so we clamp relative to
+    // the correct screen rather than whichever monitor the OS happened to place
+    // the window on at startup.
+    let monitors = window.available_monitors().map_err(|e| e.to_string())?;
+    let monitor = monitors.iter()
+        .find(|m| {
+            let mp = m.position();
+            let ms = m.size();
+            saved.x >= mp.x
+                && saved.x < mp.x + ms.width  as i32
+                && saved.y >= mp.y
+                && saved.y < mp.y + ms.height as i32
+        })
+        .or_else(|| monitors.first())
+        .ok_or_else(|| "no monitor found".to_string())?;
+
+    let mp = monitor.position();
+    let ms = monitor.size();
+
+    const MARGIN: u32 = 40;
+    let max_w = ms.width.saturating_sub(MARGIN * 2);
+    let max_h = ms.height.saturating_sub(MARGIN * 2);
+    let new_w = saved.width.min(max_w);
+    let new_h = saved.height.min(max_h);
+
+    let new_x = saved.x.max(mp.x).min(mp.x + ms.width  as i32 - new_w as i32);
+    let new_y = saved.y.max(mp.y).min(mp.y + ms.height as i32 - new_h as i32);
+
+    window.set_size(tauri::Size::Physical(tauri::PhysicalSize { width: new_w, height: new_h }))
+        .map_err(|e| e.to_string())?;
+    window.set_position(tauri::Position::Physical(tauri::PhysicalPosition { x: new_x, y: new_y }))
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Return all pages marked as favorites, sorted by title.
+#[derive(serde::Serialize)]
+struct FavoriteEntry {
+    path:  String,
+    title: String,
+}
+
+#[tauri::command]
+fn list_favorites() -> Result<Vec<FavoriteEntry>, String> {
+    let conn = open_db()?;
+    init_schema(&conn)?;
+    let mut stmt = conn.prepare(
+        "SELECT path, title FROM files WHERE favorite = 1 ORDER BY title COLLATE NOCASE"
+    ).map_err(|e| e.to_string())?;
+    let entries: Vec<FavoriteEntry> = stmt
+        .query_map([], |row| Ok(FavoriteEntry { path: row.get(0)?, title: row.get(1)? }))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(entries)
 }
 
 /// Render Markdown to HTML, stripping front-matter and expanding wiki links.
@@ -1183,6 +1330,9 @@ pub fn run() {
             write_scratchpad,
             search_pages,
             fetch_page,
+            list_favorites,
+            save_window_size,
+            restore_window_size,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

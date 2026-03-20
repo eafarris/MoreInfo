@@ -1032,6 +1032,9 @@
   .items-center {
     align-items: center;
   }
+  .items-start {
+    align-items: flex-start;
+  }
   .justify-between {
     justify-content: space-between;
   }
@@ -1725,6 +1728,13 @@
   }
   border-radius: 3px;
   padding: 0 3px;
+}
+.cm-code-block {
+  color: var(--color-olive-500);
+}
+.cm-todo {
+  color: var(--color-amber-400);
+  font-weight: bold;
 }
 .cm-editor {
   height: 100%;

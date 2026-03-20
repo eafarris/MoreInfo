@@ -6,6 +6,7 @@ import { MetadataWidget }    from './widgets/MetadataWidget.js';
 import { ReferencesWidget }  from './widgets/ReferencesWidget.js';
 import { PageWidget }        from './widgets/PageWidget.js';
 import { ScratchPadWidget }  from './widgets/ScratchPadWidget.js';
+import { FavoritesWidget }  from './widgets/FavoritesWidget.js';
 import { BrowserWidget }     from './widgets/BrowserWidget.js';
 import { CounterWidget }     from './widgets/CounterWidget.js';
 import { SearchWidget }      from './widgets/SearchWidget.js';
@@ -86,6 +87,41 @@ function updateCursor(line, col) {
 // formatJournalDate() imported from dateUtils.js — use that as the single source.
 const formatDateLong = formatJournalDate;
 
+// ── Favorite helpers ──────────────────────────────
+
+/** Returns true if the parsed metadata marks this page as a favorite. */
+function isFavoritePage(fm) {
+  if (!fm || !fm.favorite) return false;
+  const v = fm.favorite;
+  if (v.type === 'bool') return v.value === true;
+  if (v.type === 'text') return v.value.toLowerCase() === 'true';
+  return false;
+}
+
+/**
+ * Toggle `favorite` in `content`.
+ * - If `favorite: <bool>` already exists anywhere, flip it in place.
+ * - If absent, append a sig block at the end (per MI metadata manipulation rule).
+ */
+function setFavoriteInContent(content, newVal) {
+  const valStr = newVal ? 'true' : 'false';
+  const existingRe = /^(favorite\s*:\s*)(?:true|false)(\s*)$/mi;
+  if (existingRe.test(content)) {
+    return content.replace(existingRe, `$1${valStr}$2`);
+  }
+  // Variable absent → find last sig delimiter and insert after it
+  const allSigs = [...content.matchAll(/^-- $/mg)];
+  if (allSigs.length > 0) {
+    const last = allSigs[allSigs.length - 1];
+    const nlIdx = content.indexOf('\n', last.index + last[0].length);
+    const insertAt = nlIdx !== -1 ? nlIdx + 1 : content.length;
+    return content.slice(0, insertAt) + `favorite: ${valStr}\n` + content.slice(insertAt);
+  }
+  // No sig block → create one
+  const trailing = content.endsWith('\n') ? '' : '\n';
+  return `${content}${trailing}\n-- \nfavorite: ${valStr}\n`;
+}
+
 // ── Title derivation ──────────────────────────────
 
 function isJournalFile(path) {
@@ -97,6 +133,8 @@ function isJournalFile(path) {
   }
   return /[/\\]journal[/\\]\d{4}-\d{2}-\d{2}\.md$/.test(norm);
 }
+
+let currentFav = false;
 
 function updateDocTitle(fm, content) {
   let title = '';
@@ -119,8 +157,36 @@ function updateDocTitle(fm, content) {
       }
     }
   }
-  const icon = isJournalFile(currentFile) ? 'ph-calendar-dot' : 'ph-file-text';
-  docTitle.innerHTML = `<i class="ph-bold ${icon} leading-none mr-2"></i>${escapeHtml(title)}`;
+
+  currentFav = isFavoritePage(fm);
+  const icon    = isJournalFile(currentFile) ? 'ph-calendar-dot' : 'ph-file-text';
+  const starCls = currentFav
+    ? 'ph-fill ph-star text-amber-400'
+    : 'ph ph-star text-olive-600 hover:text-olive-400';
+
+  docTitle.innerHTML = `
+    <div class="flex items-start justify-between gap-2 w-full">
+      <span><i class="ph-bold ${icon} leading-none mr-2"></i>${escapeHtml(title)}</span>
+      <button id="btn-favorite" title="${currentFav ? 'Remove from favorites' : 'Add to favorites'}"
+        class="shrink-0 mt-0.5 transition-colors" style="pointer-events:auto">
+        <i class="${starCls} text-base leading-none"></i>
+      </button>
+    </div>`;
+
+  document.getElementById('btn-favorite').addEventListener('click', () => {
+    const newFav = !currentFav;
+    const newContent = setFavoriteInContent(cmView.state.doc.toString(), newFav);
+    cmView.dispatch({
+      changes: { from: 0, to: cmView.state.doc.length, insert: newContent },
+      userEvent: 'favorite.toggle',
+    });
+    // Immediate save so the DB is updated right away
+    if (currentFile) {
+      invoke('write_file', { path: currentFile, content: newContent })
+        .then(() => favoritesWidget?.refresh())
+        .catch(console.error);
+    }
+  });
 }
 
 // ── Floating title bar: keep CM content paddingTop in sync ─────────────────
@@ -647,7 +713,22 @@ Object.keys(sbConfig).forEach(name => {
   applySbState(name);
 });
 
-restoreStateCurrent(StateFlags.ALL).catch(() => {}); // restore window position/size
+// Plugin handles maximised/fullscreen only; we own size+position.
+restoreStateCurrent(StateFlags.MAXIMIZED | StateFlags.FULLSCREEN)
+  .then(() => invoke('restore_window_size'))
+  .catch(() => {});
+
+// Save size+position on a 1-second debounce after any resize or move.
+// Saving is skipped by the Rust side when the window is maximised.
+{
+  let _winSaveTimer = null;
+  const scheduleWinSave = () => {
+    clearTimeout(_winSaveTimer);
+    _winSaveTimer = setTimeout(() => invoke('save_window_size').catch(() => {}), 1000);
+  };
+  window.__TAURI__.event.listen('tauri://resize', scheduleWinSave);
+  window.__TAURI__.event.listen('tauri://move',   scheduleWinSave);
+}
 
 invoke('get_datastore_path').then(p => { datastorePath = p; }).catch(console.error);
 
@@ -686,9 +767,14 @@ mountWidgets('left', [
   // new BrowserWidget(),  // hidden by default
 ]);
 
+const favoritesWidget = new FavoritesWidget({
+  onOpen: openFilePath,
+});
+
 mountWidgets('right', [
   new CalendarWidget({ onDateSelected: openJournalDate }),
   new ScratchPadWidget(),
+  favoritesWidget,
 ]);
 
 mountWidgets('bottom', [

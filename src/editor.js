@@ -63,6 +63,20 @@ export const miTheme = EditorView.theme({
   },
   // No gutters (line numbers) — note editor, not code editor
   '.cm-gutters': { display: 'none' },
+  // Fenced code block lines (fences + content): left indent + amber left border.
+  '.cm-code-block-line': {
+    paddingLeft: '1.5rem',
+    borderLeft: '2px solid oklch(47.1% 0.104 83.5)', /* amber-700 */
+  },
+  // Last line of each code block (the closing ```): no bottom padding so the
+  // border stops cleanly at the text baseline rather than bleeding downward.
+  '.cm-code-block-last': {
+    paddingBottom: '0',
+  },
+  // First line after a code block: restore the paragraph gap with top padding.
+  '.cm-after-code-block': {
+    paddingTop: '1.25rem',
+  },
   // Autocomplete popup styling
   '.cm-tooltip.cm-tooltip-autocomplete': {
     backgroundColor: 'var(--color-olive-800)',
@@ -313,6 +327,112 @@ const urlPlugin = ViewPlugin.fromClass(class {
   }
 }, { decorations: v => v.decorations });
 
+// ── Fenced code block decoration ───────────────────────────────────────────
+// ``` marks and CodeInfo label → cm-meta (dimmed), via this plugin.
+// Content lines                → cm-code-block (mark, for color)
+//                              + cm-code-block-line (line, for left indent)
+//
+// Decoration.mark is inline-level; it can color but can't block-indent lines.
+// Decoration.line adds a class to the .cm-line element, which the miTheme
+// (injected with two-class specificity) rules use to apply padding-left safely.
+
+const fencedCodePlugin = ViewPlugin.fromClass(class {
+  constructor(view) { this.decorations = this._build(view); }
+  update(u) {
+    if (u.docChanged || u.viewportChanged) this.decorations = this._build(u.view);
+  }
+  _build(view) {
+    const deco = [];
+    const tree = syntaxTree(view.state);
+    for (const { from, to } of view.visibleRanges) {
+      tree.iterate({
+        from, to,
+        enter(node) {
+          if (node.name !== 'FencedCode') return;
+          const cursor = node.node.cursor();
+          if (!cursor.firstChild()) return;
+
+          let openEnd    = null;
+          let closeStart = null;
+
+          do {
+            if (cursor.name === 'CodeMark') {
+              deco.push(Decoration.mark({ class: 'cm-meta' }).range(cursor.from, cursor.to));
+              if (openEnd === null) openEnd = cursor.to;
+              else                  closeStart = cursor.from;
+            } else if (cursor.name === 'CodeInfo') {
+              deco.push(Decoration.mark({ class: 'cm-meta' }).range(cursor.from, cursor.to));
+            }
+          } while (cursor.nextSibling());
+
+          if (openEnd === null || closeStart === null) return;
+
+          // Content range: line after opening fence up to line before closing fence.
+          const contentFrom = view.state.doc.lineAt(openEnd).to + 1;
+          const contentTo   = view.state.doc.lineAt(closeStart).from;
+          if (contentFrom >= contentTo) return;
+
+          // Color the content span.
+          deco.push(Decoration.mark({ class: 'cm-code-block' }).range(contentFrom, contentTo - 1));
+
+          // Left-border line decoration on every line of the block — fences included.
+          let pos = view.state.doc.lineAt(node.from).from;
+          while (pos <= node.to) {
+            const line = view.state.doc.lineAt(pos);
+            deco.push(Decoration.line({ class: 'cm-code-block-line' }).range(line.from));
+            pos = line.to + 1;
+          }
+
+          // Closing fence: remove bottom padding so the border stops cleanly.
+          const closingLine = view.state.doc.lineAt(closeStart);
+          deco.push(Decoration.line({ class: 'cm-code-block-last' }).range(closingLine.from));
+
+          // Line after the block: restore the paragraph gap with top padding.
+          const afterPos = view.state.doc.lineAt(node.to).to + 1;
+          if (afterPos <= view.state.doc.length) {
+            const afterLine = view.state.doc.lineAt(afterPos);
+            deco.push(Decoration.line({ class: 'cm-after-code-block' }).range(afterLine.from));
+          }
+        },
+      });
+    }
+    return Decoration.set(deco, true);
+  }
+}, { decorations: v => v.decorations });
+
+// ── Keyword highlight factory ──────────────────────────────────────────────
+// Creates a ViewPlugin that marks every occurrence of a literal keyword with
+// a given CSS class.  Use this for TODO, FIXME, NOTE, etc.
+//
+//   keywordPlugin('TODO',  'cm-kw-todo')
+//   keywordPlugin('FIXME', 'cm-kw-fixme')
+
+function keywordPlugin(keyword, cssClass) {
+  const re = new RegExp(keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
+  const len = keyword.length;
+  return ViewPlugin.fromClass(class {
+    constructor(view) { this.decorations = this._build(view); }
+    update(u) {
+      if (u.docChanged || u.viewportChanged) this.decorations = this._build(u.view);
+    }
+    _build(view) {
+      const deco = [];
+      for (const { from, to } of view.visibleRanges) {
+        const text = view.state.doc.sliceString(from, to);
+        re.lastIndex = 0;
+        let m;
+        while ((m = re.exec(text)) !== null) {
+          const start = from + m.index;
+          deco.push(Decoration.mark({ class: cssClass }).range(start, start + len));
+        }
+      }
+      return Decoration.set(deco, true);
+    }
+  }, { decorations: v => v.decorations });
+}
+
+const todoPlugin = keywordPlugin('TODO', 'cm-todo');
+
 // ── Inline code decoration ─────────────────────────────────────────────────
 // Applies cm-inline-code to every InlineCode node in the syntax tree,
 // regardless of whether it sits inside a list item or regular paragraph.
@@ -503,7 +623,7 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
       highlightActiveLine(),
       indentOnInput(),
       bracketMatching(),
-      markdown({ base: markdownLanguage }),
+      markdown({ base: { parser: markdownLanguage.parser.configure({ remove: ['SetextHeading'] }) } }),
       syntaxHighlighting(miHighlightStyle),
       autocompletion({ override: [wikiLinkSource] }),
       wikilinkPlugin,
@@ -512,7 +632,9 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
       delimiterPlugin,
       linkPlugin,
       urlPlugin,
+      fencedCodePlugin,
       inlineCodePlugin,
+      todoPlugin,
       EditorView.lineWrapping,
       surroundHandler,
       wikiLinkPunctHandler,

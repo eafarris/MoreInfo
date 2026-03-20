@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 ///   `{ type: "text",  value: "Hello" }`
 ///   `{ type: "date",  value: "2024-01-15" }`
 ///   `{ type: "array", value: ["one", "two"] }`
+///   `{ type: "bool",  value: true }`
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "value", rename_all = "lowercase")]
 pub enum Value {
@@ -15,6 +16,7 @@ pub enum Value {
     /// ISO 8601 date string (YYYY-MM-DD). Validated but stored verbatim.
     Date(String),
     Array(Vec<String>),
+    Bool(bool),
 }
 
 pub type FrontMatter = HashMap<String, Value>;
@@ -182,7 +184,17 @@ fn parse_value(raw: &str) -> Value {
         return Value::Text(raw[1..raw.len() - 1].to_string());
     }
 
-    // 3. Comma-delimited list → Array  (e.g. `one, two, three`)
+    // 3. Boolean literals (case-insensitive, unquoted).
+    //    Checked before comma-list and date so these words are never
+    //    misclassified as plain text.  To use one as a literal string,
+    //    the author must quote it (e.g. `status: "true"`).
+    match raw.to_ascii_lowercase().as_str() {
+        "true"  | "t" | "yes" | "y" | "on"  | "1" => return Value::Bool(true),
+        "false" | "f" | "no"  | "n" | "off" | "0" => return Value::Bool(false),
+        _ => {}
+    }
+
+    // 4. Comma-delimited list → Array  (e.g. `one, two, three`)
     if raw.contains(',') {
         let items: Vec<String> = raw
             .split(',')
@@ -192,12 +204,12 @@ fn parse_value(raw: &str) -> Value {
         return Value::Array(items);
     }
 
-    // 4. ISO 8601 date: YYYY-MM-DD
+    // 5. ISO 8601 date: YYYY-MM-DD
     if is_date(raw) {
         return Value::Date(raw.to_string());
     }
 
-    // 5. Plain text
+    // 6. Plain text
     Value::Text(raw.to_string())
 }
 

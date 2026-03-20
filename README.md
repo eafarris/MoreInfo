@@ -1,6 +1,6 @@
 # MoreInfo
 
-A markdown-based personal knowledge base (PKB) for macOS, with Windows and Linux planned. MoreInfo combines a wiki-style linking system, daily journals, and task management — all backed by plain-text files you can read, edit, and back up with any tool you already use.
+A markdown-based personal knowledge base (PKB) for macOS, with Windows and Linux planned. MoreInfo combines a wiki-style linking system, daily journals, and task management — all backed by plain-text files you can read, edit, back up, and sync with any tool you already use.
 
 > **Status: Early development.** Core editing and linking work. Tasks, templates, and several planned widgets are still in progress.
 
@@ -43,6 +43,14 @@ A markdown-based personal knowledge base (PKB) for macOS, with Windows and Linux
 - **Focus mode** — distraction-free single-document view
 - **iOS / iPadOS binaries** (Tauri roadmap dependent)
 
+---
+## Screenshots
+
+Main window, daily journal:
+![Main window with daily journal open](.\MoreInfoScreenshot-Journal.png)
+
+Page open with sidebar widgets:
+![Busy interface with widgets](.\MoreInfoScreenshot-Widgets.png)
 ---
 
 ## Tech stack

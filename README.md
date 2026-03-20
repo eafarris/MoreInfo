@@ -113,6 +113,12 @@ MoreInfo is being developed in collaboration with [Claude Code](https://claude.a
 
 ---
 
+## About the name
+
+I'm an [Apple Newton](https://en.wikipedia.org/wiki/Apple_Newton) fan, and used one well past its useful life. [SilverWARE](https://silverwaresoftware.com/AboutUs.shtml) made a PIM extension for the default Newton apps that was called [MoreInfo](https://silverwaresoftware.com/MI5PR.shtml), and it was truly the finest piece of software I've ever used. The name of this project is aspirational. My MoreInfo covers similar ground in a modern context, and I want it to be worthy of the name.
+
+---
+
 ## License
 
 Not yet decided. Source is public for reference. If you're interested in using or contributing, open an issue.

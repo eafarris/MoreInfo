@@ -15,16 +15,17 @@ function basename(path) {
 
 export class ReferencesWidget extends Widget {
   /**
-   * @param {{ onOpen: (path: string) => void, onHasReferences: () => void }} config
-   *   onOpen          — callback invoked when the user clicks a reference link
-   *   onHasReferences — callback invoked when the current page has ≥1 reference
+   * @param {{ onOpen: (path: string) => void, onStateChange: (hasContent: boolean) => void }} config
+   *   onOpen        — callback invoked when the user clicks a reference link
+   *   onStateChange — called with true when ≥1 reference exists, false when empty
    */
-  constructor({ onOpen, onHasReferences } = {}) {
+  constructor({ onOpen, onStateChange } = {}) {
     super({ id: 'references', title: 'References', icon: 'ph-arrows-in' });
-    this._onOpen           = onOpen          || (() => {});
-    this._onHasReferences  = onHasReferences || (() => {});
-    this._countEl          = null;
-    this._currentPath      = null;
+    this._onOpen        = onOpen        || (() => {});
+    this._onStateChange = onStateChange || (() => {});
+    this._countEl       = null;
+    this._currentPath   = null;
+    this._hasContent    = false;
   }
 
   get wrapperClass() { return 'flex flex-col flex-1 min-h-0'; }
@@ -83,7 +84,7 @@ export class ReferencesWidget extends Widget {
       return;
     }
 
-    this._onHasReferences();
+    if (!this._hasContent) { this._hasContent = true; this._onStateChange(true); }
 
     const renderItem = (e) => {
       const title = e.source_title || basename(e.source_path).replace(/\.[^.]+$/, '');
@@ -123,5 +124,6 @@ export class ReferencesWidget extends Widget {
         <i class="ph ph-arrows-in text-lg leading-none shrink-0"></i>
         <p class="text-xs">No references to this page.</p>
       </div>`;
+    if (this._hasContent) { this._hasContent = false; this._onStateChange(false); }
   }
 }

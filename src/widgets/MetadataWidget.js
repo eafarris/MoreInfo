@@ -18,9 +18,15 @@ function formatDate(iso) {
 }
 
 export class MetadataWidget extends Widget {
-  constructor() {
+  /**
+   * @param {{ onStateChange: (hasContent: boolean) => void }} config
+   *   onStateChange — called with true when metadata exists, false when empty
+   */
+  constructor({ onStateChange } = {}) {
     super({ id: 'metadata', title: 'Metadata', icon: 'ph-list-dashes' });
-    this._countEl = null;
+    this._onStateChange = onStateChange || (() => {});
+    this._hasContent    = false;
+    this._countEl       = null;
   }
 
   get wrapperClass() { return 'flex flex-col flex-1 min-h-0 border-l border-olive-700'; }
@@ -65,15 +71,18 @@ export class MetadataWidget extends Widget {
       ? ''
       : `${entries.length} variable${entries.length !== 1 ? 's' : ''}`;
 
-    this._body.innerHTML = entries.length === 0
-      ? this._emptyState()
-      : `<div class="flex flex-col gap-2 p-3">${entries.map(([k, v]) => this._renderEntry(k, v)).join('')}</div>`;
+    const hasContent = entries.length > 0;
+    this._body.innerHTML = hasContent
+      ? `<div class="flex flex-col gap-2 p-3">${entries.map(([k, v]) => this._renderEntry(k, v)).join('')}</div>`
+      : this._emptyState();
+    if (hasContent !== this._hasContent) { this._hasContent = hasContent; this._onStateChange(hasContent); }
   }
 
   _renderEmpty() {
     if (!this._body) return;
     if (this._countEl) this._countEl.textContent = '';
     this._body.innerHTML = this._emptyState();
+    if (this._hasContent) { this._hasContent = false; this._onStateChange(false); }
   }
 
   _emptyState() {

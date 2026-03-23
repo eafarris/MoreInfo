@@ -830,7 +830,8 @@ const pageWidget = new PageWidget({
 mountWidgets('left', [
   new SearchWidget({ onOpen: (path, title) => pageWidget.loadPath(path, title) }),
   pageWidget,
-  // new BrowserWidget(),  // hidden by default
+  // new OutlineWidget(),  // available but not in default layout
+  // new BrowserWidget(),  // available but not in default layout
 ]);
 
 const favoritesWidget = new FavoritesWidget({
@@ -843,12 +844,22 @@ mountWidgets('right', [
   favoritesWidget,
 ]);
 
+// Auto-show/hide the bottom sidebar based on whether either bottom widget
+// has content.  Both widgets report their state via onStateChange(bool).
+const bottomContentState = { refs: false, meta: false };
+function updateBottomVisibility() {
+  const hasAny = bottomContentState.refs || bottomContentState.meta;
+  setSbState('bottom', hasAny ? 'pinned' : 'hidden');
+}
+
 mountWidgets('bottom', [
   new ReferencesWidget({
     onOpen: openFilePath,
-    onHasReferences: () => { if (sbState.bottom !== 'pinned') setSbState('bottom', 'pinned'); },
+    onStateChange: has => { bottomContentState.refs = has; updateBottomVisibility(); },
   }),
-  new MetadataWidget(),
+  new MetadataWidget({
+    onStateChange: has => { bottomContentState.meta = has; updateBottomVisibility(); },
+  }),
   // new CounterWidget(),  // hidden by default
 ]);
 

@@ -147,7 +147,7 @@ Browser
 : A _simple_ display of any URI-reachable content. The UI would consist entirely of the title bar and forward/back pages. We will not be building a full browser UI. Clicked links will open in the same widget, while Cmd+Click will open in a new Browser widget, smartly positioned based on the location and position of the current widget. The Browser widget is resizable on both axes. Status: PARTIALLY IMPLEMENTED.
 
 Search
-: A widget containing the results of a search of the datastore. Has a top-bar UI for search terms which can be expanded to allow for operators and filters. The Search widget is resizable on both axes. Status: PARTIALLY IMPLEMENTED.
+: A widget containing the results of a full-text search of the datastore. Has a top-bar UI for search terms which can be expanded to allow for operators and filters. The Search widget is resizable on both axes. Status: PARTIALLY IMPLEMENTED.
 
 
 ## Current Feature Implementation Status
@@ -161,6 +161,7 @@ Search
 - [X] Top, bottom sidebars
 - [X] Resizable sidebars
 - [X] Full-text search
+- [X] @calc blocks
 - [ ] Operators, filters for full-text search
 - [X] SQLite database as cache for linked references
 - [X] SQLite database as cache for full-text search

@@ -24,6 +24,7 @@ A markdown-based personal knowledge base (PKB) for macOS, with Windows and Linux
 - **Daily journals** — one `.md` file per day, named `YYYY-MM-DD.md`; today's journal opens on launch
 - **Page aliases** — multiple names can resolve to the same page
 - **Favorites** — star any page; favorited pages appear in the Favorites widget
+- **@calc blocks** — tape-calculator arithmetic inside any page or the Scratch Pad (see below)
 - **Full-text search** with SQLite FTS5
 - **Metadata** — YAML-style front matter anywhere in the file, plus end-of-file sig-block metadata; supports string, date, boolean, and array types
 - **Tags** via metadata
@@ -42,6 +43,43 @@ A markdown-based personal knowledge base (PKB) for macOS, with Windows and Linux
 - **Static site export** — publish some or all notes as a website
 - **Focus mode** — distraction-free single-document view
 - **iOS / iPadOS binaries** (Tauri roadmap dependent)
+
+---
+
+## @calc blocks
+
+Any page (including the Scratch Pad widget) can contain one or more calculator blocks. Start a block by placing `@calc` alone on a line. Every subsequent non-blank line is treated as an arithmetic expression. The block ends at the first blank line (or end of file).
+
+```text
+@calc
+450 * 12
++ 1200
+* 1.08
+```
+
+Results appear flush-right in the editor and in the preview pane.
+
+### Implicit carry
+
+The result of each expression is silently carried forward as the left operand of the next line **when that line begins with a binary operator** (`+`, `-`, `*`, `/`, `%`, `**`, `^`). A line that starts with a number or function is evaluated independently.
+
+| Line | Interpretation |
+|---|---|
+| `450 * 12` | standalone: `450 × 12 = 5,400` |
+| `+ 1200` | carry: `5,400 + 1,200 = 6,600` |
+| `* 1.08` | carry: `6,600 × 1.08 = 7,128` |
+| `32^2` | standalone (starts with a number): `1,024` |
+
+A leading `-` is always treated as binary subtraction (subtract from the previous result), not unary negation.
+
+### Supported syntax
+
+| Feature | Examples |
+|---|---|
+| Basic operators | `+ - * / % ** ^` (`^` is an alias for `**`) |
+| Grouping | `(2 + 3) * 4` |
+| Constants | `pi` |
+| Functions | `sqrt abs round floor ceil min max log sin cos tan` |
 
 ---
 ## Screenshots

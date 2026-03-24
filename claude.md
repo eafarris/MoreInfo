@@ -8,7 +8,7 @@ MI is built using Rust and Tauri. Styling of the front-end is done with Tailwind
 
 Its datastore is a structured folder hierarchy consisting of plain text files in markdown format as its source of truth. While a 'moreinfo.sqlite' SQLite database exists, it is created and updated based on the contents of the markdown files. The database exists to speed up things like searching and linking, and other routines that would be easier to create and cache rather than build from the filesystem. A file watch mechanism exists to allow MI to automatically keep the database in sync with the filesystem, including a journal within the database keeping track of the last time the database was updated, which would trigger an update with newer files on launch or reindex.
 
-To wit, the SQLite database is _derived_ from the content of the markdown files in the datastore. The database is _not authoritative_, and only _reflects_ the truth as it exists in the MD files on disk. No functionality or data is lost should the SQLite database be destroyed or corrupted. It can always be reconstructed by parsing the Markdown files on disk.
+To wit, the SQLite database is _derived_ from the content of the markdown files in the datastore. The database is _not authoritative_, and only reflects the truth as it exists in the MD files on disk. No functionality or data is lost should the SQLite database be destroyed or corrupted. It can always be reconstructed by parsing the Markdown files on disk.
 
 The Markdown files in the datastore themselves are given a filename on first save, derived by various means. Once the file (a "page" in MI parlance) has a filename, that filename is immutable. The idea of the MI datastore is that filenames don't matter to the user at all.
 
@@ -20,7 +20,7 @@ Datastore
 : The root of MI's data structure. By default, this is `~/Documents/MoreInfo` on all platforms. The datastore has a `journal` folder storing daily journals, and a `wiki` folder containing more generic pages, and a 'templates' folder containing template pages. Users may optionally create their own "category" of pages, which will be expressed in the filesystem as a top-level folder. The datastore contains `scratchpad.md`, a file that is not a true 'page' but exists in the ScratchPad Widget and is automatically saved and retrieved like other pages. Also in this datastore is `moreinfo.sqlite`, an SQLite database built from the content within 'journal' and 'pages' for quicker searching and linking, as well as other pieces of data and metadata that would be cheaper to cache than build from the filesystem. Finally, a `preferences.json` file contains user preferences, including color/font/theme choices, basic editor configuration like tab stops and spaces vs tabs, export preferences, etc.
 
 Page
-: A plaintext file within the filesystem. All pages are assumed to use Markdown formatting and carry the "`.md`" extension. Pages are the source of truth for Moreinfo. Pages can be linked within each other to form a wiki-like structure. There are several types of pages, including 'wiki' pages, 'journal' pages and 'template' pages. Users may create their own own "categories" of pages.
+: A plaintext file within the datastore. All pages are assumed to use Markdown formatting and carry the "`.md`" extension. Pages are the source of truth for Moreinfo. Pages can be linked within each other to form a wiki-like structure. There are several types of pages, including 'wiki' pages, 'journal' pages and 'template' pages. Users may create their own own "categories" of pages.
 
 Wiki
 : The 'generic' page that exists within the 'wiki' folder of the datastore. These pages are given a filename upon creation, either from their title or a user-supplied filename. The title (and therefore the filename) is derived based on how the page is created. If the page is created as the result of clicking on a wiki link, that will be the title of the page. A page can also be created by File->New page from the menu, at which point the user is prompted for the title of the page.
@@ -29,15 +29,12 @@ Journal
 : A special type of page that exists within the 'journal' folder of the datastore. These files are named `YYYY-MM-DD.md`, after a day on the calendar. Up to one journal page can exist for each day. The default startup view of MI is today's journal page. The Calendar widget allows navigation by day, as well as a date picker in the menu under View->Journal.
 
 Template
-: A special type of page that exists within the 'templates' folder of the datastore. Template pages can be used to quickly create other pages via "File->New from template" in the menu system. A page can be saved as a template via "File->Save as template" in the menu system. Templates retain their metadata variables, but not the values. Other content within the template page is retained when creating a page based on the template.
-
-Category
-: While "Wiki" is a catch-all term for generic pages, users may find that more structure is beneficial to them. Users may create one or more "categories" for pages. A page "category" will exist on the filesystem in its own top-level directory (like "wiki," "journal," and "template" with a pluralized name. Categories can (and probably will) be based on a specific template. For example, my own personal use would have a "Person" category. These pages would be based on a 'person' template, and the "Person" markdown files would exist in a "~/Documents/MoreInfo/people" folder, 'people' being the pluralized version of 'person'. I could also see myself having a "Room" category, based on a "room" template, and the files living in the datastore in a "rooms" folder. Other categories users may utilize would be "Meeting," "Recipe," "Album," "Artist," etc. Note that categories are a completely optional feature. If the user cares less about the filesystem organization, all data pages that make up the user's Personal Knowledge Base could be in the 'wiki' folder. 
+: A special type of page that exists within the 'templates' folder of the datastore. Template pages can be used to quickly create other pages via "File->New from template" in the menu system. A page can be saved as a template via "File->Save as template" in the menu system. Templates retain all metadata and their values, with the exception of 'title,' which the user is prompted for on page creation. Content (non-metadata) within the template page is also retained when creating a page based on the template. Templates are helpful when creating 'categories' of pages; they define common content and metadata for future pages. The 'templates' folder is walked when updating the database only to enumerate the templates available; they are not indexed for search or links, as they don't represent any content themselves.
 
 Metadata
 : A series of key/value pairs that describe the document in a structured way. Some metadata variables are based on filesystem data by default and can be read-only. Most variables can be set within a YAML-like front-matter structure. The variable name and its value are delimited by zero or more spaces, followed by a colon ("`:`"), followed by zero or more spaces (regex `\s*:\s*`). The structure itself is delimited by triple-dashes ("`---`") alone on a line, followed by the variable assignments, followed by another line of only triple dashes. In typical YAML front-matter, this section must be at the beginning of the file; for MI pages this structure could be anywhere, including multiple places. A final structure for defining metadata comes at the end of a file, using the "email .sig" delimiter of double dashes followed by a space ("`-- `") alone on a line, then continuing to the end of the file. Any variable that is defined more than once will use its last definition, from top to bottom through the file. Variable names are _case-insensitive_, and stored in the db cache as such. Values are _case sensitive_, though reserved metadata variables can change this behavior (eg., "tags" are _case insensitive_).
 
-: Variables are weakly typed, with four recognized types: string, date (or datetime), boolean, and array.
+: Metadata variables are weakly typed, with four recognized types: string, date (or datetime), boolean, and array.
 
 Metadata string
 : A variable is defined as a string based on the data after the delimiter (regex '\s*:\s*'). If strings are surrounded by single or double quotes, the quotes themselves are not considered part of the string (so `string` would match `'string'` or `"string"`). If the string can be successfully parsed by "chrono_node," a pulled-in JS library, it is considered a metadata _date_ rather than a string. If the string can be successfully parsed as an array delimited by commas, it is considered a metadata _array_ rather than a string, _unless_ the string is surrounded in quotes. If the string matches one of the metadata boolean values (defined below), it is considered a metadata _boolean_ rather than a string. String values are _case sensitive_.
@@ -94,6 +91,9 @@ Task
 Title
 : Used as in the header of the active document viewport. Can be explicitly set within metadata. Defaults to "DD MMM YYYY" if the page is a journal page. Non-journal pages should use the `<title>` tag of the document, or, if not specified, the first `<h1>` of the document. If none of these are specified, the filename from the filesystem will be used as a last resort. Once a file is given a filename, that name in the filesystem does _not_ change based on any edits to the page that change the _title_. Title and Filename are separate concepts; meeting only that a page needs a filename that can be extracted from a title, and a file needs a title, that can be extracted from a filename. But this only happens _once_ to give the page an initial filename on the filesystem.
 
+Category
+: A wiki page can have one optional category, which can be used to group like pages together. Categories describe the type of entity that a page represents, like a 'meeting', 'person,' 'project,' etc. Typically page templates are used to create a page within a category, as these pages should all share a similar structure and metadata. Categories have two important distinctions from tags: A page can have zero or one category, where a page can have many tags; and a category answers the question "what kind of page is this?" whereas tags answers "what topics is this page about?" Unlike other metadata, a page created based on a template will retain the category metadata value from a template.
+
 Publish-date
 : Datetime that this page should be published, when exporting. Can be explicitly set within metadata. Defaults to the last-modified date of the document from the filesystem.
 
@@ -113,10 +113,7 @@ Alias
 : Same as "aliases," but holds only one string instead of an array.
 
 Favorite
-: A boolean value, when, if true, allows the page to show up in the FavoritesWidget.
-
-Category
-: Used as an 'uber-tag' for a page, a "category" corresponds to the type of data represented by this page. While pages can have an arbitrary number of 'tags,' a page can have up to one category. Setting a category for a page automatically moves it in the filesystem to a top-level folder in the datastore named after the category. 
+: A boolean value, when, if true, allows the page to show up in the FavoritesWidget. 
 
 ## Reserved task management parameters
 
@@ -168,7 +165,7 @@ Search
 - [X] Filesystem watcher to keep DB up to date and autosave
 - [X] Basic widget API
 - [X] Counter widget
-- [ ] Outline widget
+- [X] Outline widget
 - [X] Page widget
 - [X] Browser widget
 - [X] Search widget

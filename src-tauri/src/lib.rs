@@ -110,6 +110,10 @@ fn wiki_dir() -> Result<std::path::PathBuf, String> {
     Ok(datastore_dir()?.join("wiki"))
 }
 
+fn templates_dir() -> Result<std::path::PathBuf, String> {
+    Ok(datastore_dir()?.join("templates"))
+}
+
 #[derive(serde::Serialize)]
 struct JournalEntry {
     path:    String,
@@ -1007,6 +1011,7 @@ fn collect_md_files(dir: &std::path::Path, out: &mut std::collections::HashSet<S
         let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
         if name.starts_with('.') { continue; }
         if path.is_dir() {
+            if name == "templates" { continue; } // reserved; never indexed
             collect_md_files(&path, out)?;
         } else if path.extension().and_then(|e| e.to_str()) == Some("md") {
             out.insert(path.to_string_lossy().to_string());
@@ -1259,6 +1264,166 @@ fn open_wiki_page(title: String) -> Result<JournalEntry, String> {
     })
 }
 
+/// Open or create a template file at `<datastore>/templates/<slug>.md`.
+/// Templates are never added to the search index.
+#[tauri::command]
+fn open_template(name: String) -> Result<JournalEntry, String> {
+    let dir = templates_dir()?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let slug = slugify(&name);
+    if slug.is_empty() {
+        return Err("Could not derive a filename from that name.".to_string());
+    }
+    let path = dir.join(format!("{}.md", slug));
+    let content = if path.exists() {
+        std::fs::read_to_string(&path).map_err(|e| e.to_string())?
+    } else {
+        let default = format!("---\ntitle: {}\n---\n\n", name);
+        std::fs::write(&path, &default).map_err(|e| e.to_string())?;
+        default
+    };
+    Ok(JournalEntry {
+        path: path.to_string_lossy().to_string(),
+        content,
+    })
+}
+
+// ── Template helpers ─────────────────────────────────────────────────────────
+
+fn title_case(s: &str) -> String {
+    s.split_whitespace()
+        .map(|w| {
+            let mut c = w.chars();
+            match c.next() {
+                None    => String::new(),
+                Some(f) => f.to_uppercase().to_string() + c.as_str(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Best display name for a template file: its `title` metadata if set,
+/// otherwise the filename stem converted to Title Case.
+fn template_display_name(path: &std::path::Path) -> String {
+    if let Ok(content) = std::fs::read_to_string(path) {
+        let fm = front_matter::parse(&content);
+        if let Some(front_matter::Value::Text(t)) = fm.get("title") {
+            let t = t.trim();
+            if !t.is_empty() {
+                return t.to_string();
+            }
+        }
+    }
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .replace('-', " ")
+        .replace('_', " ");
+    title_case(&stem)
+}
+
+#[derive(serde::Serialize)]
+struct TemplateEntry {
+    slug:  String,
+    title: String,
+    path:  String,
+}
+
+/// Return all templates in `<datastore>/templates/`, sorted by display title.
+#[tauri::command]
+fn list_templates() -> Result<Vec<TemplateEntry>, String> {
+    let dir = templates_dir()?;
+    if !dir.exists() { return Ok(vec![]); }
+
+    let mut entries: Vec<TemplateEntry> = std::fs::read_dir(&dir)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok())
+        .filter(|e| e.path().extension().and_then(|x| x.to_str()) == Some("md"))
+        .map(|e| {
+            let path  = e.path();
+            let slug  = path.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            let title = template_display_name(&path);
+            TemplateEntry { slug, title, path: path.to_string_lossy().to_string() }
+        })
+        .collect();
+
+    entries.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
+    Ok(entries)
+}
+
+/// Set the `title` metadata in `content` following the MI placement rule:
+///   - If a `title:` line already exists anywhere, update it in-situ.
+///   - Otherwise append it to the sig block (creating one if absent).
+fn set_title_in_content(content: &str, new_title: &str) -> String {
+    // Walk lines looking for the first `title:` key (case-insensitive,
+    // list markers stripped).
+    let mut found = false;
+    let new_lines: Vec<String> = content.lines().map(|line| {
+        if found { return line.to_string(); }
+        let check = line.trim();
+        let check = check
+            .strip_prefix("- ").or_else(|| check.strip_prefix("* "))
+            .or_else(|| check.strip_prefix("+ "))
+            .unwrap_or(check)
+            .trim_start();
+        if let Some(colon_pos) = check.find(':') {
+            if check[..colon_pos].trim().eq_ignore_ascii_case("title") {
+                found = true;
+                return format!("title: {}", new_title);
+            }
+        }
+        line.to_string()
+    }).collect();
+
+    if found {
+        return new_lines.join("\n");
+    }
+
+    // Not found — append to existing sig block or create one.
+    let joined  = new_lines.join("\n");
+    let trail   = if content.ends_with('\n') { "" } else { "\n" };
+    let has_sig = content.lines().any(|l| l == "-- ");
+    if has_sig {
+        format!("{}{}title: {}\n", joined, trail, new_title)
+    } else {
+        format!("{}{}\n-- \ntitle: {}\n", joined, trail, new_title)
+    }
+}
+
+/// Create a new wiki page from a template.
+/// The template is copied verbatim; only `title` is updated (in-situ if the
+/// key already exists, otherwise appended to the sig block).
+#[tauri::command]
+fn new_from_template(template_slug: String, title: String) -> Result<JournalEntry, String> {
+    let template_path = templates_dir()?.join(format!("{}.md", template_slug));
+    if !template_path.exists() {
+        return Err(format!("Template '{}' not found.", template_slug));
+    }
+    let template_content = std::fs::read_to_string(&template_path).map_err(|e| e.to_string())?;
+    let content = set_title_in_content(&template_content, &title);
+
+    let dir = wiki_dir()?;
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let slug = slugify(&title);
+    if slug.is_empty() {
+        return Err("Could not derive a filename from that title.".to_string());
+    }
+    let path = dir.join(format!("{}.md", slug));
+    std::fs::write(&path, &content).map_err(|e| e.to_string())?;
+
+    if let Ok(conn) = open_db() {
+        let _ = init_schema(&conn);
+        let _ = index_file(&conn, &path.to_string_lossy());
+    }
+
+    Ok(JournalEntry {
+        path: path.to_string_lossy().to_string(),
+        content,
+    })
+}
+
 /// Write `content` to `path`, creating parent directories as needed.
 /// Also updates the wiki-link index for the saved file.
 #[tauri::command]
@@ -1394,8 +1559,11 @@ pub fn run() {
             let toggle_top    = MenuItem::with_id(handle, "toggle-top",    "Toggle Top Panel",      true, None::<&str>)?;
             let toggle_bottom = MenuItem::with_id(handle, "toggle-bottom", "Toggle Bottom Panel",   true, None::<&str>)?;
 
-            let file_new     = MenuItem::with_id(handle, "file-new",     "New Page\u{2026}", true, Some("CmdOrCtrl+N"))?;
-            let file_reindex = MenuItem::with_id(handle, "file-reindex", "Reindex Database", true, None::<&str>)?;
+            let file_new              = MenuItem::with_id(handle, "file-new",              "New Page\u{2026}",          true, Some("CmdOrCtrl+N"))?;
+            let file_new_template     = MenuItem::with_id(handle, "file-new-template",     "New Template\u{2026}",      true, None::<&str>)?;
+            let file_from_template    = MenuItem::with_id(handle, "file-from-template",    "New from Template\u{2026}", true, None::<&str>)?;
+            let file_edit_template    = MenuItem::with_id(handle, "file-edit-template",    "Edit Template\u{2026}",     true, None::<&str>)?;
+            let file_reindex          = MenuItem::with_id(handle, "file-reindex",          "Reindex Database",          true, None::<&str>)?;
 
             let menu = MenuBuilder::new(handle)
                 .items(&[
@@ -1414,6 +1582,10 @@ pub fn run() {
                     // ── File ────────────────────────────────────────
                     &SubmenuBuilder::new(handle, "File")
                         .item(&file_new)
+                        .separator()
+                        .item(&file_new_template)
+                        .item(&file_from_template)
+                        .item(&file_edit_template)
                         .separator()
                         .item(&file_reindex)
                         .build()?,
@@ -1466,6 +1638,9 @@ pub fn run() {
             list_journal_dates,
             open_journal,
             open_wiki_page,
+            open_template,
+            list_templates,
+            new_from_template,
             full_reindex,
             index_datastore,
             get_backlinks,

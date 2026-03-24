@@ -747,6 +747,48 @@ function promptModal(message, placeholder = '') {
   });
 }
 
+/**
+ * Show a pick-list modal.  Returns the chosen option's value, or null if
+ * cancelled.  `options` is an array of `{ value, label }` objects.
+ */
+function pickModal(message, options) {
+  return new Promise(resolve => {
+    if (!options.length) { resolve(null); return; }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'fixed inset-0 z-[9999] flex items-center justify-center bg-black/60';
+
+    overlay.innerHTML = `
+      <div class="bg-olive-900 border border-olive-700 rounded-lg shadow-xl p-5 w-80 flex flex-col gap-3">
+        <p class="text-sm text-olive-200">${message}</p>
+        <ul class="flex flex-col gap-0.5 max-h-64 overflow-y-auto">
+          ${options.map(o => `
+            <li data-value="${o.value}"
+              class="px-3 py-2 text-sm text-olive-100 rounded cursor-pointer hover:bg-olive-700 hover:text-amber-300 select-none">
+              ${o.label}
+            </li>`).join('')}
+        </ul>
+        <div class="flex justify-end">
+          <button id="mi-pick-cancel"
+            class="px-3 py-1.5 text-xs rounded bg-olive-700 text-olive-200 hover:bg-olive-600">
+            Cancel
+          </button>
+        </div>
+      </div>`;
+
+    document.body.appendChild(overlay);
+    const finish = val => { overlay.remove(); resolve(val); };
+
+    overlay.querySelector('#mi-pick-cancel').addEventListener('click', () => finish(null));
+    overlay.addEventListener('click', e => { if (e.target === overlay) finish(null); });
+    overlay.querySelector('ul').addEventListener('click', e => {
+      const li = e.target.closest('li[data-value]');
+      if (li) finish(li.dataset.value);
+    });
+    overlay.addEventListener('keydown', e => { if (e.key === 'Escape') finish(null); });
+  });
+}
+
 // ── Menu event handling ───────────────────────────
 
 window.__TAURI__.event.listen('menu', async e => {
@@ -759,6 +801,62 @@ window.__TAURI__.event.listen('menu', async e => {
     case 'file-new': {
       const title = await promptModal('New page title:');
       if (title) await openWikiPage(title);
+      break;
+    }
+
+    case 'file-new-template': {
+      const name = await promptModal('Template name:', 'e.g. person, meeting, room');
+      if (name) {
+        try {
+          const { path, content } = await invoke('open_template', { name });
+          await navigateTo(path, content);
+        } catch (e) {
+          console.error('open_template failed:', e);
+        }
+      }
+      break;
+    }
+
+    case 'file-from-template': {
+      try {
+        const templates = await invoke('list_templates');
+        if (!templates.length) {
+          await promptModal('No templates found.\nCreate one via File → New Template.');
+          break;
+        }
+        const slug = await pickModal(
+          'Choose a template:',
+          templates.map(t => ({ value: t.slug, label: t.title })),
+        );
+        if (!slug) break;
+        const title = await promptModal(`New page title:`);
+        if (!title) break;
+        const { path, content } = await invoke('new_from_template', { templateSlug: slug, title });
+        await navigateTo(path, content);
+      } catch (e) {
+        console.error('new_from_template failed:', e);
+      }
+      break;
+    }
+
+    case 'file-edit-template': {
+      try {
+        const templates = await invoke('list_templates');
+        if (!templates.length) {
+          await promptModal('No templates found.\nCreate one via File → New Template.');
+          break;
+        }
+        const template = await pickModal(
+          'Edit template:',
+          templates.map(t => ({ value: t.path, label: t.title })),
+        );
+        if (template) {
+          const content = await invoke('read_file', { path: template });
+          await navigateTo(template, content);
+        }
+      } catch (e) {
+        console.error('edit_template failed:', e);
+      }
       break;
     }
 

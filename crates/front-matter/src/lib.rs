@@ -154,6 +154,13 @@ fn parse_pairs_slice(lines: &[&str]) -> Vec<(String, Value)> {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
+        // Strip unordered list markers so metadata can be written as a list.
+        let line = line
+            .strip_prefix("- ")
+            .or_else(|| line.strip_prefix("* "))
+            .or_else(|| line.strip_prefix("+ "))
+            .unwrap_or(line)
+            .trim_start();
         if let Some(colon) = line.find(':') {
             let key = line[..colon].trim().to_string();
             let raw = line[colon + 1..].trim();
@@ -373,6 +380,23 @@ mod tests {
         assert!(!stripped.contains("title:"));
         assert!(!stripped.contains("author:"));
         assert!(stripped.contains("Body."));
+    }
+
+    #[test]
+    fn list_style_metadata() {
+        let doc = "---\n- title: My Page\n- tags: one, two\n- favorite: true\n---";
+        let fm = parse(doc);
+        assert_eq!(fm["title"],    text("My Page"));
+        assert_eq!(fm["tags"],     array(&["one", "two"]));
+        assert_eq!(fm["favorite"], Value::Bool(true));
+    }
+
+    #[test]
+    fn list_markers_asterisk_and_plus() {
+        let doc = "---\n* author: Jane\n+ date: 2026-03-23\n---";
+        let fm = parse(doc);
+        assert_eq!(fm["author"], text("Jane"));
+        assert_eq!(fm["date"],   date("2026-03-23"));
     }
 
     #[test]

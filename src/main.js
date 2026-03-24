@@ -1,4 +1,5 @@
 import './input.css';
+import { preprocessCalcBlocks } from './calcBlock.js';
 import { invoke } from './tauri.js';
 import { restoreStateCurrent, StateFlags } from '@tauri-apps/plugin-window-state';
 import { CalendarWidget }    from './widgets/CalendarWidget.js';
@@ -281,9 +282,45 @@ vDivider.addEventListener('mousedown', e => {
 
 // ── Markdown rendering ─────────────────────────────
 
+/**
+ * Insert a blank line between every pair of consecutive non-blank lines so that
+ * single newlines in the source act as paragraph breaks in the rendered output.
+ * Fenced code blocks and @calc blocks are left untouched.
+ */
+function singleNewlinesToParagraphs(markdown) {
+  const lines = markdown.split('\n');
+  const out   = [];
+  let inFence     = false;
+  let inCalcBlock = false;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line    = lines[i];
+    const trimmed = line.trim();
+
+    // Track fenced code blocks (``` or ~~~).
+    if (!inCalcBlock && /^(`{3,}|~{3,})/.test(trimmed)) inFence = !inFence;
+
+    // Track @calc blocks (only outside fences).
+    if (!inFence) {
+      if (trimmed === '@calc')  inCalcBlock = true;
+      else if (inCalcBlock && trimmed === '') inCalcBlock = false;
+    }
+
+    out.push(line);
+
+    // Insert a blank separator between consecutive non-blank content lines.
+    if (!inFence && !inCalcBlock && i < lines.length - 1) {
+      if (line !== '' && lines[i + 1] !== '') out.push('');
+    }
+  }
+
+  return out.join('\n');
+}
+
 async function renderMarkdown() {
   try {
-    const html = await invoke('parse_markdown', { markdown: cmView.state.doc.toString() });
+    const raw  = cmView.state.doc.toString();
+    const html = await invoke('parse_markdown', { markdown: preprocessCalcBlocks(singleNewlinesToParagraphs(raw)) });
     markdownContent.innerHTML = html;
   } catch (e) {
     console.error('parse_markdown failed:', e);

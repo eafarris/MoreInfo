@@ -81,9 +81,13 @@ Task
 
 - Support for widgets on sidebars. Collapsible or popover sidebars on all four sides (left, top, right, bottom) can be configured to show any number of widgets. By default, MI shows a monthly Calendar widget on the right-side that links to daily journals. Those days with existing journals are highlighted. The default left-side sidebar shows the Outline widget for the currently active document. MI ships with multiple widgets, listed below. An API is planned to allow creation of third-party widgets. Status: PARTIALLY IMPLEMENTED.
 
-- Templating. Any page within the MI database can be used as a template for quickly scaffolding new pages. MI will bundle templates for commonly-used page types, like a contact person, project tracker, daily journal, etc. Status: PLANNING.
+- Scratch Pad. A special widget that offers a place to hold temporary text, run calc blocks, etc., The Scratch Pad is not indexed and cannot be linked, but is saved across sessions. The Scratch Pad has special operations to manipulate its contents, like sorting lines, converting between document formats (e.g., CSV  → JSON) and the like. Users can write their own functions.
+
+- Templating. Any page within the MI database can be used as a template for quickly scaffolding new pages. MI will bundle templates for commonly-used page types, like a contact person, project tracker, daily journal, etc. Status: PARTIALLY IMPLEMENTED.
 
 - Focus mode. MI can be configured with a single document in a single viewport with no surrounding sidebars and a minimum of window chrome, for maximum focus on only the active document. Status: PLANNING.
+
+- Calc blocks. Typing '@calc' by itself on a line puts the editor into calculator mode, where each line is considered a mathematical expression. Expressions keep the result of the expression as the first numerator in the next expression, for a tape-calculator feel, if appropriate. Calc blocks can also do unit and base conversion. Calc blocks are supported in all pages, including the Scratch Pad widget. Status: PARTIALLY IMPLEMENTED.
 
 -
 ## Reserved metadata variables

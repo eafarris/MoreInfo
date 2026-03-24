@@ -65,6 +65,36 @@
 #markdown-content ol > li::marker              { color:            var(--color-olive-400); }
 #markdown-content figcaption                   { color:            var(--color-olive-500); }
 
+/* @calc block — preview rendering */
+.mi-calc-block {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.75rem 0;
+  border-left: 2px solid var(--color-amber-700, oklch(47.1% 0.104 83.5));
+  padding-left: 0.75rem;
+  font-family: var(--font-family-mono);
+  font-size: 0.875rem;
+  display: block;
+}
+.mi-calc-block td {
+  padding: 0.1rem 0;
+  vertical-align: baseline;
+}
+.mi-calc-block .mi-calc-expr {
+  color: var(--color-olive-300, oklch(80% 0.03 100));
+  width: 100%;
+}
+.mi-calc-block .mi-calc-result {
+  text-align: right;
+  white-space: nowrap;
+  padding-left: 2rem;
+  color: var(--color-amber-400, oklch(79.5% 0.184 86.5));
+  font-weight: 500;
+}
+.mi-calc-block .mi-calc-error {
+  color: oklch(70% 0.19 27);
+}
+
 /* Wiki links rendered inside the markdown preview */
 .wiki-link {
   color: var(--color-amber-400);

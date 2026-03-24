@@ -6,10 +6,10 @@ import {
   EditorView,
   ViewPlugin,
   Decoration,
+  WidgetType,
   keymap,
   drawSelection,
   highlightActiveLine,
-  placeholder,
 } from '@codemirror/view';
 import {
   history,
@@ -24,8 +24,9 @@ import {
   syntaxTree,
 } from '@codemirror/language';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
-import { autocompletion, closeBrackets, acceptCompletion } from '@codemirror/autocomplete';
+import { autocompletion, acceptCompletion } from '@codemirror/autocomplete';
 import { tags } from '@lezer/highlight';
+import { formatCalcResult, scanCalcBlocks } from './calcBlock.js';
 
 // ── Theme ──────────────────────────────────────────────────────────────────
 // Matches the olive/amber palette used throughout the app.
@@ -78,6 +79,41 @@ export const miTheme = EditorView.theme({
   // First line after a code block: restore the paragraph gap with top padding.
   '.cm-after-code-block': {
     paddingTop: '1.25rem',
+  },
+  // @calc block
+  '.cm-calc-header': {
+    color:         'oklch(39.4% 0.023 107.4)',   // olive-700 — dimmed marker line
+    fontStyle:     'italic',
+    paddingBottom: '0',
+  },
+  '.cm-calc-expr': {
+    position:      'relative',               // containing block for result widget
+    borderLeft:    '2px solid oklch(47.1% 0.104 83.5)',  // amber-700
+    paddingLeft:   '0.75rem',
+    paddingBottom: '0',
+  },
+  // Reset all Markdown-driven styling inside @calc expression lines.
+  // Expressions like "- 50" or "* 1.1" are arithmetic, not list items or
+  // emphasis marks. We target every span except the result widget, which
+  // catches both the explicit cm-meta/cm-list-marker classes set by our own
+  // plugins and the generated Lezer highlight classes set by miHighlightStyle.
+  '.cm-calc-expr span:not(.cm-calc-result)': {
+    color:      'inherit',
+    fontWeight: 'inherit',
+    fontStyle:  'inherit',
+  },
+  '.cm-calc-result': {
+    position:      'absolute',
+    right:         '0',
+    top:           '0',
+    color:         'oklch(79.5% 0.184 86.5)',  // amber-400
+    fontSize:      '0.85em',
+    fontFamily:    'var(--font-family-mono)',
+    pointerEvents: 'none',
+    userSelect:    'none',
+  },
+  '.cm-calc-result.cm-calc-result-error': {
+    color: 'oklch(70% 0.19 27)',             // muted red
   },
   // Journal placeholder ("Tell me about your day…")
   '.cm-placeholder': {
@@ -440,6 +476,77 @@ function keywordPlugin(keyword, cssClass) {
 
 const todoPlugin = keywordPlugin('TODO', 'cm-todo');
 
+// ── @calc block decoration ─────────────────────────────────────────────────
+// Scans the entire document to evaluate all @calc blocks (so that @-implicit
+// prepend state is correct for lines above the viewport), then decorates only
+// visible lines.
+//
+// Each @calc header line gets class cm-calc-header (dimmed, italic).
+// Each expression line gets class cm-calc-expr (left border) plus a
+// CalcResultWidget anchored at the end of the line showing the result
+// flush-right via position:sticky.
+
+class CalcResultWidget extends WidgetType {
+  constructor(value, error) {
+    super();
+    this.value = value;
+    this.error = error;
+  }
+  toDOM() {
+    const el = document.createElement('span');
+    if (this.error != null) {
+      el.className = 'cm-calc-result cm-calc-result-error';
+      el.textContent = this.error;
+    } else {
+      el.className = 'cm-calc-result';
+      el.textContent = '= ' + formatCalcResult(this.value);
+    }
+    return el;
+  }
+  eq(other) { return this.value === other.value && this.error === other.error; }
+  ignoreEvent() { return true; }
+}
+
+export const calcBlockPlugin = ViewPlugin.fromClass(class {
+  constructor(view) { this.decorations = this._build(view); }
+  update(u) {
+    if (u.docChanged || u.viewportChanged) this.decorations = this._build(u.view);
+  }
+  _build(view) {
+    const doc   = view.state.doc;
+    const text  = doc.toString();
+    const { results, headerLines } = scanCalcBlocks(text);
+
+    const deco = [];
+
+    for (const { from, to } of view.visibleRanges) {
+      let pos = from;
+      while (pos <= to) {
+        const line = doc.lineAt(pos);
+
+        if (headerLines.has(line.number)) {
+          deco.push(Decoration.line({ class: 'cm-calc-header' }).range(line.from));
+        } else if (results.has(line.number)) {
+          const res = results.get(line.number);
+          deco.push(Decoration.line({ class: 'cm-calc-expr' }).range(line.from));
+          deco.push(
+            Decoration.widget({
+              widget: new CalcResultWidget(res.value, res.error),
+              side: 1,
+            }).range(line.to),
+          );
+        }
+
+        pos = line.to + 1;
+      }
+    }
+
+    // Decorations must be sorted; line.from < line.to guarantees order within
+    // each line, and we process lines in document order.
+    return Decoration.set(deco, true);
+  }
+}, { decorations: v => v.decorations });
+
 // ── Inline code decoration ─────────────────────────────────────────────────
 // Applies cm-inline-code to every InlineCode node in the syntax tree,
 // regardless of whether it sits inside a list item or regular paragraph.
@@ -544,7 +651,7 @@ function wikiLinkSource(context) {
     .map(p => ({
       label:  p.title,
       detail: '[[link]]',
-      apply(view, _completion, from, to) {
+      apply(view, _completion, _from, to) {
         // Read the actual typed text from the doc (not match.text, which may
         // be stale if CM6 used client-side validFor filtering after the last
         // source invocation). Append only the untyped suffix from the title.
@@ -646,6 +753,7 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
       fencedCodePlugin,
       inlineCodePlugin,
       todoPlugin,
+      calcBlockPlugin,
       EditorView.lineWrapping,
       surroundHandler,
       wikiLinkPunctHandler,

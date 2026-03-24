@@ -2,8 +2,8 @@
  * Base class for all MoreInfo widgets.
  *
  * Lifecycle (called by the mounting system):
- *   mount(container)  — renders the standard shell, then calls onMount()
- *   destroy()         — calls onDestroy(), then clears the container
+ *   mount(container, orientation)  — renders the standard shell, then calls onMount()
+ *   destroy()                      — calls onDestroy(), then clears the container
  *
  * Document event hooks (called by the app):
  *   onDocumentChange(content, metadata)
@@ -11,7 +11,7 @@
  *
  * Subclass API:
  *   get wrapperClass()   — extra Tailwind classes on the wrapper div
- *   get headerAction()   — HTML string injected at the right of the header
+ *   get headerAction()   — HTML string injected at the right of the header (vertical only)
  *   onMount()            — set up listeners, render initial state
  *   onDestroy()          — cancel timers, remove global listeners
  *   onDocumentChange()   — react to editor content changes (debounced)
@@ -30,13 +30,19 @@ export class Widget {
     this.icon  = icon;
 
     /** @type {HTMLElement|null} The wrapper element passed to mount() */
-    this._container = null;
+    this._container   = null;
     /** @type {HTMLElement|null} The scrollable content area inside the shell */
-    this._body = null;
+    this._body        = null;
     /** @type {boolean} Whether the widget body is currently rolled up */
-    this._rolled = false;
+    this._rolled      = false;
     /** @type {HTMLElement|null} The roll toggle button in the header */
-    this._rollBtn = null;
+    this._rollBtn     = null;
+    /** @type {'vertical'|'horizontal'} Set by mount() */
+    this._orientation = 'vertical';
+    /** @type {number} Header height (vertical) or width (horizontal) in px */
+    this._headerSize  = 0;
+    /** @type {number|null} Full container size before rolling; null until first roll */
+    this._naturalSize = null;
   }
 
   /**
@@ -47,7 +53,7 @@ export class Widget {
   get wrapperClass() { return ''; }
 
   /**
-   * Optional HTML rendered at the trailing edge of the widget header.
+   * Optional HTML rendered at the trailing edge of the widget header (vertical only).
    * Use for counters, secondary labels, or action buttons.
    * @returns {string}
    */
@@ -56,82 +62,129 @@ export class Widget {
   /**
    * Mount this widget into a container element.
    * Renders the standard header + body shell, then calls onMount().
+   *
    * @param {HTMLElement} container
+   * @param {'vertical'|'horizontal'} [orientation='vertical']
+   *   'vertical'   — left/right sidebars: horizontal title bar, rolls up/down
+   *   'horizontal' — top/bottom sidebars: vertical title strip, rolls left/right
    */
-  mount(container) {
-    this._container = container;
-    const savedState = this.loadState();
-    this._rolled = savedState?._rolled ?? false;
+  mount(container, orientation = 'vertical') {
+    this._container   = container;
+    this._orientation = orientation;
+    const savedState  = this.loadState();
+    this._rolled      = savedState?._rolled ?? false;
 
-    container.innerHTML = `
-      <div class="widget-header flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700 bg-olive-800 cursor-default select-none">
-        <span class="widget-title flex items-center gap-1.5 text-xs font-semibold text-olive-500 tracking-wide uppercase">
-          <i class="ph ${this.icon} text-sm leading-none"></i>
-          ${this.title}
-        </span>
-        <span class="flex items-center gap-1">
-          ${this.headerAction}
-          <button class="widget-roll-btn text-olive-500 hover:text-olive-300 p-0.5 leading-none bg-transparent border-none cursor-pointer" title="Roll up">
-            <i class="ph ${this._rolled ? 'ph-caret-line-down' : 'ph-caret-line-up'} text-sm leading-none"></i>
+    const horiz = orientation === 'horizontal';
+
+    container.style.display       = 'flex';
+    container.style.flexDirection = horiz ? 'row' : 'column';
+    container.style.overflow      = 'hidden';
+
+    if (horiz) {
+      // ── Horizontal orientation (top / bottom sidebars) ──────────────────
+      // Mirrors the vertical header exactly, rotated -90°.
+      // flex-col header: roll button flush-top, title+icon pushed to bottom via mt-auto.
+      // DOM order inside the writing-mode span: <icon> then title text — after
+      // writing-mode:vertical-rl + rotate(180°) the icon lands at the visual
+      // bottom and the text reads upward, matching a -90° rotation of the
+      // horizontal layout.
+      // Padding is the horizontal header's px↔py swapped for the axis change.
+      container.innerHTML = `
+        <div class="widget-header flex flex-col items-center px-1.5 py-3 shrink-0 border-r border-olive-700 bg-olive-800 cursor-default select-none" style="width:28px">
+          <button class="widget-roll-btn text-olive-500 hover:text-olive-300 p-0.5 leading-none bg-transparent border-none cursor-pointer" title="Roll">
+            <i class="ph ${this._rolled ? 'ph-caret-line-right' : 'ph-caret-line-left'} text-sm leading-none"></i>
           </button>
-        </span>
-      </div>
-      <div class="widget-body flex-1 min-h-0 overflow-y-auto"></div>
-    `;
+          <span class="widget-title mt-auto text-xs font-semibold text-olive-500 tracking-wide uppercase" style="writing-mode:vertical-rl;transform:rotate(180deg)"><i class="ph ${this.icon} text-sm leading-none"></i>${this.title}</span>
+        </div>
+        <div class="widget-body flex-1 min-w-0 overflow-y-auto"></div>
+      `;
+    } else {
+      // ── Vertical orientation (left / right sidebars) ─────────────────────
+      container.innerHTML = `
+        <div class="widget-header flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700 bg-olive-800 cursor-default select-none">
+          <span class="widget-title flex items-center gap-1.5 text-xs font-semibold text-olive-500 tracking-wide uppercase">
+            <i class="ph ${this.icon} text-sm leading-none"></i>
+            ${this.title}
+          </span>
+          <span class="flex items-center gap-1">
+            ${this.headerAction}
+            <button class="widget-roll-btn text-olive-500 hover:text-olive-300 p-0.5 leading-none bg-transparent border-none cursor-pointer" title="Roll up">
+              <i class="ph ${this._rolled ? 'ph-caret-line-down' : 'ph-caret-line-up'} text-sm leading-none"></i>
+            </button>
+          </span>
+        </div>
+        <div class="widget-body flex-1 min-h-0 overflow-y-auto"></div>
+      `;
+    }
 
     this._body    = container.querySelector('.widget-body');
     this._rollBtn = container.querySelector('.widget-roll-btn');
 
-    // Apply rolled state instantly on mount (no animation on first paint).
-    if (this._rolled) {
-      this._body.style.maxHeight = '0';
-      this._body.style.opacity   = '0';
-      this._body.style.overflow  = 'hidden';
-    }
-    Object.assign(this._body.style, {
-      transition: 'max-height 220ms ease, opacity 180ms ease',
-    });
-
     container.querySelector('.widget-title').addEventListener('dblclick', () => this._toggleRoll());
     this._rollBtn.addEventListener('click', () => this._toggleRoll());
 
+    // Call onMount() before measuring so the body is populated with content,
+    // giving accurate natural-size readings.
     this.onMount();
 
-    // Set a concrete max-height baseline after content has rendered so the
-    // collapse animation has a real "from" value.
-    if (!this._rolled) {
-      requestAnimationFrame(() => {
-        this._body.style.maxHeight = this._body.scrollHeight + 'px';
-      });
+    // Measure sizes with full content rendered.
+    const header = container.querySelector('.widget-header');
+    this._headerSize  = horiz ? header.offsetWidth  : header.offsetHeight;
+    this._naturalSize = horiz ? container.offsetWidth : container.offsetHeight;
+
+    // Apply the initial rolled state synchronously (no transition yet, so it's
+    // part of the first paint with no visible flash).
+    if (this._rolled) {
+      const prop = horiz ? 'maxWidth' : 'maxHeight';
+      container.style[prop]        = this._headerSize + 'px';
+      this._body.style.opacity     = '0';
+      this._body.style.pointerEvents = 'none';
     }
+
+    // Enable transitions only after the initial layout has been painted,
+    // so the above constraints don't produce an unwanted animation on load.
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const prop = horiz ? 'max-width' : 'max-height';
+      container.style.transition        = `${prop} 220ms ease`;
+      this._body.style.transition       = 'opacity 180ms ease';
+    }));
   }
 
   _toggleRoll() {
     this._rolled = !this._rolled;
+    const horiz  = this._orientation === 'horizontal';
+    const prop   = horiz ? 'maxWidth' : 'maxHeight';
+    const sizeProp = horiz ? 'offsetWidth' : 'offsetHeight';
 
     if (this._rolled) {
-      // Snapshot current height so the transition has a "from" value.
-      this._body.style.maxHeight = this._body.scrollHeight + 'px';
-      // Force a reflow so the browser registers the explicit value before we
-      // transition to 0.
-      this._body.offsetHeight; // eslint-disable-line no-unused-expressions
-      this._body.style.maxHeight = '0';
-      this._body.style.opacity   = '0';
-      this._body.style.overflow  = 'hidden';
+      // Save the current full size so we can restore it later.
+      this._naturalSize = this._container[sizeProp];
+      // Set an explicit value first (so the browser has a concrete "from" value),
+      // force a reflow, then animate to the header size.
+      this._container.style[prop] = this._naturalSize + 'px';
+      this._container.offsetHeight; // eslint-disable-line no-unused-expressions
+      this._container.style[prop]       = this._headerSize + 'px';
+      this._body.style.opacity          = '0';
+      this._body.style.pointerEvents    = 'none';
     } else {
-      this._body.style.maxHeight = this._body.scrollHeight + 'px';
-      this._body.style.opacity   = '1';
-      // Restore scrolling once the animation finishes.
-      this._body.addEventListener('transitionend', () => {
-        if (!this._rolled) {
-          this._body.style.maxHeight = '';
-          this._body.style.overflow  = '';
-        }
+      const target = this._naturalSize ?? this._container[sizeProp];
+      this._container.style[prop]     = target + 'px';
+      this._body.style.opacity        = '1';
+      this._body.style.pointerEvents  = '';
+      // After the animation completes, clear the explicit constraint so the
+      // widget can resize freely (e.g. when the sidebar is resized).
+      this._container.addEventListener('transitionend', () => {
+        if (!this._rolled) this._container.style[prop] = '';
       }, { once: true });
     }
 
     const icon = this._rollBtn.querySelector('i');
-    icon.className = `ph ${this._rolled ? 'ph-caret-line-down' : 'ph-caret-line-up'} text-sm leading-none`;
+    if (horiz) {
+      icon.className = `ph ${this._rolled ? 'ph-caret-line-right' : 'ph-caret-line-left'} text-sm leading-none`;
+    } else {
+      icon.className = `ph ${this._rolled ? 'ph-caret-line-down' : 'ph-caret-line-up'} text-sm leading-none`;
+    }
+
     const existing = this.loadState() ?? {};
     this.saveState({ ...existing, _rolled: this._rolled });
   }

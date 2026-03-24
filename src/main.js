@@ -577,12 +577,13 @@ function mountWidgets(sidebarName, widgets) {
   const { sidebar } = sbConfig[sidebarName];
   const stack = sidebar.querySelector('.widget-stack');
   if (!stack) return;
+  const orientation = (sidebarName === 'top' || sidebarName === 'bottom') ? 'horizontal' : 'vertical';
   widgets.forEach(widget => {
     const wrapper = document.createElement('div');
     widget.wrapperClass.split(/\s+/).filter(Boolean).forEach(cls => wrapper.classList.add(cls));
     wrapper.dataset.widgetId = widget.id;
     stack.appendChild(wrapper);
-    widget.mount(wrapper);
+    widget.mount(wrapper, orientation);
     mountedWidgets.push(widget);
   });
 }

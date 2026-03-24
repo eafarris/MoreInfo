@@ -172,7 +172,7 @@ Search
 - [X] Wiki links
 - [X] Page aliases
 - [X] Page References widget
-- [ ] Page templates
+- [X] Page templates
 - [ ] Basic tasks
 - [ ] Tasks widget
 - [ ] Expanded tasks : TODO, FIXME, Later, Someday, Deadline, Done

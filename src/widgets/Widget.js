@@ -33,6 +33,10 @@ export class Widget {
     this._container = null;
     /** @type {HTMLElement|null} The scrollable content area inside the shell */
     this._body = null;
+    /** @type {boolean} Whether the widget body is currently rolled up */
+    this._rolled = false;
+    /** @type {HTMLElement|null} The roll toggle button in the header */
+    this._rollBtn = null;
   }
 
   /**
@@ -56,18 +60,80 @@ export class Widget {
    */
   mount(container) {
     this._container = container;
+    const savedState = this.loadState();
+    this._rolled = savedState?._rolled ?? false;
+
     container.innerHTML = `
-      <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700 bg-olive-800">
-        <span class="flex items-center gap-1.5 text-xs font-semibold text-olive-500 tracking-wide uppercase">
+      <div class="widget-header flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700 bg-olive-800 cursor-default select-none">
+        <span class="widget-title flex items-center gap-1.5 text-xs font-semibold text-olive-500 tracking-wide uppercase">
           <i class="ph ${this.icon} text-sm leading-none"></i>
           ${this.title}
         </span>
-        ${this.headerAction}
+        <span class="flex items-center gap-1">
+          ${this.headerAction}
+          <button class="widget-roll-btn text-olive-500 hover:text-olive-300 p-0.5 leading-none bg-transparent border-none cursor-pointer" title="Roll up">
+            <i class="ph ${this._rolled ? 'ph-caret-line-down' : 'ph-caret-line-up'} text-sm leading-none"></i>
+          </button>
+        </span>
       </div>
       <div class="widget-body flex-1 min-h-0 overflow-y-auto"></div>
     `;
-    this._body = container.querySelector('.widget-body');
+
+    this._body    = container.querySelector('.widget-body');
+    this._rollBtn = container.querySelector('.widget-roll-btn');
+
+    // Apply rolled state instantly on mount (no animation on first paint).
+    if (this._rolled) {
+      this._body.style.maxHeight = '0';
+      this._body.style.opacity   = '0';
+      this._body.style.overflow  = 'hidden';
+    }
+    Object.assign(this._body.style, {
+      transition: 'max-height 220ms ease, opacity 180ms ease',
+    });
+
+    container.querySelector('.widget-title').addEventListener('dblclick', () => this._toggleRoll());
+    this._rollBtn.addEventListener('click', () => this._toggleRoll());
+
     this.onMount();
+
+    // Set a concrete max-height baseline after content has rendered so the
+    // collapse animation has a real "from" value.
+    if (!this._rolled) {
+      requestAnimationFrame(() => {
+        this._body.style.maxHeight = this._body.scrollHeight + 'px';
+      });
+    }
+  }
+
+  _toggleRoll() {
+    this._rolled = !this._rolled;
+
+    if (this._rolled) {
+      // Snapshot current height so the transition has a "from" value.
+      this._body.style.maxHeight = this._body.scrollHeight + 'px';
+      // Force a reflow so the browser registers the explicit value before we
+      // transition to 0.
+      this._body.offsetHeight; // eslint-disable-line no-unused-expressions
+      this._body.style.maxHeight = '0';
+      this._body.style.opacity   = '0';
+      this._body.style.overflow  = 'hidden';
+    } else {
+      this._body.style.maxHeight = this._body.scrollHeight + 'px';
+      this._body.style.opacity   = '1';
+      // Restore scrolling once the animation finishes.
+      this._body.addEventListener('transitionend', () => {
+        if (!this._rolled) {
+          this._body.style.maxHeight = '';
+          this._body.style.overflow  = '';
+        }
+      }, { once: true });
+    }
+
+    const icon = this._rollBtn.querySelector('i');
+    icon.className = `ph ${this._rolled ? 'ph-caret-line-down' : 'ph-caret-line-up'} text-sm leading-none`;
+    const existing = this.loadState() ?? {};
+    this.saveState({ ...existing, _rolled: this._rolled });
   }
 
   /**

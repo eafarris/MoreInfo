@@ -61,6 +61,18 @@ export function evalCalcExpr(expr, last = 0) {
     .replace(/\btan\b/g,   'Math.tan')
     .replace(/\bpi\b/gi,   'Math.PI');
 
+  // Strip unknown word tokens (unit labels: miles, kg, mph, …).
+  // After the replacements above every valid identifier is in Math.xxx form.
+  // The callback guards two exceptions:
+  //   - 'Math' itself (the namespace)
+  //   - the exponent token in scientific notation (\d+e\d+): 'e' is surrounded
+  //     by digits, so the match is /^[eE]\d+$/ and str[offset-1] is a digit.
+  e = e.replace(/\b[a-zA-Z_][a-zA-Z0-9_]*\b/g, (match, offset, str) => {
+    if (match === 'Math') return match;
+    if (/^[eE]\d+$/.test(match) && offset > 0 && /\d/.test(str[offset - 1])) return match;
+    return '';
+  });
+
   try {
     // eslint-disable-next-line no-new-func
     const result = new Function('"use strict"; return (' + e + ')')();

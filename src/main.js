@@ -282,36 +282,50 @@ vDivider.addEventListener('mousedown', e => {
 
 // ── Markdown rendering ─────────────────────────────
 
-/**
- * Insert a blank line between every pair of consecutive non-blank lines so that
- * single newlines in the source act as paragraph breaks in the rendered output.
- * Fenced code blocks and @calc blocks are left untouched.
- */
-function singleNewlinesToParagraphs(markdown) {
+// ── CamelCase link preprocessor ────────────────────────────────────────────
+// Converts CamelCase words that match a known page title into [[bracket]] links
+// before the markdown is sent to the Rust renderer. Skips existing [[...]] spans,
+// fenced code blocks, and @calc blocks. Never creates pages — only expands words
+// whose titles already exist in allPages.
+
+const CAMELCASE_RE_PREVIEW = /\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b/g;
+
+function camelToTitlePreview(camel) {
+  return camel.replace(/([A-Z])/g, ' $1').trim();
+}
+
+function preprocessCamelLinks(markdown) {
+  const titleSet = new Set(allPages.map(p => p.title));
+  if (titleSet.size === 0) return markdown;
+
   const lines = markdown.split('\n');
   const out   = [];
-  let inFence     = false;
-  let inCalcBlock = false;
+  let inFence = false;
+  let inCalc  = false;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line    = lines[i];
+  for (const line of lines) {
     const trimmed = line.trim();
-
-    // Track fenced code blocks (``` or ~~~).
-    if (!inCalcBlock && /^(`{3,}|~{3,})/.test(trimmed)) inFence = !inFence;
-
-    // Track @calc blocks (only outside fences).
+    if (!inCalc && /^(`{3,}|~{3,})/.test(trimmed)) inFence = !inFence;
     if (!inFence) {
-      if (trimmed === '@calc')  inCalcBlock = true;
-      else if (inCalcBlock && trimmed === '') inCalcBlock = false;
+      if (trimmed === '@calc') inCalc = true;
+      else if (inCalc && trimmed === '') inCalc = false;
     }
 
-    out.push(line);
-
-    // Insert a blank separator between consecutive non-blank content lines.
-    if (!inFence && !inCalcBlock && i < lines.length - 1) {
-      if (line !== '' && lines[i + 1] !== '') out.push('');
+    if (inFence || inCalc) {
+      out.push(line);
+      continue;
     }
+
+    // Split on [[...]] spans; only process the text parts (even indices).
+    const parts = line.split(/(\[\[[^\]]*\]\])/);
+    out.push(parts.map((part, i) => {
+      if (i % 2 === 1) return part; // inside [[...]] — leave untouched
+      CAMELCASE_RE_PREVIEW.lastIndex = 0;
+      return part.replace(CAMELCASE_RE_PREVIEW, match => {
+        const title = camelToTitlePreview(match);
+        return titleSet.has(title) ? `[[${title}]]` : match;
+      });
+    }).join(''));
   }
 
   return out.join('\n');
@@ -320,7 +334,7 @@ function singleNewlinesToParagraphs(markdown) {
 async function renderMarkdown() {
   try {
     const raw  = cmView.state.doc.toString();
-    const html = await invoke('parse_markdown', { markdown: preprocessCalcBlocks(singleNewlinesToParagraphs(raw)) });
+    const html = await invoke('parse_markdown', { markdown: preprocessCalcBlocks(preprocessCamelLinks(raw)) });
     markdownContent.innerHTML = html;
   } catch (e) {
     console.error('parse_markdown failed:', e);

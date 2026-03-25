@@ -48,9 +48,6 @@ export const miTheme = EditorView.theme({
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-word',
   },
-  '.cm-line': {
-    padding: '0 0 1.25rem',
-  },
   '.cm-cursor, .cm-dropCursor': {
     borderLeftColor: '#fbbf24',
     borderLeftWidth: '2px',
@@ -71,26 +68,15 @@ export const miTheme = EditorView.theme({
     paddingLeft: '1.5rem',
     borderLeft: '2px solid oklch(47.1% 0.104 83.5)', /* amber-700 */
   },
-  // Last line of each code block (the closing ```): no bottom padding so the
-  // border stops cleanly at the text baseline rather than bleeding downward.
-  '.cm-code-block-last': {
-    paddingBottom: '0',
-  },
-  // First line after a code block: restore the paragraph gap with top padding.
-  '.cm-after-code-block': {
-    paddingTop: '1.25rem',
-  },
   // @calc block
   '.cm-calc-header': {
-    color:         'oklch(39.4% 0.023 107.4)',   // olive-700 — dimmed marker line
-    fontStyle:     'italic',
-    paddingBottom: '0',
+    color:     'oklch(39.4% 0.023 107.4)',   // olive-700 — dimmed marker line
+    fontStyle: 'italic',
   },
   '.cm-calc-expr': {
-    position:      'relative',               // containing block for result widget
-    borderLeft:    '2px solid oklch(47.1% 0.104 83.5)',  // amber-700
-    paddingLeft:   '0.75rem',
-    paddingBottom: '0',
+    position:    'relative',               // containing block for result widget
+    borderLeft:  '2px solid oklch(47.1% 0.104 83.5)',  // amber-700
+    paddingLeft: '0.75rem',
   },
   // Reset all Markdown-driven styling inside @calc expression lines.
   // Expressions like "- 50" or "* 1.1" are arithmetic, not list items or
@@ -189,6 +175,33 @@ const wikilinkPlugin = ViewPlugin.fromClass(class {
         deco.push(Decoration.mark({ class: 'cm-wikilink-bracket' }).range(start,     start + 2));
         deco.push(Decoration.mark({ class: 'cm-wikilink-title'   }).range(start + 2, end   - 2));
         deco.push(Decoration.mark({ class: 'cm-wikilink-bracket' }).range(end   - 2, end      ));
+      }
+    }
+    return Decoration.set(deco, true);
+  }
+}, { decorations: v => v.decorations });
+
+// ── CamelCase link decoration ──────────────────────────────────────────────
+// Highlights CamelCase words that resolve to a known page title in the same
+// amber as [[bracket]] links. Never highlights unknown words — so MacBook,
+// WiFi, etc. are left as plain text unless a page by that title exists.
+// CamelCase links never create pages; [[bracket]] form is required for that.
+
+const camelLinkPlugin = ViewPlugin.fromClass(class {
+  constructor(view) { this.decorations = this._build(view); }
+  update(u) {
+    if (u.docChanged || u.viewportChanged) this.decorations = this._build(u.view);
+  }
+  _build(view) {
+    const deco = [];
+    for (const { from, to } of view.visibleRanges) {
+      const text = view.state.doc.sliceString(from, to);
+      CAMELCASE_RE.lastIndex = 0;
+      let m;
+      while ((m = CAMELCASE_RE.exec(text)) !== null) {
+        if (!_pageTitleSet.has(camelToTitle(m[0]))) continue;
+        const start = from + m.index;
+        deco.push(Decoration.mark({ class: 'cm-wikilink-title' }).range(start, start + m[0].length));
       }
     }
     return Decoration.set(deco, true);
@@ -426,16 +439,6 @@ const fencedCodePlugin = ViewPlugin.fromClass(class {
             pos = line.to + 1;
           }
 
-          // Closing fence: remove bottom padding so the border stops cleanly.
-          const closingLine = view.state.doc.lineAt(closeStart);
-          deco.push(Decoration.line({ class: 'cm-code-block-last' }).range(closingLine.from));
-
-          // Line after the block: restore the paragraph gap with top padding.
-          const afterPos = view.state.doc.lineAt(node.to).to + 1;
-          if (afterPos <= view.state.doc.length) {
-            const afterLine = view.state.doc.lineAt(afterPos);
-            deco.push(Decoration.line({ class: 'cm-after-code-block' }).range(afterLine.from));
-          }
         },
       });
     }
@@ -633,9 +636,24 @@ const wikiLinkPunctHandler = EditorView.domEventHandlers({
 // ── Wiki-link autocomplete source ──────────────────────────────────────────
 // Activated by typing [[ and filters pages by prefix.
 
-let _allPages = [];
+let _allPages    = [];
+let _pageTitleSet = new Set();
 
-export function setEditorPages(pages) { _allPages = pages; }
+export function setEditorPages(pages) {
+  _allPages     = pages;
+  _pageTitleSet = new Set(pages.map(p => p.title));
+}
+
+// CamelCase → "Title Case" by splitting on uppercase boundaries.
+// "AndersonContract" → "Anderson Contract"
+function camelToTitle(camel) {
+  return camel.replace(/([A-Z])/g, ' $1').trim();
+}
+
+// Matches CamelCase words: at least two segments, each one uppercase + lowercase+.
+// Only highlights against known page titles, so false positives (WiFi, MacBook)
+// are silently ignored unless a page by that title actually exists.
+const CAMELCASE_RE = /\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b/g;
 
 // ── Journal placeholder ────────────────────────────────────────────────────
 // Reconfigure via placeholderCompartment.reconfigure(placeholder('…')) or []
@@ -685,6 +703,22 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
     run: acceptCompletion,
   };
 
+  // Resolve a CamelCase link at a given document position, or null.
+  function camelTitleAt(view, pos) {
+    const line    = view.state.doc.lineAt(pos);
+    const text    = line.text;
+    const linePos = pos - line.from;
+    CAMELCASE_RE.lastIndex = 0;
+    let m;
+    while ((m = CAMELCASE_RE.exec(text)) !== null) {
+      if (m.index <= linePos && linePos <= m.index + m[0].length) {
+        const title = camelToTitle(m[0]);
+        if (_pageTitleSet.has(title)) return title;
+      }
+    }
+    return null;
+  }
+
   // Resolve the wiki-link title at a given document position, or null.
   // Constrained to the current line so cross-line false positives are impossible.
   function wikiTitleAt(view, pos) {
@@ -713,7 +747,7 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
     click(event, view) {
       const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
       if (pos == null) return false;
-      const title = wikiTitleAt(view, pos);
+      const title = wikiTitleAt(view, pos) || camelTitleAt(view, pos);
       if (!title) return false;
       if (event.metaKey || event.ctrlKey) {
         onCmdClick(title);
@@ -745,6 +779,7 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
       syntaxHighlighting(miHighlightStyle),
       autocompletion({ override: [wikiLinkSource] }),
       wikilinkPlugin,
+      camelLinkPlugin,
       hashtagPlugin,
       listMarkerPlugin,
       delimiterPlugin,

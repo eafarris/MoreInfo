@@ -1241,7 +1241,7 @@ fn open_journal(date: String) -> Result<JournalEntry, String> {
 
 /// Open (or create) a wiki page by title.
 /// The file is stored at `<datastore>/wiki/<slug>.md`.
-/// New pages get a minimal front-matter block with the title pre-filled.
+/// New pages get a minimal sig-block with the title pre-filled.
 #[tauri::command]
 fn open_wiki_page(title: String) -> Result<JournalEntry, String> {
     let dir = wiki_dir()?;
@@ -1254,7 +1254,7 @@ fn open_wiki_page(title: String) -> Result<JournalEntry, String> {
     let content = if path.exists() {
         std::fs::read_to_string(&path).map_err(|e| e.to_string())?
     } else {
-        let default = format!("---\ntitle: {}\n---\n\n", title);
+        let default = format!("\n-- \ntitle: {}\n", title);
         std::fs::write(&path, &default).map_err(|e| e.to_string())?;
         default
     };
@@ -1278,7 +1278,7 @@ fn open_template(name: String) -> Result<JournalEntry, String> {
     let content = if path.exists() {
         std::fs::read_to_string(&path).map_err(|e| e.to_string())?
     } else {
-        let default = format!("---\ntitle: {}\n---\n\n", name);
+        let default = format!("\n-- \ntitle: {}\n", name);
         std::fs::write(&path, &default).map_err(|e| e.to_string())?;
         default
     };

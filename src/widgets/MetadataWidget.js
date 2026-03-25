@@ -67,9 +67,11 @@ export class MetadataWidget extends Widget {
       .filter(([k]) => !RESERVED_KEYS.has(k))
       .sort(([a], [b]) => a.localeCompare(b));
 
-    this._countEl.textContent = entries.length === 0
-      ? ''
-      : `${entries.length} variable${entries.length !== 1 ? 's' : ''}`;
+    if (this._countEl) {
+      this._countEl.textContent = entries.length === 0
+        ? ''
+        : `${entries.length} variable${entries.length !== 1 ? 's' : ''}`;
+    }
 
     const hasContent = entries.length > 0;
     this._body.innerHTML = hasContent

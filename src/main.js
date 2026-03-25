@@ -18,6 +18,7 @@ import { formatJournalDate } from './dateUtils.js';
 // ── State ─────────────────────────────────────────
 
 let currentFile   = null;
+let currentTitle  = '';
 let datastorePath = null;  // set during init via get_datastore_path
 let changeTimer   = null;
 let saveTimer     = null;
@@ -160,6 +161,7 @@ function updateDocTitle(fm, content) {
     }
   }
 
+  currentTitle = title || (currentFile ? basename(currentFile).replace(/\.[^.]+$/, '') : '');
   currentFav = isFavoritePage(fm);
   const icon    = isJournalFile(currentFile) ? 'ph-calendar-dot' : 'ph-file-text';
   const starCls = currentFav
@@ -644,16 +646,13 @@ function mountWidgets(sidebarName, widgets) {
 const navHistory = [];  // [ { path, title }, … ]
 
 function renderBreadcrumbs() {
-  if (navHistory.length === 0) {
-    breadcrumbsEl.style.display = 'none';
-    return;
-  }
-  breadcrumbsEl.style.display = 'flex';
-  breadcrumbsEl.innerHTML = navHistory.map((entry, i) => {
+  const trail = navHistory.map((entry, i) => {
     const label = escapeHtml(entry.title || basename(entry.path).replace(/\.[^.]+$/, ''));
     return `<a class="bc-item hover:text-olive-300 cursor-pointer transition-colors" data-index="${i}">${label}</a>`
          + `<span class="bc-sep mx-1 text-olive-700">›</span>`;
-  }).join('') + `<span class="text-olive-400">${escapeHtml(docTitle.textContent || basename(currentFile || '').replace(/\.[^.]+$/, ''))}</span>`;
+  }).join('');
+  const cur = currentTitle ? `<span class="text-olive-400">${escapeHtml(currentTitle)}</span>` : '';
+  breadcrumbsEl.innerHTML = trail + cur;
 }
 
 breadcrumbsEl.addEventListener('click', async e => {
@@ -688,7 +687,7 @@ async function loadFile(path, content) {
   setModified(false);
   const metadata = await invoke('get_metadata', { content });
   updateDocTitle(metadata, content);
-  mountedWidgets.forEach(w => w.onFileOpen(path, content, metadata));
+  mountedWidgets.forEach(w => { try { w.onFileOpen(path, content, metadata); } catch(e) { console.error(`Widget ${w.id} onFileOpen failed:`, e); } });
   if (editorArea.dataset.mode === 'render') await renderMarkdown();
   renderBreadcrumbs();
   cmView.focus();
@@ -699,7 +698,7 @@ async function navigateTo(path, content) {
   if (currentFile) {
     navHistory.push({
       path:  currentFile,
-      title: docTitle.textContent || basename(currentFile).replace(/\.[^.]+$/, ''),
+      title: currentTitle || basename(currentFile).replace(/\.[^.]+$/, ''),
     });
   }
   await loadFile(path, content);

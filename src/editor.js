@@ -693,7 +693,25 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
     key: 'Tab',
     run(view) {
       if (acceptCompletion(view)) return true;
+      const line = view.state.doc.lineAt(view.state.selection.main.from);
+      if (LIST_MARKER_RE.test(line.text)) {
+        view.dispatch({ changes: { from: line.from, insert: '  ' }, userEvent: 'indent' });
+        return true;
+      }
       view.dispatch(view.state.replaceSelection('  '));
+      return true;
+    },
+  };
+
+  const shiftTabKeymap = {
+    key: 'Shift-Tab',
+    run(view) {
+      const line = view.state.doc.lineAt(view.state.selection.main.from);
+      if (!LIST_MARKER_RE.test(line.text)) return false;
+      const leading = line.text.match(/^( +)/);
+      if (!leading) return false;
+      const removeCount = Math.min(2, leading[1].length);
+      view.dispatch({ changes: { from: line.from, to: line.from + removeCount, insert: '' }, userEvent: 'dedent' });
       return true;
     },
   };
@@ -794,6 +812,7 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
       wikiLinkPunctHandler,
       keymap.of([
         tabKeymap,
+        shiftTabKeymap,
         spaceKeymap,
         ...defaultKeymap,
         ...historyKeymap,

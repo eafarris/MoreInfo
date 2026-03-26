@@ -6,6 +6,11 @@
   <title>MoreInfo</title>
 
 
+  <!-- Oswald wordmark font -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500&display=swap" rel="stylesheet">
+
   <!-- Phosphor Icons (regular + bold + fill weights) -->
   <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css" />
   <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/bold/style.css" />
@@ -183,10 +188,13 @@
   <!-- ── Toolbar ──────────────────────────────────────────────── -->
   <header
     id="toolbar"
-    class="flex items-center justify-between px-3 py-1.5 bg-olive-800 border-b border-olive-700 shrink-0"
+    class="flex items-center gap-2 px-3 py-1.5 bg-olive-800 border-b border-olive-700 shrink-0"
     style="-webkit-app-region: drag"
   >
-    <div class="flex items-center gap-1" style="-webkit-app-region: no-drag">
+    <!-- Wordmark + left sidebar toggles -->
+    <div class="flex items-center gap-1 shrink-0" style="-webkit-app-region: no-drag">
+      <span style="font-family:'Oswald',sans-serif; font-weight:500; font-size:0.85rem; letter-spacing:0.06em; color:#fff; background:var(--color-amber-700); padding:0.15em 0.45em; border-radius:3px; -webkit-app-region:drag; user-select:none">MoreInfo</span>
+      <div class="w-px h-4 bg-olive-700 mx-0.5"></div>
       <button id="btn-toggle-left" title="Toggle left sidebar" data-active
         class="flex items-center justify-center w-6 h-6 rounded text-olive-400 hover:bg-olive-700 hover:text-white transition-colors data-active:text-olive-200">
         <i class="ph ph-sidebar-simple text-base leading-none"></i>
@@ -199,10 +207,15 @@
         class="flex items-center justify-center w-6 h-6 rounded text-olive-400 hover:bg-olive-700 hover:text-white transition-colors data-active:text-olive-200">
         <i class="ph ph-sidebar-simple text-base leading-none" style="transform:rotate(90deg)"></i>
       </button>
-      <span class="text-xs font-semibold text-olive-500 tracking-wide ml-1" style="-webkit-app-region: drag">MoreInfo</span>
     </div>
 
-    <div class="flex items-center gap-1.5" style="-webkit-app-region: no-drag">
+    <!-- Breadcrumbs — takes remaining space, draggable except on items -->
+    <nav id="breadcrumbs"
+      class="flex-1 min-w-0 flex items-center gap-0.5 text-xs text-olive-500 overflow-x-auto whitespace-nowrap"
+      style="min-height:1.5rem; -webkit-app-region:no-drag"></nav>
+
+    <!-- Right controls -->
+    <div class="flex items-center gap-1.5 shrink-0" style="-webkit-app-region: no-drag">
       <button id="btn-today" title="Open today's journal"
         class="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs text-olive-400 hover:bg-olive-700 hover:text-white transition-colors border border-olive-700">
         <i class="ph ph-calendar-star text-sm leading-none"></i>Today
@@ -229,9 +242,6 @@
       </button>
     </div>
   </header>
-
-  <!-- ── Breadcrumb bar ───────────────────────────────────────────── -->
-  <nav id="breadcrumbs" class="flex items-center gap-0.5 px-3 text-xs text-olive-500 bg-olive-800 border-b border-olive-700/60 overflow-x-auto whitespace-nowrap shrink-0" style="min-height:1.75rem"></nav>
 
   <!-- ── Main area ────────────────────────────────────────────────
        flex-col: top-sidebar | content-row

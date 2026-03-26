@@ -392,7 +392,7 @@ fn open_db() -> Result<Connection, String> {
 
 /// Bump this whenever the schema or indexing logic changes in a way that
 /// requires existing cached data to be discarded and rebuilt.
-const SCHEMA_VERSION: i64 = 8;
+const SCHEMA_VERSION: i64 = 9;
 
 fn init_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch("
@@ -440,6 +440,15 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
             text TEXT NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_task_path ON future_tasks(path);
+        CREATE TABLE IF NOT EXISTS tasks (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            path        TEXT    NOT NULL,
+            line_number INTEGER NOT NULL,
+            text        TEXT    NOT NULL DEFAULT '',
+            checked     INTEGER NOT NULL DEFAULT 0
+        );
+        CREATE INDEX IF NOT EXISTS idx_tasks_path    ON tasks(path);
+        CREATE INDEX IF NOT EXISTS idx_tasks_checked ON tasks(checked);
     ").map_err(|e| e.to_string())?;
 
     // Migrate columns added after initial release (silently ignored if present).
@@ -462,7 +471,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
 
     if stored != Some(SCHEMA_VERSION) {
         conn.execute_batch(
-            "DELETE FROM wiki_links; DELETE FROM files; DELETE FROM fts; DELETE FROM file_tags; DELETE FROM file_aliases; DELETE FROM future_tasks; DELETE FROM meta WHERE key != 'schema_version';"
+            "DELETE FROM wiki_links; DELETE FROM files; DELETE FROM fts; DELETE FROM file_tags; DELETE FROM file_aliases; DELETE FROM future_tasks; DELETE FROM tasks; DELETE FROM meta WHERE key != 'schema_version';"
         ).map_err(|e| e.to_string())?;
         conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
@@ -615,23 +624,60 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
         }
     }
 
-    // Extract TODO items: any line containing the literal string 'TODO'; the
-    // text captured is everything after 'TODO' on that line, trimmed.
-    conn.execute("DELETE FROM future_tasks WHERE path = ?1", [path_str])
+    // Index tasks: lines with [ ], [], [X], [x] checkbox patterns.
+    conn.execute("DELETE FROM tasks WHERE path = ?1", [path_str])
         .map_err(|e| e.to_string())?;
-    for line in content.lines() {
-        if let Some(pos) = line.find("TODO") {
-            let text = line[pos + 4..].trim();
-            if !text.is_empty() {
-                conn.execute(
-                    "INSERT INTO future_tasks (path, text) VALUES (?1, ?2)",
-                    rusqlite::params![path_str, text],
-                ).map_err(|e| e.to_string())?;
-            }
+    for (i, line) in content.lines().enumerate() {
+        if let Some((checked, text)) = parse_task_line(line) {
+            conn.execute(
+                "INSERT INTO tasks (path, line_number, text, checked) VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![path_str, i as i64 + 1, text, checked as i64],
+            ).map_err(|e| e.to_string())?;
         }
     }
 
     Ok(())
+}
+
+/// Skip a GFM list marker at the start of `s` (e.g. "- ", "* ", "1. ")
+/// and return the remainder.  Returns `s` unchanged if no marker is found.
+fn skip_list_marker(s: &str) -> &str {
+    if s.starts_with("- ") || s.starts_with("* ") || s.starts_with("+ ") {
+        return &s[2..];
+    }
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() && bytes[i].is_ascii_digit() { i += 1; }
+    if i > 0 && i + 1 < bytes.len()
+        && (bytes[i] == b'.' || bytes[i] == b')')
+        && bytes[i + 1] == b' '
+    {
+        return &s[i + 2..];
+    }
+    s
+}
+
+/// If `line` is a task line, return `Some((checked, task_text))`.
+/// Recognises `[]`, `[ ]`, `[X]`, `[x]` optionally preceded by a list marker.
+/// A task is "checked" when the marker is `[X]`/`[x]` OR when `@done` appears
+/// in the task text.
+fn parse_task_line(line: &str) -> Option<(bool, String)> {
+    let s = line.trim_start();
+    let s = skip_list_marker(s);
+    if !s.starts_with('[') { return None; }
+    let b = s.as_bytes();
+    let (bracket_end, x_checked) = if b.len() >= 2 && b[1] == b']' {
+        (2, false)                               // []
+    } else if b.len() >= 3 && b[1] == b' ' && b[2] == b']' {
+        (3, false)                               // [ ]
+    } else if b.len() >= 3 && (b[1] == b'X' || b[1] == b'x') && b[2] == b']' {
+        (3, true)                                // [X] or [x]
+    } else {
+        return None;
+    };
+    let rest = s[bracket_end..].trim_start().to_string();
+    let checked = x_checked || rest.contains("@done");
+    Some((checked, rest))
 }
 
 fn is_word_char(c: char) -> bool {
@@ -954,6 +1000,138 @@ fn list_favorites() -> Result<Vec<FavoriteEntry>, String> {
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
+    Ok(entries)
+}
+
+#[derive(serde::Serialize)]
+struct TaskEntry {
+    path:    String,
+    title:   String,
+    text:    String,
+    checked: bool,
+}
+
+/// Return tasks from the index.
+/// Pass `checked = Some(false)` for open tasks only (the default view),
+/// `Some(true)` for completed, or `None` for all.
+#[tauri::command]
+fn list_tasks(checked: Option<bool>) -> Result<Vec<TaskEntry>, String> {
+    let conn = open_db()?;
+    init_schema(&conn)?;
+    let sql = match checked {
+        Some(true)  => "SELECT t.path, f.title, t.text, t.checked \
+                         FROM tasks t JOIN files f ON f.path = t.path \
+                         WHERE t.checked = 1 ORDER BY t.path, t.line_number",
+        Some(false) => "SELECT t.path, f.title, t.text, t.checked \
+                         FROM tasks t JOIN files f ON f.path = t.path \
+                         WHERE t.checked = 0 ORDER BY t.path, t.line_number",
+        None        => "SELECT t.path, f.title, t.text, t.checked \
+                         FROM tasks t JOIN files f ON f.path = t.path \
+                         ORDER BY t.path, t.line_number",
+    };
+    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+    let entries: Vec<TaskEntry> = stmt
+        .query_map([], |row| Ok(TaskEntry {
+            path:    row.get(0)?,
+            title:   row.get(1)?,
+            text:    row.get(2)?,
+            checked: row.get::<_, i64>(3)? != 0,
+        }))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(entries)
+}
+
+/// A task from another page that explicitly references the current page via [[link]].
+#[derive(serde::Serialize)]
+struct LinkedTaskEntry {
+    source_path:  String,
+    source_title: String,
+    task_text:    String,
+    checked:      bool,
+}
+
+/// Return tasks from other pages whose text contains [[title]] or [[alias]]
+/// for the page at `path`.  Results are ordered: unchecked first, then by
+/// source path and line number, so the caller can group pages with open tasks
+/// ahead of pages with only completed tasks.
+#[tauri::command]
+fn get_linked_tasks(path: String) -> Result<Vec<LinkedTaskEntry>, String> {
+    let conn = open_db()?;
+    init_schema(&conn)?;
+
+    // Title of the target page.
+    let title: String = conn.query_row(
+        "SELECT title FROM files WHERE path = ?1",
+        [&path],
+        |row| row.get(0),
+    ).unwrap_or_default();
+
+    // Aliases of the target page (raw strings, not slugs).
+    let mut alias_stmt = conn.prepare(
+        "SELECT alias FROM file_aliases WHERE path = ?1",
+    ).map_err(|e| e.to_string())?;
+    let aliases: Vec<String> = alias_stmt
+        .query_map([&path], |row| row.get(0))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
+    // Build LIKE patterns: "%[[title]]%", "%[[alias1]]%", …
+    let mut patterns: Vec<String> = Vec::new();
+    if !title.is_empty() {
+        patterns.push(format!("%[[{}]]%", title));
+    }
+    for alias in &aliases {
+        if !alias.is_empty() {
+            patterns.push(format!("%[[{}]]%", alias));
+        }
+    }
+
+    if patterns.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // Build "t.text LIKE ?2 OR t.text LIKE ?3 …" clause.
+    let or_clauses: String = patterns
+        .iter()
+        .enumerate()
+        .map(|(i, _)| format!("t.text LIKE ?{}", i + 2))
+        .collect::<Vec<_>>()
+        .join(" OR ");
+
+    let sql = format!(
+        "SELECT DISTINCT t.path, COALESCE(f.title, ''), t.text, t.checked
+         FROM tasks t
+         LEFT JOIN files f ON f.path = t.path
+         WHERE t.path != ?1 AND ({})
+         ORDER BY t.checked ASC, t.path, t.line_number",
+        or_clauses
+    );
+
+    // Collect params: path first, then each LIKE pattern.
+    let mut param_boxes: Vec<Box<dyn rusqlite::ToSql>> = vec![Box::new(path.clone())];
+    for pat in &patterns {
+        param_boxes.push(Box::new(pat.clone()));
+    }
+    let params_refs: Vec<&dyn rusqlite::ToSql> =
+        param_boxes.iter().map(|b| b.as_ref()).collect();
+
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let entries: Vec<LinkedTaskEntry> = stmt
+        .query_map(params_refs.as_slice(), |row| {
+            Ok(LinkedTaskEntry {
+                source_path:  row.get(0)?,
+                source_title: row.get(1)?,
+                task_text:    row.get(2)?,
+                checked:      row.get::<_, i64>(3)? != 0,
+            })
+        })
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+
     Ok(entries)
 }
 
@@ -1651,6 +1829,8 @@ pub fn run() {
             search_pages,
             fetch_page,
             list_favorites,
+            list_tasks,
+            get_linked_tasks,
             save_window_size,
             restore_window_size,
         ])

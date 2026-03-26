@@ -101,6 +101,17 @@ export const miTheme = EditorView.theme({
   '.cm-calc-result.cm-calc-result-error': {
     color: 'oklch(70% 0.19 27)',             // muted red
   },
+  // Task checkboxes — plain-text [ ] / [X] made clickable
+  '.cm-task-checkbox': {
+    cursor:    'pointer',
+    color:     'oklch(65% 0.08 107)',   // slightly brighter than body text
+  },
+  '.cm-task-checked': {
+    color:     'oklch(79.5% 0.184 86.5)',  // amber-400
+  },
+  '.cm-task-done-line': {
+    color:     'oklch(47.1% 0.025 107)',   // olive-600 — two steps dimmer than body
+  },
   // Journal placeholder ("Tell me about your day…")
   '.cm-placeholder': {
     color: 'oklch(47.1% 0.057 100)',  // ~olive-600
@@ -479,6 +490,132 @@ function keywordPlugin(keyword, cssClass) {
 
 const todoPlugin = keywordPlugin('TODO', 'cm-todo');
 
+// ── Task checkbox decoration ────────────────────────────────────────────────
+// Marks [] / [ ] / [X] / [x] at the start of a task line (optionally after
+// a list marker like "- ") as clickable plain text.
+// @done or @done(timestamp) on a task line also counts as checked.
+// Click unchecked → [X] + appends @done(timestamp)
+// Click checked   → [ ] + removes @done(...)
+
+const TASK_CB_RE    = /^([ \t]*(?:[-*+]|\d+[.)]) +)?\[([xX ]?)\]/;
+const DONE_STAMP_RE = /@done\([^)]*\)/;
+const DONE_BARE_RE  = /@done(?!\()/;
+
+function doneStamp() {
+  const d   = new Date();
+  const pad = n => String(n).padStart(2, '0');
+  return `@done(${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())})`;
+}
+
+const taskCheckboxPlugin = ViewPlugin.fromClass(class {
+  constructor(view) { this.decorations = this._build(view); }
+  update(u) {
+    if (u.docChanged || u.viewportChanged) this.decorations = this._build(u.view);
+  }
+  _build(view) {
+    const deco = [];
+    for (const { from, to } of view.visibleRanges) {
+      let pos = from;
+      while (pos <= to) {
+        const line    = view.state.doc.lineAt(pos);
+        const m       = TASK_CB_RE.exec(line.text);
+        if (m) {
+          const prefix  = m[1] ? m[1].length : 0;
+          const cbFrom  = line.from + prefix;
+          const cbLen   = 2 + m[2].length;
+          const checked = m[2] === 'X' || m[2] === 'x'
+                       || DONE_STAMP_RE.test(line.text)
+                       || DONE_BARE_RE.test(line.text);
+          const cls     = checked ? 'cm-task-checkbox cm-task-checked' : 'cm-task-checkbox';
+          deco.push(Decoration.mark({ class: cls }).range(cbFrom, cbFrom + cbLen));
+          if (checked) deco.push(Decoration.line({ class: 'cm-task-done-line' }).range(line.from));
+        }
+        pos = line.to + 1;
+      }
+    }
+    return Decoration.set(deco, true);
+  }
+}, { decorations: v => v.decorations });
+
+const checkboxClickHandler = EditorView.domEventHandlers({
+  mousedown(event, view) {
+    const target = event.target.closest('.cm-task-checkbox');
+    if (!target) return false;
+    event.preventDefault();
+    const pos  = view.posAtCoords({ x: event.clientX, y: event.clientY });
+    if (pos == null) return false;
+    const line = view.state.doc.lineAt(pos);
+    const m    = TASK_CB_RE.exec(line.text);
+    if (!m) return false;
+
+    const prefix    = m[1] ? m[1].length : 0;
+    const cbFrom    = line.from + prefix;
+    const cbLen     = 2 + m[2].length;
+    const cbChecked = m[2] === 'X' || m[2] === 'x';
+    const sm        = DONE_STAMP_RE.exec(line.text);
+    const bm        = DONE_BARE_RE.exec(line.text);
+    const checked   = cbChecked || !!sm || !!bm;
+    const changes   = [];
+
+    if (checked) {
+      // ── Uncheck ──────────────────────────────────────────────────────────
+      if (cbChecked) changes.push({ from: cbFrom, to: cbFrom + cbLen, insert: '[ ]' });
+      // Remove ' @done(...)' preferring the leading-space form, else bare
+      const rm = (/ @done\([^)]*\)/.exec(line.text))
+              || (/@done\([^)]*\)/.exec(line.text))
+              || (/ @done(?!\()/.exec(line.text))
+              || (/@done(?!\()/.exec(line.text));
+      if (rm) changes.push({ from: line.from + rm.index, to: line.from + rm.index + rm[0].length, insert: '' });
+    } else {
+      // ── Check ────────────────────────────────────────────────────────────
+      changes.push({ from: cbFrom, to: cbFrom + cbLen, insert: '[X]' });
+      if (sm) {
+        // already stamped — nothing extra needed
+      } else if (bm) {
+        // upgrade bare @done → @done(timestamp)
+        changes.push({ from: line.from + bm.index, to: line.from + bm.index + bm[0].length, insert: doneStamp() });
+      } else {
+        changes.push({ from: line.to, to: line.to, insert: ' ' + doneStamp() });
+      }
+    }
+
+    // changes are ordered: checkbox is near line start, @done near line end
+    view.dispatch({ changes, userEvent: 'checkbox.toggle' });
+    return true;
+  },
+});
+
+// Auto-stamp bare @done on task lines when the cursor leaves that line.
+// Fires on doc changes AND cursor movement so cursoring off the line is enough.
+// Also writes [X] into the document so the checkbox marker matches.
+const autoDoneStampListener = EditorView.updateListener.of(update => {
+  if (!update.docChanged && !update.selectionSet) return;
+  const { state } = update;
+  const cursorLine = state.doc.lineAt(state.selection.main.head).number;
+  const changes = [];
+
+  for (let i = 1; i <= state.doc.lines; i++) {
+    if (i === cursorLine) continue;          // leave the line alone while cursor is on it
+    const line = state.doc.line(i);
+    const cbm  = TASK_CB_RE.exec(line.text);
+    if (!cbm) continue;
+    const bm = DONE_BARE_RE.exec(line.text);
+    if (!bm) continue;
+
+    // Mark checkbox [X] if not already
+    if (cbm[2] !== 'X' && cbm[2] !== 'x') {
+      const prefix = cbm[1] ? cbm[1].length : 0;
+      const cbFrom = line.from + prefix;
+      changes.push({ from: cbFrom, to: cbFrom + 2 + cbm[2].length, insert: '[X]' });
+    }
+    // Stamp @done → @done(timestamp)  (checkbox change is earlier in doc, order is fine)
+    changes.push({ from: line.from + bm.index, to: line.from + bm.index + bm[0].length, insert: doneStamp() });
+  }
+
+  if (!changes.length) return;
+  requestAnimationFrame(() => update.view.dispatch({ changes, userEvent: 'done.stamp' }));
+});
+
 // ── @calc block decoration ─────────────────────────────────────────────────
 // Scans the entire document to evaluate all @calc blocks (so that @-implicit
 // prepend state is correct for lines above the viewport), then decorates only
@@ -806,10 +943,12 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
       fencedCodePlugin,
       inlineCodePlugin,
       todoPlugin,
+      taskCheckboxPlugin,
       calcBlockPlugin,
       EditorView.lineWrapping,
       surroundHandler,
       wikiLinkPunctHandler,
+      checkboxClickHandler,
       keymap.of([
         tabKeymap,
         shiftTabKeymap,
@@ -820,6 +959,7 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
       placeholderCompartment.of([]),
       miTheme,
       updateListener,
+      autoDoneStampListener,
       clickHandler,
     ],
   });

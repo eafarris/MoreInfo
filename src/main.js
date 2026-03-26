@@ -8,6 +8,7 @@ import { ReferencesWidget }  from './widgets/ReferencesWidget.js';
 import { PageWidget }        from './widgets/PageWidget.js';
 import { ScratchPadWidget }  from './widgets/ScratchPadWidget.js';
 import { FavoritesWidget }  from './widgets/FavoritesWidget.js';
+import { TasksWidget }      from './widgets/TasksWidget.js';
 import { BrowserWidget }     from './widgets/BrowserWidget.js';
 import { CounterWidget }     from './widgets/CounterWidget.js';
 import { SearchWidget }      from './widgets/SearchWidget.js';
@@ -990,6 +991,7 @@ const favoritesWidget = new FavoritesWidget({
 mountWidgets('right', [
   new CalendarWidget({ onDateSelected: openJournalDate }),
   new ScratchPadWidget(),
+  new TasksWidget({ onOpen: openFilePath }),
   favoritesWidget,
 ]);
 

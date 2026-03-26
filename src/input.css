@@ -33,6 +33,14 @@
 .cm-todo           { color: var(--color-amber-400); font-weight: bold; }
 
 
+/* Completed task lines: dim links to match the muted line color */
+.cm-task-done-line .cm-wikilink-bracket { color: var(--color-olive-700) !important; }
+.cm-task-done-line .cm-wikilink-title   { color: var(--color-amber-700) !important; }
+.cm-task-done-line .cm-hashtag-punct    { color: var(--color-olive-700); }
+.cm-task-done-line .cm-hashtag          { color: var(--color-amber-700); }
+.cm-task-done-line .cm-link-text        { color: var(--color-amber-700); }
+.cm-task-done-line .cm-url              { color: var(--color-olive-700); text-decoration-color: var(--color-olive-800); }
+
 /* CodeMirror editor fills its container */
 .cm-editor {
   height: 100%;

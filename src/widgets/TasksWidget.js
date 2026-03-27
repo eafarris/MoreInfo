@@ -1,5 +1,6 @@
 import { Widget } from './Widget.js';
 import { invoke } from '../tauri.js';
+import { isDeferred } from '../dateUtils.js';
 
 function esc(s) {
   return String(s)
@@ -45,7 +46,23 @@ export class TasksWidget extends Widget {
   }
 
   _render(tasks) {
-    if (!tasks.length) {
+    // Separate into active and deferred per page, preserving pages that have
+    // at least one task in either bucket.
+    const byPage = new Map();
+    for (const task of tasks) {
+      if (!byPage.has(task.path)) {
+        byPage.set(task.path, { title: task.title, active: [], deferred: [] });
+      }
+      const entry = byPage.get(task.path);
+      (isDeferred(task.defer_until) ? entry.deferred : entry.active).push(task);
+    }
+
+    // Pages with no tasks at all are excluded (checked=false filter handles this upstream).
+    const pages = [...byPage.entries()].filter(
+      ([, { active, deferred }]) => active.length > 0 || deferred.length > 0
+    );
+
+    if (!pages.length) {
       this._list.innerHTML = `
         <div class="flex flex-col items-center gap-1.5 py-5 text-olive-700">
           <i class="ph ph-check-square text-2xl leading-none"></i>
@@ -54,30 +71,30 @@ export class TasksWidget extends Widget {
       return;
     }
 
-    // Group by host page
-    const byPage = new Map();
-    for (const task of tasks) {
-      if (!byPage.has(task.path)) {
-        byPage.set(task.path, { title: task.title, tasks: [] });
-      }
-      byPage.get(task.path).tasks.push(task);
-    }
-
-    this._list.innerHTML = [...byPage.entries()].map(([path, { title, tasks: pageTasks }]) => `
-      <div class="border-b border-olive-800 last:border-0">
-        <div data-path="${esc(path)}"
-          class="flex items-center gap-1.5 px-3 py-1.5 cursor-pointer hover:bg-olive-800
-                 transition-colors sticky top-0 z-10 bg-olive-900">
-          <i class="ph ph-file-text text-[10px] text-olive-600 shrink-0 leading-none"></i>
-          <span class="text-[10px] font-semibold text-olive-500 truncate uppercase tracking-wide">
-            ${esc(title || path.split('/').pop().replace(/\.md$/, ''))}
-          </span>
-        </div>
-        ${pageTasks.map(t => `
-          <div class="flex items-start gap-2 px-3 py-1 hover:bg-olive-800/50 transition-colors">
-            <span class="cm-task-checkbox shrink-0 mt-px" style="pointer-events:none"></span>
-            <span class="text-xs text-olive-300 leading-snug">${esc(t.text || '…')}</span>
-          </div>`).join('')}
-      </div>`).join('');
+    this._list.innerHTML = pages.map(([path, { title, active, deferred }]) => {
+      const label = esc(title || path.split('/').pop().replace(/\.md$/, ''));
+      const activeRows = active.map(t => `
+        <div class="flex items-start gap-2 px-3 py-1 hover:bg-olive-800/50 transition-colors">
+          <span class="cm-task-checkbox shrink-0 mt-px" style="pointer-events:none"></span>
+          <span class="text-xs text-olive-300 leading-snug">${esc(t.text || '…')}</span>
+        </div>`).join('');
+      const deferredRow = deferred.length ? `
+        <div class="flex items-start gap-2 px-3 py-1">
+          <span class="cm-task-checkbox shrink-0 mt-px opacity-30" style="pointer-events:none"></span>
+          <span class="text-xs text-olive-600 leading-snug italic">(deferred tasks)</span>
+        </div>` : '';
+      return `
+        <div class="border-b border-olive-800 last:border-0">
+          <div data-path="${esc(path)}"
+            class="flex items-center gap-1.5 px-3 py-1.5 cursor-pointer hover:bg-olive-800
+                   transition-colors sticky top-0 z-10 bg-olive-900">
+            <i class="ph ph-file-text text-[10px] text-olive-600 shrink-0 leading-none"></i>
+            <span class="text-[10px] font-semibold text-olive-500 truncate uppercase tracking-wide">
+              ${label}
+            </span>
+          </div>
+          ${activeRows}${deferredRow}
+        </div>`;
+    }).join('');
   }
 }

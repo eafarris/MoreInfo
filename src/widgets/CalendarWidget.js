@@ -79,11 +79,16 @@ export class CalendarWidget extends Widget {
 
     let cells = '';
 
+    const prevMonth = month === 0 ? 11 : month - 1;
+    const prevYear  = month === 0 ? year - 1 : year;
     for (let i = firstDow - 1; i >= 0; i--) {
-      cells += `<span class="flex flex-col items-center py-0.5">
-        <span class="w-6 h-6 flex items-center justify-center mx-auto text-olive-600">${daysInPrev - i}</span>
-        <span class="block w-1 h-1 mx-auto mt-px invisible"></span>
-      </span>`;
+      const day     = daysInPrev - i;
+      const dateStr = `${prevYear}-${String(prevMonth + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+      const dotClass = this._journalDates.has(dateStr) ? 'bg-olive-600' : 'invisible';
+      cells += `<button data-date="${dateStr}" class="group flex flex-col items-center py-0.5">
+        <span class="w-6 h-6 rounded-full flex items-center justify-center mx-auto text-olive-600 group-hover:bg-olive-700 group-hover:text-white transition-colors">${day}</span>
+        <span class="block w-1 h-1 rounded-full mx-auto mt-px ${dotClass}"></span>
+      </button>`;
     }
 
     for (let d = 1; d <= daysInMonth; d++) {
@@ -108,11 +113,15 @@ export class CalendarWidget extends Widget {
 
     const total    = firstDow + daysInMonth;
     const trailing = total % 7 === 0 ? 0 : 7 - (total % 7);
+    const nextMonth = month === 11 ? 0 : month + 1;
+    const nextYear  = month === 11 ? year + 1 : year;
     for (let d = 1; d <= trailing; d++) {
-      cells += `<span class="flex flex-col items-center py-0.5">
-        <span class="w-6 h-6 flex items-center justify-center mx-auto text-olive-600">${d}</span>
-        <span class="block w-1 h-1 mx-auto mt-px invisible"></span>
-      </span>`;
+      const dateStr  = `${nextYear}-${String(nextMonth + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+      const dotClass = this._journalDates.has(dateStr) ? 'bg-olive-600' : 'invisible';
+      cells += `<button data-date="${dateStr}" class="group flex flex-col items-center py-0.5">
+        <span class="w-6 h-6 rounded-full flex items-center justify-center mx-auto text-olive-600 group-hover:bg-olive-700 group-hover:text-white transition-colors">${d}</span>
+        <span class="block w-1 h-1 rounded-full mx-auto mt-px ${dotClass}"></span>
+      </button>`;
     }
 
     const dayHeaders = DAYS.map(d =>

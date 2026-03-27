@@ -193,7 +193,7 @@
   >
     <!-- Wordmark + left sidebar toggles -->
     <div class="flex items-center gap-1 shrink-0" style="-webkit-app-region: no-drag">
-      <span style="font-family:'Oswald',sans-serif; font-weight:500; font-size:0.85rem; letter-spacing:0.06em; color:#fff; background:var(--color-amber-700); padding:0.15em 0.45em; border-radius:3px; -webkit-app-region:drag; user-select:none">MoreInfo</span>
+      <span style="font-family:'Oswald',sans-serif; font-weight:500; font-size:0.85rem; letter-spacing:0.06em; color:#fff; background:var(--color-amber-600); padding:0.15em 0.45em; border-radius:3px; -webkit-app-region:drag; user-select:none">MoreInfo</span>
       <div class="w-px h-4 bg-olive-700 mx-0.5"></div>
       <button id="btn-toggle-left" title="Toggle left sidebar" data-active
         class="flex items-center justify-center w-6 h-6 rounded text-olive-400 hover:bg-olive-700 hover:text-white transition-colors data-active:text-olive-200">
@@ -217,8 +217,13 @@
     <!-- Right controls -->
     <div class="flex items-center gap-1.5 shrink-0" style="-webkit-app-region: no-drag">
       <button id="btn-today" title="Open today's journal"
-        class="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs text-olive-400 hover:bg-olive-700 hover:text-white transition-colors border border-olive-700">
+        class="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs text-olive-400 hover:bg-olive-700 hover:text-white transition-colors border border-olive-700 data-active:bg-amber-600 data-active:text-white data-active:border-amber-600">
         <i class="ph ph-calendar-star text-sm leading-none"></i>Today
+      </button>
+
+      <button id="btn-tasks" title="Open Tasks view"
+        class="flex items-center gap-1.5 px-2.5 py-1 rounded text-xs text-olive-400 hover:bg-olive-700 hover:text-white transition-colors border border-olive-700 data-active:bg-amber-600 data-active:text-white data-active:border-amber-600">
+        <i class="ph ph-checks text-sm leading-none"></i>Tasks
       </button>
 
       <div class="w-px h-4 bg-olive-700"></div>
@@ -317,6 +322,9 @@
         <!-- ── Editor area ─────────────────────────────────────── -->
         <main id="editor-area" data-mode="edit"
           class="flex flex-col flex-1 min-h-0 overflow-hidden">
+
+          <!-- Tasks pseudo-page CM container (shown instead of editor-pane) -->
+          <div id="tasks-view" class="flex-1 min-h-0 overflow-hidden" style="display:none"></div>
 
           <!-- Editor pane -->
           <div id="editor-pane" class="flex-1 min-h-0 relative overflow-hidden">

@@ -12,9 +12,9 @@ import { TasksWidget }      from './widgets/TasksWidget.js';
 import { BrowserWidget }     from './widgets/BrowserWidget.js';
 import { CounterWidget }     from './widgets/CounterWidget.js';
 import { SearchWidget }      from './widgets/SearchWidget.js';
-import { createEditor, setEditorPages, placeholderCompartment } from './editor.js';
+import { createEditor, createTasksEditor, setEditorPages, placeholderCompartment } from './editor.js';
 import { placeholder } from '@codemirror/view';
-import { formatJournalDate } from './dateUtils.js';
+import { formatJournalDate, isDeferred, todayIso } from './dateUtils.js';
 
 // ── State ─────────────────────────────────────────
 
@@ -25,12 +25,26 @@ let changeTimer   = null;
 let saveTimer     = null;
 let mdTimer       = null;
 
+// Sentinel path used when the Tasks pseudo-page is active.
+const TASKS_PSEUDO_PAGE = '::tasks::';
+
+// Tasks pseudo-page state.
+let tasksEditorView  = null;
+let taskLineMap      = new Map(); // syntheticLineNo (1-based) → {path, sourceLineNo, originalText} | null
+const pendingWrites  = new Map(); // syntheticLineNo → setTimeout id
+
+// Strips the checkbox prefix from a synthetic task line to get the task text.
+const TASK_TEXT_RE = /^(?:[ \t]*(?:[-*+]|\d+[.)]) +)?\[[xX ]?\]\s*/;
+function extractTaskText(line) { return line.replace(TASK_TEXT_RE, ''); }
+
 // ── DOM refs ──────────────────────────────────────
 
 const editorDiv           = document.getElementById('editor');
 const editorArea          = document.getElementById('editor-area');
 const editorPane          = document.getElementById('editor-pane');
+const tasksView       = document.getElementById('tasks-view');
 const vDivider        = document.getElementById('v-divider');
+const markdownPane    = document.getElementById('markdown-pane');
 const markdownContent = document.getElementById('markdown-content');
 const docTitle        = document.getElementById('doc-title');
 const breadcrumbsEl   = document.getElementById('breadcrumbs');
@@ -48,6 +62,10 @@ const leftSidebar   = document.getElementById('left-sidebar');
 const rightSidebar  = document.getElementById('right-sidebar');
 const topSidebar    = document.getElementById('top-sidebar');
 const bottomSidebar = document.getElementById('bottom-sidebar');
+
+// Nav destination buttons (Today, Tasks)
+const btnToday = document.getElementById('btn-today');
+const btnTasks = document.getElementById('btn-tasks');
 
 // Toolbar toggle buttons
 const btnToggleLeft   = document.getElementById('btn-toggle-left');
@@ -431,6 +449,26 @@ async function autoSave(content) {
 
 // ── View mode ─────────────────────────────────────
 
+// Highlight Today/Tasks buttons when the matching destination is current.
+// Also clears Edit/Render active state while Tasks is displayed.
+function updateNavButtonStates() {
+  const isTodayJournal = currentFile && basename(currentFile) === `${todayIso()}.md`;
+  const isTasksPage    = currentFile === TASKS_PSEUDO_PAGE;
+
+  if (isTodayJournal) btnToday.dataset.active = '';
+  else                delete btnToday.dataset.active;
+
+  if (isTasksPage) btnTasks.dataset.active = '';
+  else             delete btnTasks.dataset.active;
+
+  // Suppress Edit/Render highlight while Tasks is showing.
+  document.querySelectorAll('[data-mode]').forEach(btn => {
+    if (isTasksPage) delete btn.dataset.active;
+    else if (btn.dataset.mode === editorArea.dataset.mode) btn.dataset.active = '';
+    else delete btn.dataset.active;
+  });
+}
+
 function setMode(mode) {
   editorArea.dataset.mode = mode;
   document.querySelectorAll('[data-mode]').forEach(btn => {
@@ -664,8 +702,12 @@ breadcrumbsEl.addEventListener('click', async e => {
   if (!entry) return;
   navHistory.splice(idx);          // truncate — this entry becomes current
   try {
-    const content = await invoke('read_file', { path: entry.path });
-    await loadFile(entry.path, content);
+    if (entry.path === TASKS_PSEUDO_PAGE) {
+      await loadTasksView(/* pushHistory= */ false);
+    } else {
+      const content = await invoke('read_file', { path: entry.path });
+      await loadFile(entry.path, content);
+    }
   } catch (err) {
     console.error('breadcrumb nav failed:', err);
   }
@@ -676,6 +718,14 @@ breadcrumbsEl.addEventListener('click', async e => {
 const JOURNAL_RE = /\d{4}-\d{2}-\d{2}\.md$/;
 
 async function loadFile(path, content) {
+  // Leaving Tasks view: restore normal editor layout.
+  if (currentFile === TASKS_PSEUDO_PAGE) {
+    tasksView.style.display    = 'none';
+    editorPane.style.display   = '';
+    vDivider.style.display     = '';
+    markdownPane.style.display = '';
+  }
+
   const journalPlaceholder = JOURNAL_RE.test(path) && content.length === 0
     ? placeholder('Tell me about your day\u2026')
     : [];
@@ -691,6 +741,7 @@ async function loadFile(path, content) {
   mountedWidgets.forEach(w => { try { w.onFileOpen(path, content, metadata); } catch(e) { console.error(`Widget ${w.id} onFileOpen failed:`, e); } });
   if (editorArea.dataset.mode === 'render') await renderMarkdown();
   renderBreadcrumbs();
+  updateNavButtonStates();
   cmView.focus();
 }
 
@@ -699,7 +750,7 @@ async function navigateTo(path, content) {
   if (currentFile) {
     navHistory.push({
       path:  currentFile,
-      title: currentTitle || basename(currentFile).replace(/\.[^.]+$/, ''),
+      title: currentTitle || (currentFile === TASKS_PSEUDO_PAGE ? 'Tasks' : basename(currentFile).replace(/\.[^.]+$/, '')),
     });
   }
   await loadFile(path, content);
@@ -708,6 +759,7 @@ async function navigateTo(path, content) {
 // ── Wiki pages ────────────────────────────────────
 
 async function openWikiPage(title) {
+  if (title.toLowerCase() === 'tasks') { await loadTasksView(); return; }
   try {
     const { path, content } = await invoke('open_wiki_page', { title });
     await navigateTo(path, content);
@@ -738,6 +790,147 @@ async function openJournalDate(dateStr) {
     console.error('open_journal failed:', e);
   }
 }
+
+// ── Tasks pseudo-page ─────────────────────────────
+
+/**
+ * Show the Tasks view. When `pushHistory` is true (default), the current
+ * page is pushed onto navHistory first.
+ */
+async function loadTasksView(pushHistory = true) {
+  if (pushHistory && currentFile && currentFile !== TASKS_PSEUDO_PAGE) {
+    navHistory.push({
+      path:  currentFile,
+      title: currentTitle || basename(currentFile).replace(/\.[^.]+$/, ''),
+    });
+  }
+
+  editorPane.style.display   = 'none';
+  vDivider.style.display     = 'none';
+  markdownPane.style.display = 'none';
+  tasksView.style.display    = 'block';
+
+  currentFile  = TASKS_PSEUDO_PAGE;
+  currentTitle = 'Tasks';
+  fileNameEl.textContent = 'Tasks';
+  document.title = 'MoreInfo \u2014 Tasks';
+  docTitle.textContent = 'Tasks';
+
+  // Create the CM instance once and reuse it.
+  if (!tasksEditorView) {
+    tasksEditorView = createTasksEditor({
+      parent:      tasksView,
+      onUpdate:    onTasksDocChanged,
+      onPageClick: openWikiPage,
+    });
+  }
+
+  mountedWidgets.forEach(w => { try { w.onFileOpen(TASKS_PSEUDO_PAGE, '', {}); } catch(e) {} });
+  renderBreadcrumbs();
+  updateNavButtonStates();
+
+  await refreshTasksView();
+}
+
+// Build a synthetic markdown document from the task list and return it along
+// with a line map.  The map keys are 1-based line numbers in the synthetic doc;
+// values are {path, sourceLineNo, originalText} for task lines, null otherwise.
+function buildSyntheticDoc(tasks) {
+  const groups   = [];
+  const pathIdx  = new Map();
+  for (const t of tasks) {
+    if (isDeferred(t.defer_until)) continue;   // hide until defer date passes
+    if (!pathIdx.has(t.path)) {
+      pathIdx.set(t.path, groups.length);
+      groups.push({ path: t.path, title: t.title, tasks: [] });
+    }
+    groups[pathIdx.get(t.path)].tasks.push(t);
+  }
+
+  const lines   = [];
+  const lineMap = new Map();
+  let   lineNo  = 1;
+
+  for (const g of groups) {
+    const heading = g.title || basename(g.path).replace(/\.md$/, '');
+    lines.push(`## ${heading}`);
+    lineMap.set(lineNo++, null);
+
+    lines.push('');
+    lineMap.set(lineNo++, null);
+
+    for (const t of g.tasks) {
+      lines.push(`[ ] ${t.text}`);
+      lineMap.set(lineNo++, { path: t.path, sourceLineNo: t.line_number, originalText: t.text });
+    }
+
+    lines.push('');
+    lineMap.set(lineNo++, null);
+  }
+
+  return { doc: lines.join('\n'), lineMap };
+}
+
+async function refreshTasksView() {
+  const scrollTop = tasksEditorView ? tasksEditorView.scrollDOM.scrollTop : 0;
+  try {
+    const tasks          = await invoke('list_tasks', { checked: false });
+    const { doc, lineMap } = buildSyntheticDoc(tasks);
+    taskLineMap = lineMap;
+    tasksEditorView.dispatch({
+      changes: { from: 0, to: tasksEditorView.state.doc.length, insert: doc },
+    });
+  } catch(e) {
+    console.error('list_tasks failed:', e);
+  }
+  requestAnimationFrame(() => { if (tasksEditorView) tasksEditorView.scrollDOM.scrollTop = scrollTop; });
+}
+
+// Called by the tasks CM updateListener on every doc change.
+function onTasksDocChanged(update) {
+  const changedLines = new Set();
+  update.changes.iterChangedRanges((fromA, toA, fromB, toB) => {
+    const doc  = update.state.doc;
+    const lFrom = doc.lineAt(fromB).number;
+    const lTo   = doc.lineAt(Math.min(toB, doc.length)).number;
+    for (let l = lFrom; l <= lTo; l++) changedLines.add(l);
+  });
+
+  for (const lineNo of changedLines) {
+    const entry = taskLineMap.get(lineNo);
+    if (!entry) continue;
+
+    const newLineText  = update.state.doc.line(lineNo).text;
+    const newTaskText  = extractTaskText(newLineText);
+    const isCompletion = newTaskText.includes('@done') && !entry.originalText.includes('@done');
+
+    if (pendingWrites.has(lineNo)) clearTimeout(pendingWrites.get(lineNo));
+
+    const doWrite = async () => {
+      pendingWrites.delete(lineNo);
+      try {
+        await invoke('write_task_line', {
+          path:         entry.path,
+          lineNumber:   entry.sourceLineNo,
+          originalText: entry.originalText,
+          newText:      newTaskText,
+        });
+        entry.originalText = newTaskText;
+        if (isCompletion) await refreshTasksView();
+      } catch(err) {
+        console.error('write_task_line failed:', err);
+      }
+    };
+
+    if (isCompletion) {
+      doWrite();
+    } else {
+      pendingWrites.set(lineNo, setTimeout(doWrite, 1500));
+    }
+  }
+}
+
+document.getElementById('btn-tasks').addEventListener('click', () => loadTasksView());
 
 // ── Wiki link navigation ──────────────────────────
 

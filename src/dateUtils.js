@@ -79,3 +79,24 @@ export function toIso(date) {
 export function todayIso() {
   return toIso(new Date());
 }
+
+/**
+ * Return true if `deferUntil` (the raw string from an `@defer(...)` tag)
+ * represents a date that has not yet passed.
+ *
+ * Uses forwardDate:true so relative expressions like "friday" or "next week"
+ * are always resolved to the next upcoming occurrence rather than the
+ * most recent past one.
+ *
+ * @param {string} deferUntil  Raw value extracted from @defer(...)
+ * @returns {boolean}
+ */
+export function isDeferred(deferUntil) {
+  if (!deferUntil || !deferUntil.trim()) return false;
+  const trimmed = deferUntil.trim();
+  const results = chrono.parse(trimmed, new Date(), { forwardDate: true });
+  if (!results.length) return false;
+  const best = results[0];
+  if (best.text.length < trimmed.length * 0.6) return false;
+  return toIso(best.start.date()) > todayIso();
+}

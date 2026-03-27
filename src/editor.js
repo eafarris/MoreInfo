@@ -465,7 +465,7 @@ const fencedCodePlugin = ViewPlugin.fromClass(class {
 // Each keyword gets a shared `cm-annotation` base class plus a keyword-specific
 // modifier class for per-keyword colour.  Never creates tasks.
 
-const ANNOTATION_RE = /\b(TODO|FIXME|NOTE|IDEA)\b/g;
+const ANNOTATION_RE = /\b(TODO|FIXME|NOTE|IDEA)(:?)(?!\w)/g;
 
 const annotationPlugin = ViewPlugin.fromClass(class {
   constructor(view) { this.decorations = this._build(view); }
@@ -482,7 +482,7 @@ const annotationPlugin = ViewPlugin.fromClass(class {
         const start = from + m.index;
         const kw    = m[1].toLowerCase();
         deco.push(Decoration.mark({ class: `cm-annotation cm-annotation-${kw}` })
-          .range(start, start + m[1].length));
+          .range(start, start + m[0].length));
       }
     }
     return Decoration.set(deco, true);
@@ -553,7 +553,7 @@ const TASK_CB_RE    = /^([ \t]*(?:[-*+]|\d+[.)]) +)?\[([xX ]?)\]/;
 const DONE_STAMP_RE = /@done\([^)]*\)/;
 const DONE_BARE_RE  = /@done(?!\()/;
 
-function doneStamp() {
+export function doneStamp() {
   const d   = new Date();
   const pad = n => String(n).padStart(2, '0');
   return `@done(${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())})`;
@@ -1013,6 +1013,81 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
       miTheme,
       updateListener,
       autoDoneStampListener,
+      clickHandler,
+    ],
+  });
+
+  return new EditorView({ state, parent });
+}
+
+// ── Tasks pseudo-page editor ─────────────────────────────────────────────────
+// A read-write CM6 instance sharing all visual extensions with the main editor.
+// Enter is blocked (task lines only; no new-line creation from the view).
+// checkboxClickHandler + autoDoneStampListener are included so the checkbox
+// experience is identical.  onUpdate receives every ViewUpdate where the doc
+// changed; the caller drives write-back.  onPageClick is called for wiki-link
+// clicks.
+
+export function createTasksEditor({ parent, onUpdate, onPageClick }) {
+  // Reuse the same wiki-link resolver from createEditor.
+  function wikiTitleAt(view, pos) {
+    const line    = view.state.doc.lineAt(pos);
+    const text    = line.text;
+    const linePos = pos - line.from;
+    let s = linePos;
+    while (s > 1 && !(text[s - 2] === '[' && text[s - 1] === '[')) s--;
+    if (s < 2) return null;
+    s -= 2;
+    if (text.slice(s + 2, linePos).includes(']]')) return null;
+    let e = linePos;
+    while (e + 1 < text.length && !(text[e] === ']' && text[e + 1] === ']')) e++;
+    if (!(text[e] === ']' && text[e + 1] === ']')) return null;
+    return text.slice(s + 2, e).trim() || null;
+  }
+
+  const clickHandler = EditorView.domEventHandlers({
+    click(event, view) {
+      const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+      if (pos == null) return false;
+      const title = wikiTitleAt(view, pos);
+      if (!title) return false;
+      onPageClick(title);
+      return true;
+    },
+  });
+
+  const tasksUpdateListener = EditorView.updateListener.of(update => {
+    if (update.docChanged) onUpdate(update);
+  });
+
+  const state = EditorState.create({
+    doc: '',
+    extensions: [
+      history(),
+      drawSelection(),
+      markdown({ base: { parser: markdownLanguage.parser.configure({ remove: ['SetextHeading'] }) } }),
+      syntaxHighlighting(miHighlightStyle),
+      wikilinkPlugin,
+      camelLinkPlugin,
+      hashtagPlugin,
+      annotationPlugin,
+      taskAtPlugin,
+      taskCheckboxPlugin,
+      autoDoneStampListener,
+      EditorView.lineWrapping,
+      checkboxClickHandler,
+      keymap.of([
+        { key: 'Enter',     run: () => true },
+        { key: 'Mod-Enter', run: () => true },
+        ...defaultKeymap,
+        ...historyKeymap,
+      ]),
+      miTheme,
+      EditorView.theme({
+        '&':          { height: '100%' },
+        '.cm-scroller': { overflow: 'auto', padding: '1.5rem 2rem' },
+      }),
+      tasksUpdateListener,
       clickHandler,
     ],
   });

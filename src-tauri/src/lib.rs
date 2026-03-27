@@ -392,7 +392,7 @@ fn open_db() -> Result<Connection, String> {
 
 /// Bump this whenever the schema or indexing logic changes in a way that
 /// requires existing cached data to be discarded and rebuilt.
-const SCHEMA_VERSION: i64 = 11;
+const SCHEMA_VERSION: i64 = 12;
 
 fn init_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch("
@@ -445,7 +445,8 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
             path        TEXT    NOT NULL,
             line_number INTEGER NOT NULL,
             text        TEXT    NOT NULL DEFAULT '',
-            checked     INTEGER NOT NULL DEFAULT 0
+            checked     INTEGER NOT NULL DEFAULT 0,
+            defer_until TEXT    NOT NULL DEFAULT ''
         );
         CREATE INDEX IF NOT EXISTS idx_tasks_path    ON tasks(path);
         CREATE INDEX IF NOT EXISTS idx_tasks_checked ON tasks(checked);
@@ -469,10 +470,11 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
 
     // Migrate columns added after initial release (silently ignored if present).
     for sql in [
-        "ALTER TABLE files      ADD COLUMN title    TEXT    NOT NULL DEFAULT ''",
-        "ALTER TABLE wiki_links ADD COLUMN context  TEXT    NOT NULL DEFAULT ''",
-        "ALTER TABLE files      ADD COLUMN body     TEXT    NOT NULL DEFAULT ''",
-        "ALTER TABLE files      ADD COLUMN favorite INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE files      ADD COLUMN title       TEXT    NOT NULL DEFAULT ''",
+        "ALTER TABLE wiki_links ADD COLUMN context     TEXT    NOT NULL DEFAULT ''",
+        "ALTER TABLE files      ADD COLUMN body        TEXT    NOT NULL DEFAULT ''",
+        "ALTER TABLE files      ADD COLUMN favorite    INTEGER NOT NULL DEFAULT 0",
+        "ALTER TABLE tasks      ADD COLUMN defer_until TEXT    NOT NULL DEFAULT ''",
     ] {
         let _ = conn.execute_batch(sql);
     }
@@ -649,9 +651,10 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
         .map_err(|e| e.to_string())?;
     for (i, line) in content.lines().enumerate() {
         if let Some((checked, text)) = parse_task_line(line) {
+            let defer = extract_defer_value(&text);
             conn.execute(
-                "INSERT INTO tasks (path, line_number, text, checked) VALUES (?1, ?2, ?3, ?4)",
-                rusqlite::params![path_str, i as i64 + 1, text, checked as i64],
+                "INSERT INTO tasks (path, line_number, text, checked, defer_until) VALUES (?1, ?2, ?3, ?4, ?5)",
+                rusqlite::params![path_str, i as i64 + 1, text, checked as i64, defer],
             ).map_err(|e| e.to_string())?;
         }
     }
@@ -690,7 +693,9 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
                         let after_ok  = after >= line.len() || !line[after..].chars().next()
                             .map_or(false, |c| c.is_alphanumeric() || c == '_');
                         if before_ok && after_ok {
-                            let text = line[after..].trim().to_string();
+                            let rest  = line[after..].trim_start();
+                            let rest  = rest.strip_prefix(':').unwrap_or(rest).trim();
+                            let text  = rest.to_string();
                             conn.execute(
                                 "INSERT INTO annotations (path, line_number, keyword, text) VALUES (?1, ?2, ?3, ?4)",
                                 rusqlite::params![path_str, i as i64 + 1, kw, text],
@@ -722,6 +727,20 @@ fn skip_list_marker(s: &str) -> &str {
         return &s[i + 2..];
     }
     s
+}
+
+/// Extract the raw value inside `@defer(...)` from task text, or return an
+/// empty string if the tag is absent.  The value is stored as-is so JS can
+/// parse it with chrono-node for natural-language date support.
+fn extract_defer_value(task_text: &str) -> String {
+    const PREFIX: &str = "@defer(";
+    if let Some(start) = task_text.find(PREFIX) {
+        let rest = &task_text[start + PREFIX.len()..];
+        if let Some(end) = rest.find(')') {
+            return rest[..end].trim().to_string();
+        }
+    }
+    String::new()
 }
 
 /// If `line` is a task line, return `Some((checked, task_text))`.
@@ -1107,10 +1126,12 @@ fn list_favorites() -> Result<Vec<FavoriteEntry>, String> {
 
 #[derive(serde::Serialize)]
 struct TaskEntry {
-    path:    String,
-    title:   String,
-    text:    String,
-    checked: bool,
+    path:        String,
+    title:       String,
+    line_number: i64,
+    text:        String,
+    checked:     bool,
+    defer_until: String,
 }
 
 /// Return tasks from the index.
@@ -1121,28 +1142,77 @@ fn list_tasks(checked: Option<bool>) -> Result<Vec<TaskEntry>, String> {
     let conn = open_db()?;
     init_schema(&conn)?;
     let sql = match checked {
-        Some(true)  => "SELECT t.path, f.title, t.text, t.checked \
+        Some(true)  => "SELECT t.path, f.title, t.line_number, t.text, t.checked, t.defer_until \
                          FROM tasks t JOIN files f ON f.path = t.path \
                          WHERE t.checked = 1 ORDER BY t.path, t.line_number",
-        Some(false) => "SELECT t.path, f.title, t.text, t.checked \
+        Some(false) => "SELECT t.path, f.title, t.line_number, t.text, t.checked, t.defer_until \
                          FROM tasks t JOIN files f ON f.path = t.path \
                          WHERE t.checked = 0 ORDER BY t.path, t.line_number",
-        None        => "SELECT t.path, f.title, t.text, t.checked \
+        None        => "SELECT t.path, f.title, t.line_number, t.text, t.checked, t.defer_until \
                          FROM tasks t JOIN files f ON f.path = t.path \
                          ORDER BY t.path, t.line_number",
     };
     let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
     let entries: Vec<TaskEntry> = stmt
         .query_map([], |row| Ok(TaskEntry {
-            path:    row.get(0)?,
-            title:   row.get(1)?,
-            text:    row.get(2)?,
-            checked: row.get::<_, i64>(3)? != 0,
+            path:        row.get(0)?,
+            title:       row.get(1)?,
+            line_number: row.get(2)?,
+            text:        row.get(3)?,
+            checked:     row.get::<_, i64>(4)? != 0,
+            defer_until: row.get(5)?,
         }))
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
     Ok(entries)
+}
+
+/// Rewrite one task line in a source file.
+///
+/// `original_text` is the task text as stored in the DB (the content after
+/// the checkbox).  The command locates the source line by searching near
+/// `line_number` (1-based) for a line that contains `original_text`, then
+/// replaces the first occurrence with `new_text`.  After writing, the file
+/// is re-indexed so the DB stays in sync.
+#[tauri::command]
+fn write_task_line(
+    path:          String,
+    line_number:   i64,
+    original_text: String,
+    new_text:      String,
+) -> Result<(), String> {
+    let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    let lines: Vec<&str> = content.lines().collect();
+    let n    = lines.len();
+    let hint = (line_number as usize).saturating_sub(1); // 0-based
+
+    // Search outward from hint for a line containing original_text.
+    let target = (0..=20_usize)
+        .flat_map(|d| {
+            let mut v = vec![];
+            if hint + d < n          { v.push(hint + d); }
+            if d > 0 && hint >= d    { v.push(hint - d); }
+            v
+        })
+        .find(|&i| lines[i].contains(original_text.as_str()))
+        .ok_or_else(|| "Task line not found in source file".to_string())?;
+
+    let new_line = lines[target].replacen(original_text.as_str(), new_text.as_str(), 1);
+    let mut new_lines: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
+    new_lines[target] = new_line;
+
+    let ends_with_newline = content.ends_with('\n');
+    let mut new_content   = new_lines.join("\n");
+    if ends_with_newline { new_content.push('\n'); }
+
+    std::fs::write(&path, &new_content).map_err(|e| e.to_string())?;
+
+    let conn = open_db()?;
+    init_schema(&conn)?;
+    index_file(&conn, &path)?;
+
+    Ok(())
 }
 
 /// A task from another page that explicitly references the current page via [[link]].
@@ -1932,6 +2002,7 @@ pub fn run() {
             fetch_page,
             list_favorites,
             list_tasks,
+            write_task_line,
             get_linked_tasks,
             save_window_size,
             restore_window_size,

@@ -63,6 +63,9 @@ Unlinked Reference
 Task
 : Pages can be littered with tasks, which are a newline started by either `[]`, or `- []`, with an optional space between the single-square brackets. Tasks adhere loosely to the [todotxt](https://github.com/todotxt/todo.txt) and [TaskPaper](https://www.taskpaper.com/guide/getting-started/) formats, with allowances for Markdown, and some additional reserved parameters. Task management is a major feature of MI and is documented in its own "TASK MANAGEMENT.md" file.
 
+Annotation
+: Text can be annotated by typing an allowed annotated marker in all caps then continuing the annotation to the end of the line. Annotations are simple markers for remembering, documenting, planning, etc., where a "task" is too heavy and specific. Annotations allow you to save something for later. Annotation keywords are TODO, FIXME, NOTE, and IDEA. Users can add their own annotation keywords, and annotations can be discovered through the AnnotationsWidget.
+
 ## Features
 
 - Uses plain-text Markdown as its default format. All data is stored in plain-text files. While an SQLite database is used to quickly implement features such as searching and linking, the database is always derived from the text files within the MI folder.

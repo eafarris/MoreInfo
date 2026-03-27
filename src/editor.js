@@ -26,7 +26,7 @@ import {
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { autocompletion, acceptCompletion } from '@codemirror/autocomplete';
 import { tags } from '@lezer/highlight';
-import { formatCalcResult, scanCalcBlocks } from './calcBlock.js';
+import { scanCalcBlocks } from './calcBlock.js';
 
 // ── Theme ──────────────────────────────────────────────────────────────────
 // Matches the olive/amber palette used throughout the app.
@@ -457,38 +457,34 @@ const fencedCodePlugin = ViewPlugin.fromClass(class {
   }
 }, { decorations: v => v.decorations });
 
-// ── Keyword highlight factory ──────────────────────────────────────────────
-// Creates a ViewPlugin that marks every occurrence of a literal keyword with
-// a given CSS class.  Use this for TODO, FIXME, NOTE, etc.
-//
-//   keywordPlugin('TODO',  'cm-kw-todo')
-//   keywordPlugin('FIXME', 'cm-kw-fixme')
+// ── Annotation keyword highlight ───────────────────────────────────────────
+// Marks reserved annotation keywords (TODO, FIXME, NOTE, IDEA) inline.
+// Each keyword gets a shared `cm-annotation` base class plus a keyword-specific
+// modifier class for per-keyword colour.  Never creates tasks.
 
-function keywordPlugin(keyword, cssClass) {
-  const re = new RegExp(keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g');
-  const len = keyword.length;
-  return ViewPlugin.fromClass(class {
-    constructor(view) { this.decorations = this._build(view); }
-    update(u) {
-      if (u.docChanged || u.viewportChanged) this.decorations = this._build(u.view);
-    }
-    _build(view) {
-      const deco = [];
-      for (const { from, to } of view.visibleRanges) {
-        const text = view.state.doc.sliceString(from, to);
-        re.lastIndex = 0;
-        let m;
-        while ((m = re.exec(text)) !== null) {
-          const start = from + m.index;
-          deco.push(Decoration.mark({ class: cssClass }).range(start, start + len));
-        }
+const ANNOTATION_RE = /\b(TODO|FIXME|NOTE|IDEA)\b/g;
+
+const annotationPlugin = ViewPlugin.fromClass(class {
+  constructor(view) { this.decorations = this._build(view); }
+  update(u) {
+    if (u.docChanged || u.viewportChanged) this.decorations = this._build(u.view);
+  }
+  _build(view) {
+    const deco = [];
+    for (const { from, to } of view.visibleRanges) {
+      const text = view.state.doc.sliceString(from, to);
+      ANNOTATION_RE.lastIndex = 0;
+      let m;
+      while ((m = ANNOTATION_RE.exec(text)) !== null) {
+        const start = from + m.index;
+        const kw    = m[1].toLowerCase();
+        deco.push(Decoration.mark({ class: `cm-annotation cm-annotation-${kw}` })
+          .range(start, start + m[1].length));
       }
-      return Decoration.set(deco, true);
     }
-  }, { decorations: v => v.decorations });
-}
-
-const todoPlugin = keywordPlugin('TODO', 'cm-todo');
+    return Decoration.set(deco, true);
+  }
+}, { decorations: v => v.decorations });
 
 // ── Task checkbox decoration ────────────────────────────────────────────────
 // Marks [] / [ ] / [X] / [x] at the start of a task line (optionally after
@@ -627,10 +623,10 @@ const autoDoneStampListener = EditorView.updateListener.of(update => {
 // flush-right via position:sticky.
 
 class CalcResultWidget extends WidgetType {
-  constructor(value, error) {
+  constructor(formatted, error) {
     super();
-    this.value = value;
-    this.error = error;
+    this.formatted = formatted;
+    this.error     = error;
   }
   toDOM() {
     const el = document.createElement('span');
@@ -639,11 +635,11 @@ class CalcResultWidget extends WidgetType {
       el.textContent = this.error;
     } else {
       el.className = 'cm-calc-result';
-      el.textContent = '= ' + formatCalcResult(this.value);
+      el.textContent = '= ' + this.formatted;
     }
     return el;
   }
-  eq(other) { return this.value === other.value && this.error === other.error; }
+  eq(other) { return this.formatted === other.formatted && this.error === other.error; }
   ignoreEvent() { return true; }
 }
 
@@ -671,7 +667,7 @@ export const calcBlockPlugin = ViewPlugin.fromClass(class {
           deco.push(Decoration.line({ class: 'cm-calc-expr' }).range(line.from));
           deco.push(
             Decoration.widget({
-              widget: new CalcResultWidget(res.value, res.error),
+              widget: new CalcResultWidget(res.formatted, res.error),
               side: 1,
             }).range(line.to),
           );
@@ -942,7 +938,7 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
       urlPlugin,
       fencedCodePlugin,
       inlineCodePlugin,
-      todoPlugin,
+      annotationPlugin,
       taskCheckboxPlugin,
       calcBlockPlugin,
       EditorView.lineWrapping,

@@ -162,7 +162,7 @@ fn parse_pairs_slice(lines: &[&str]) -> Vec<(String, Value)> {
             .unwrap_or(line)
             .trim_start();
         if let Some(colon) = line.find(':') {
-            let key = line[..colon].trim().to_string();
+            let key = line[..colon].trim().to_ascii_lowercase();
             let raw = line[colon + 1..].trim();
             if !key.is_empty() {
                 pairs.push((key, parse_value(raw)));
@@ -397,6 +397,15 @@ mod tests {
         let fm = parse(doc);
         assert_eq!(fm["author"], text("Jane"));
         assert_eq!(fm["date"],   date("2026-03-23"));
+    }
+
+    #[test]
+    fn keys_are_normalized_to_lowercase() {
+        let doc = "---\nTitle: My Page\nTAGS: one, two\nFavorite: true\n---";
+        let fm = parse(doc);
+        assert_eq!(fm["title"],    text("My Page"));
+        assert_eq!(fm["tags"],     array(&["one", "two"]));
+        assert_eq!(fm["favorite"], Value::Bool(true));
     }
 
     #[test]

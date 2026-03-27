@@ -30,7 +30,11 @@
 .cm-url            { color: var(--color-olive-500); text-decoration: underline; text-decoration-style: dotted; text-decoration-color: var(--color-olive-600); text-underline-offset: 3px; }
 .cm-inline-code    { color: var(--color-amber-300); background: color-mix(in srgb, var(--color-olive-700) 50%, transparent); border-radius: 3px; padding: 0 3px; }
 .cm-code-block     { color: var(--color-olive-500); }
-.cm-todo           { color: var(--color-amber-400); font-weight: bold; }
+.cm-annotation           { font-weight: bold; }
+.cm-annotation-todo      { color: var(--color-amber-400); }
+.cm-annotation-fixme     { color: var(--color-rose-400); }
+.cm-annotation-note      { color: var(--color-sky-400); }
+.cm-annotation-idea      { color: var(--color-emerald-400); }
 
 
 /* Completed task lines: dim links to match the muted line color */
@@ -103,7 +107,6 @@
 .mi-calc-block .mi-calc-error {
   color: oklch(70% 0.19 27);
 }
-
 /* Wiki links rendered inside the markdown preview */
 .wiki-link {
   color: var(--color-amber-400);

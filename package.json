@@ -25,6 +25,7 @@
     "@lezer/highlight": "^1.2.3",
     "@mozilla/readability": "^0.6.0",
     "@tauri-apps/plugin-window-state": "^2",
-    "chrono-node": "^2.9.0"
+    "chrono-node": "^2.9.0",
+    "mathjs": "^15.1.1"
   }
 }

@@ -392,7 +392,7 @@ fn open_db() -> Result<Connection, String> {
 
 /// Bump this whenever the schema or indexing logic changes in a way that
 /// requires existing cached data to be discarded and rebuilt.
-const SCHEMA_VERSION: i64 = 9;
+const SCHEMA_VERSION: i64 = 10;
 
 fn init_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch("
@@ -449,6 +449,15 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         );
         CREATE INDEX IF NOT EXISTS idx_tasks_path    ON tasks(path);
         CREATE INDEX IF NOT EXISTS idx_tasks_checked ON tasks(checked);
+        CREATE TABLE IF NOT EXISTS annotations (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            path        TEXT    NOT NULL,
+            line_number INTEGER NOT NULL,
+            keyword     TEXT    NOT NULL,
+            text        TEXT    NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_annotations_path    ON annotations(path);
+        CREATE INDEX IF NOT EXISTS idx_annotations_keyword ON annotations(keyword);
     ").map_err(|e| e.to_string())?;
 
     // Migrate columns added after initial release (silently ignored if present).
@@ -471,7 +480,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
 
     if stored != Some(SCHEMA_VERSION) {
         conn.execute_batch(
-            "DELETE FROM wiki_links; DELETE FROM files; DELETE FROM fts; DELETE FROM file_tags; DELETE FROM file_aliases; DELETE FROM future_tasks; DELETE FROM tasks; DELETE FROM meta WHERE key != 'schema_version';"
+            "DELETE FROM wiki_links; DELETE FROM files; DELETE FROM fts; DELETE FROM file_tags; DELETE FROM file_aliases; DELETE FROM future_tasks; DELETE FROM tasks; DELETE FROM annotations; DELETE FROM meta WHERE key != 'schema_version';"
         ).map_err(|e| e.to_string())?;
         conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
@@ -499,6 +508,8 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
         conn.execute("DELETE FROM file_aliases WHERE path = ?1", [path_str])
             .map_err(|e| e.to_string())?;
         conn.execute("DELETE FROM future_tasks WHERE path = ?1", [path_str])
+            .map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM annotations WHERE path = ?1", [path_str])
             .map_err(|e| e.to_string())?;
         return Ok(());
     }
@@ -633,6 +644,39 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
                 "INSERT INTO tasks (path, line_number, text, checked) VALUES (?1, ?2, ?3, ?4)",
                 rusqlite::params![path_str, i as i64 + 1, text, checked as i64],
             ).map_err(|e| e.to_string())?;
+        }
+    }
+
+    // Index annotation keywords: TODO, FIXME, NOTE, IDEA.
+    // Stores the keyword and the trimmed text that follows it on the same line.
+    const ANNOTATION_KEYWORDS: &[&str] = &["TODO", "FIXME", "NOTE", "IDEA"];
+    conn.execute("DELETE FROM annotations WHERE path = ?1", [path_str])
+        .map_err(|e| e.to_string())?;
+    for (i, line) in content.lines().enumerate() {
+        for kw in ANNOTATION_KEYWORDS {
+            let mut search_from = 0;
+            while search_from < line.len() {
+                match line[search_from..].find(kw) {
+                    None => break,
+                    Some(rel) => {
+                        let abs = search_from + rel;
+                        let after = abs + kw.len();
+                        // Require word boundaries: char before and after must not be word chars.
+                        let before_ok = abs == 0 || !line[..abs].chars().next_back()
+                            .map_or(false, |c| c.is_alphanumeric() || c == '_');
+                        let after_ok  = after >= line.len() || !line[after..].chars().next()
+                            .map_or(false, |c| c.is_alphanumeric() || c == '_');
+                        if before_ok && after_ok {
+                            let text = line[after..].trim().to_string();
+                            conn.execute(
+                                "INSERT INTO annotations (path, line_number, keyword, text) VALUES (?1, ?2, ?3, ?4)",
+                                rusqlite::params![path_str, i as i64 + 1, kw, text],
+                            ).map_err(|e| e.to_string())?;
+                        }
+                        search_from = abs + 1;
+                    }
+                }
+            }
         }
     }
 

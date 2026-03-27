@@ -64,7 +64,7 @@ Task
 : Pages can be littered with tasks, which are a newline started by either `[]`, or `- []`, with an optional space between the single-square brackets. Tasks adhere loosely to the [todotxt](https://github.com/todotxt/todo.txt) and [TaskPaper](https://www.taskpaper.com/guide/getting-started/) formats, with allowances for Markdown, and some additional reserved parameters. Task management is a major feature of MI and is documented in its own "TASK MANAGEMENT.md" file.
 
 Annotation
-: Text can be annotated by typing an allowed annotated marker in all caps then continuing the annotation to the end of the line. Annotations are simple markers for remembering, documenting, planning, etc., where a "task" is too heavy and specific. Annotations allow you to save something for later. Annotation keywords are TODO, FIXME, NOTE, and IDEA. Users can add their own annotation keywords, and annotations can be discovered through the AnnotationsWidget.
+: Text can be annotated by typing an allowed annotated marker in all caps then continuing the annotation to the end of the line. Annotations are simple markers for remembering, documenting, planning, etc., where a "task" is too heavy and specific. Annotations allow you to save something for later. Annotation keywords are TODO, FIXME, NOTE, and IDEA. Users can add their own annotation keywords, and annotations can be discovered through the AnnotationsWidget, and can be a filter in SearchWidget.
 
 ## Features
 
@@ -76,9 +76,9 @@ Annotation
 
 - Supports daily journals. These are markdown files with the filename pattern of `YYYY-MM-DD.md`. Each day may have up to one daily journal page. Like wiki pages, these files are not created until they are opened. Files for dates in the future are supported. "Journal Notes" is the default view of the app, which opens the current day's daily journal. Status: FULLY IMPLEMENTED.
 
-- Supports Jekyll-style front matter. Pages can have metadata embedded in them using lines between triple-dashes ("---"). In addition, late-matter metadata can be added to the end of the file using lines defined by the start of the metadata with the "email .signature" delimiter, double-dash plus space ("-- "), and continuing until the end of the file. Front matter are used as variables, both some built-in variables with significance as well as on-the-fly database columns using user-defined metadata items. Reserved variables are listed below. Metadata can have three types: string, date, and array. Status: FULLY IMPLEMENTED.
+- Supports Jekyll-style front matter. Pages can have metadata embedded in them using lines between triple-dashes ("---"). In addition, late-matter metadata can be added to the end of the file using lines defined by the start of the metadata with the "email .signature" delimiter, double-dash plus space ("-- "), and continuing until the end of the file. Front matter are used as variables, both some built-in variables with significance as well as on-the-fly database columns using user-defined metadata items. Reserved variables are listed below. Metadata can have four types: string, date, boolean, and array. Metadata variable names are _case-insensitive_ — the parser normalises all keys to lowercase before storage, so `Title:`, `title:`, and `TITLE:` are identical. **"Slick by default" rule**: MI reads triple-dash front matter (for compatibility with Obsidian, Jekyll, etc.) but never _emits_ it. All app-generated metadata (new page titles, favorite flags, etc.) is written to the sig block (the `--` delimiter line) at the end of the file. Existing metadata is edited in-place wherever it lives. Status: FULLY IMPLEMENTED.
 
-- Support for numerous types of task management. Any line can be turned into a task by beginning the line with a square-bracket pair, either with or without a space between (ie., "`[]`" or "`[ ]`"). (GFM's default task list format of `- []` is also supported when creating a list of tasks. Once a line has been marked as being a task, it is rendered with a clickable checkbox, and can have its own parameters to define the scope of the task, like "project:" "now", "later", "todo", "someday", "date:YYYY-MM-DD", etc. The entire list of built-in parameters is listed below, and users can create their own depending on their needs. Task management will include several types of repeating tasks. Task management gets its own spec document, "TASK MANAGEMENT.md". Status: PLANNING.
+- Support for numerous types of task management. Any line can be turned into a task by beginning the line with a square-bracket pair, either with or without a space between (ie., "`[]`" or "`[ ]`"). GFM's default task list format of `- []` is also supported. Once a line has been marked as being a task, it is rendered with a clickable checkbox. Checking the box stamps `@done(YYYY-MM-DD HH:MM)` on the line automatically; unchecking removes it. Task lines support GTD-style `@context` tags (bare `@word` tokens), `[[wiki links]]` to associate tasks with pages, and CamelCase page references. Reserved `@` parameters (`@due`, `@priority`, `@defer`, `@repeat`, etc.) are planned. Task management gets its own spec document, "TASK MANAGEMENT.md". Status: PARTIALLY IMPLEMENTED.
 
 - Support for use as a Static Site Generator (SSG) for exporting some or all notes and journals as a complete web site. SSG gets its own spec document, "SSG.md". Status: PLANNING.
 
@@ -90,9 +90,8 @@ Annotation
 
 - Focus mode. MI can be configured with a single document in a single viewport with no surrounding sidebars and a minimum of window chrome, for maximum focus on only the active document. Status: PLANNING.
 
-- Calc blocks. Typing '@calc' by itself on a line puts the editor into calculator mode, where each line is considered a mathematical expression. Expressions keep the result of the expression as the first numerator in the next expression, for a tape-calculator feel, if appropriate. Calc blocks can also do unit and base conversion. Calc blocks are supported in all pages, including the Scratch Pad widget. Status: PARTIALLY IMPLEMENTED.
+- Calc blocks. Typing '@calc' by itself on a line puts the editor into calculator mode, where each line is considered a mathematical expression. The result of each expression is stored in `_last` and implicitly carried forward as the left operand of the next line when that line begins with a binary operator (`+`, `-`, `*`, `/`, `%`, `**`, `^`) or a unit-conversion keyword (`in`, `to`). `_last` is always in scope and can be used explicitly (e.g., `sqrt(_last)`). Expressions are evaluated by math.js, which supports unit-aware arithmetic and conversions (`2 miles in km`, `5 miles / 10 days`). `[[wiki links]]` and CamelCase references on a calc line are stripped before evaluation. Results are displayed flush-right and are selectable for clipboard copy. Calc blocks are supported in all pages, including the Scratch Pad widget. Status: FULLY IMPLEMENTED.
 
--
 ## Reserved metadata variables
 
 Title
@@ -164,7 +163,7 @@ Search
 - [X] Top, bottom sidebars
 - [X] Resizable sidebars
 - [X] Full-text search
-- [X] @calc blocks
+- [X] @calc blocks (math.js, unit math, `_last`, `in`/`to` conversion, selectable results)
 - [ ] Operators, filters for full-text search
 - [X] SQLite database as cache for linked references
 - [X] SQLite database as cache for full-text search
@@ -181,6 +180,9 @@ Search
 - [X] Page aliases
 - [X] Page References widget
 - [X] Page templates
-- [ ] Basic tasks
+- [X] Basic tasks (clickable checkboxes, `@done` auto-stamp)
+- [X] Task `@context` tags (GTD-style bare `@word`, highlighted + indexed)
+- [X] Annotations: TODO, NOTE, IDEA, and FIXME (highlighted, indexed; not tasks)
 - [ ] Tasks widget
-- [ ] Expanded tasks : TODO, FIXME, Later, Someday, Deadline, Done
+- [ ] Expanded task params: `@due`, `@priority`, `@defer`, `@repeat`
+- [X] CamelCase wiki links (existing pages only, never creates)

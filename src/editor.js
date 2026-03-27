@@ -95,8 +95,7 @@ export const miTheme = EditorView.theme({
     color:         'oklch(79.5% 0.184 86.5)',  // amber-400
     fontSize:      '0.85em',
     fontFamily:    'var(--font-family-mono)',
-    pointerEvents: 'none',
-    userSelect:    'none',
+    cursor:        'text',
   },
   '.cm-calc-result.cm-calc-result-error': {
     color: 'oklch(70% 0.19 27)',             // muted red
@@ -111,6 +110,10 @@ export const miTheme = EditorView.theme({
   },
   '.cm-task-done-line': {
     color:     'oklch(47.1% 0.025 107)',   // olive-600 — two steps dimmer than body
+  },
+  // @context tags on task lines (bare @word, not a reserved param)
+  '.cm-at-context': {
+    color: 'oklch(87.9% 0.169 91.605)',   // amber-300
   },
   // Journal placeholder ("Tell me about your day…")
   '.cm-placeholder': {
@@ -480,6 +483,59 @@ const annotationPlugin = ViewPlugin.fromClass(class {
         const kw    = m[1].toLowerCase();
         deco.push(Decoration.mark({ class: `cm-annotation cm-annotation-${kw}` })
           .range(start, start + m[1].length));
+      }
+    }
+    return Decoration.set(deco, true);
+  }
+}, { decorations: v => v.decorations });
+
+// ── Task @-parameter parser ─────────────────────────────────────────────────
+// Parses @word and @word(value) tokens from a string.
+// Returns [{name, value, from, to}] where value is null for a bare @word.
+// `from`/`to` are character offsets within `text`.
+export function parseAtParams(text) {
+  const re = /@([a-zA-Z][a-zA-Z0-9_-]*)(\([^)]*\))?/g;
+  const params = [];
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    params.push({
+      name:  m[1],
+      value: m[2] ? m[2].slice(1, -1) : null,  // strip surrounding parens
+      from:  m.index,
+      to:    m.index + m[0].length,
+    });
+  }
+  return params;
+}
+
+// @-tag names with reserved meaning — never treated as plain context tags.
+const RESERVED_AT = new Set([
+  'done', 'cancelled', 'waiting', 'someday',
+  'due', 'priority', 'defer', 'repeat',
+]);
+
+// ── Task @context decoration ────────────────────────────────────────────────
+// Highlights bare @word tokens on task lines that are not reserved params.
+const taskAtPlugin = ViewPlugin.fromClass(class {
+  constructor(view) { this.decorations = this._build(view); }
+  update(u) {
+    if (u.docChanged || u.viewportChanged) this.decorations = this._build(u.view);
+  }
+  _build(view) {
+    const deco = [];
+    for (const { from, to } of view.visibleRanges) {
+      let pos = from;
+      while (pos <= to) {
+        const line = view.state.doc.lineAt(pos);
+        if (TASK_CB_RE.test(line.text)) {
+          for (const p of parseAtParams(line.text)) {
+            if (p.value === null && !RESERVED_AT.has(p.name.toLowerCase())) {
+              deco.push(Decoration.mark({ class: 'cm-at-context' })
+                .range(line.from + p.from, line.from + p.to));
+            }
+          }
+        }
+        pos = line.to + 1;
       }
     }
     return Decoration.set(deco, true);
@@ -939,6 +995,7 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
       fencedCodePlugin,
       inlineCodePlugin,
       annotationPlugin,
+      taskAtPlugin,
       taskCheckboxPlugin,
       calcBlockPlugin,
       EditorView.lineWrapping,

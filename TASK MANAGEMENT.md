@@ -43,7 +43,7 @@ A bare `@word` tag (no parentheses) marks the GTD-style context in which the tas
 [ ] Draft the intro section  @computer
 ```
 
-A context tag is a plain label — it does not reference any page.
+A context tag is a plain label — it does not reference any page. Tasks can be filtered by context in the TasksWidget.
 
 ### Page references
 
@@ -142,9 +142,8 @@ Other features
 Move tasks forward
 : takes incomplete tasks from today's journal to tomorrow (or maybe select a date?) This might be a user preference, and just happens.
 
-TODO
-: The regex "\wTODO\w" means that everything following TODO until the end of line becomes a task. Are TODOs treated differently? They're kinda like someday/maybes, are they just placeholders that don't become actual tasks?
+Annotations vs. Tasks
+: Inline markers like TODO, FIXME, NOTE, and IDEA are **annotations** — not tasks. They are highlighted and indexed but carry no completion state, checkbox, or deadline. An annotation captures a thought in passing; a task is an explicit commitment to act. Promote an annotation to a task manually by adding a `[ ]` checkbox. Automatic TODO→task conversion was considered and rejected.
 
 TaskWidget
-: exposes all incomplete tasks. Can organize by project? (Don't really have projects, just links). 
-
+: Exposes all incomplete tasks across the datastore. Filter UI planned for context, page/project, due date, state, and priority. Tasks from journal and wiki pages are included; templates are excluded.

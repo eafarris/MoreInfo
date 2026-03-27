@@ -1,6 +1,6 @@
 # MoreInfo
 
-A markdown-based personal knowledge base (PKB) for macOS, with Windows and Linux planned. MoreInfo combines a wiki-style linking system, daily journals, and task management — all backed by plain-text files you can read, edit, back up, and sync with any tool you already use.
+A markdown-based personal knowledge base (PKB) for macOS, with Windows and Linux planned; mobile to follow. MoreInfo combines a wiki-style linking system, daily journals, and task management — all backed by plain-text files you can read, edit, back up, and sync with any tool you already use.
 
 > **Status: Early development.** Core editing and linking work. Tasks, templates, and several planned widgets are still in progress.
 
@@ -19,27 +19,31 @@ A markdown-based personal knowledge base (PKB) for macOS, with Windows and Linux
 ### Working now
 
 - **Markdown editor** with syntax highlighting, wiki-link autocomplete, and a live split preview
-- **Wiki-style linking** — `[[Page Title]]` links between notes; clicking creates the page if it doesn't exist
+- **Wiki-style linking** — `[[Page Title]]` links between notes; clicking creates the page if it doesn't exist. Supports CamelCase as links to existing content.
 - **Backlinks** — linked and unlinked references shown at the bottom of every page
 - **Daily journals** — one `.md` file per day, named `YYYY-MM-DD.md`; today's journal opens on launch
 - **Page aliases** — multiple names can resolve to the same page
 - **Favorites** — star any page; favorited pages appear in the Favorites widget
-- **@calc blocks** — tape-calculator arithmetic inside any page or the Scratch Pad (see below)
+- **@calc blocks** — tape-calculator arithmetic and unit math / conversions inside any page or the Scratch Pad (see below)
 - **Full-text search** with SQLite FTS5
 - **Metadata** — YAML-style front matter anywhere in the file, plus end-of-file sig-block metadata; supports string, date, boolean, and array types
 - **Tags** via metadata
-- **Sidebar layout** — resizable left, right, top, and bottom sidebars in a VS Code-style arrangement
+- **Sidebar layout** — resizable left, right, top, and bottom sidebars can hold widgets in a VS Code-style arrangement
 - **Widgets**: Calendar, Metadata, References, Counter, Page, Browser, Search, Favorites, Scratchpad
+- **Page templates** — scaffold new pages from a template
+- **Outline widget** — heading-based document outline
+- **Categories** — single-value taxonomy of pages that classify the type of content represented by the page
+- **Annotations** - In-line markers (FIXME, IDEA, NOTE, TODO) that highlights and indexes thoughts and ideas that are not tasks 
 - **Filesystem watcher** keeps the database in sync with changes made outside the app
 - **User preferences** stored in `preferences.json` inside the datastore (travels with your data)
 
+### Partially implemented
+
+- **Task management** — `[ ]` checkboxes render as clickable UI; checking stamps `@done(timestamp)` automatically. GTD-style `@context` tags on task lines are highlighted and indexed. Due dates, priorities, repeating tasks, and the Tasks widget are still planned.
+
 ### Planned / in progress
 
-- **Task management** — `[ ]` checkboxes with todotxt/TaskPaper-inspired parameters (`TODO`, `FIXME`, deadline dates, priorities, repeating tasks)
 - **Tasks widget** — filtered view of all open tasks across the datastore
-- **Page templates** — scaffold new pages from a template
-- **Outline widget** — heading-based document outline
-- **Categories** — user-defined page types stored in their own top-level folder (e.g. `people/`, `projects/`)
 - **Static site export** — publish some or all notes as a website
 - **Focus mode** — distraction-free single-document view
 - **iOS / iPadOS binaries** (Tauri roadmap dependent)
@@ -57,11 +61,11 @@ Any page (including the Scratch Pad widget) can contain one or more calculator b
 * 1.08
 ```
 
-Results appear flush-right in the editor and in the preview pane.
+Results appear flush-right in the editor and in the preview pane and are selectable for clipboard copy.
 
-### Implicit carry
+### Implicit carry and `_last`
 
-The result of each expression is silently carried forward as the left operand of the next line **when that line begins with a binary operator** (`+`, `-`, `*`, `/`, `%`, `**`, `^`). A line that starts with a number or function is evaluated independently.
+The result of each expression is stored in a variable called `_last` and silently carried forward as the left operand of the next line **when that line begins with a binary operator** (`+`, `-`, `*`, `/`, `%`, `**`, `^`) or a unit-conversion keyword (`in`, `to`). A line that starts with a number or function is evaluated independently.
 
 | Line | Interpretation |
 |---|---|
@@ -72,14 +76,51 @@ The result of each expression is silently carried forward as the left operand of
 
 A leading `-` is always treated as binary subtraction (subtract from the previous result), not unary negation.
 
+`_last` is always in scope and can be used explicitly in any expression:
+
+```text
+@calc
+144
+sqrt(_last)
+_last^2
+(_last + 10) / 2
+```
+
 ### Supported syntax
+
+Expressions are evaluated by [math.js](https://mathjs.org), which supports a broad range of syntax:
 
 | Feature | Examples |
 |---|---|
 | Basic operators | `+ - * / % ** ^` (`^` is an alias for `**`) |
 | Grouping | `(2 + 3) * 4` |
-| Constants | `pi` |
-| Functions | `sqrt abs round floor ceil min max log sin cos tan` |
+| Constants | `pi`, `e` |
+| Functions | `sqrt`, `abs`, `round`, `floor`, `ceil`, `min`, `max`, `log`, `log2`, `log10`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `exp`, `sign`, `gcd`, `lcm`, and [many more](https://mathjs.org/docs/reference/functions.html) |
+
+`[[Wiki links]]` and CamelCase page references on a calc line are ignored during evaluation — they are stripped before the expression is parsed, so you can annotate a value with its source page without affecting the result.
+
+### Unit math
+
+Calc blocks understand physical units and can perform unit-aware arithmetic and conversions, powered by math.js.
+
+```text
+@calc
+2 * 5 miles
+5 miles / 10 days
+2 miles in km
+60 mph * 2.5 hours
+```
+
+A line beginning with `in <unit>` or `to <unit>` converts `_last` to the new unit:
+
+```text
+@calc
+26.2 miles
+in km
+to meters
+```
+
+Units carry through arithmetic — the result of `5 miles / 10 days` is `0.5 miles / day`, not a dimensionless number. Incompatible unit operations (e.g. `10 miles + 5 kg`) produce a **Unit error** rather than a silent wrong answer.
 
 ---
 ## Screenshots
@@ -106,6 +147,7 @@ Page open with sidebar widgets:
 | Metadata parsing (Rust) | Custom `front-matter` crate (local) |
 | Database | SQLite via [rusqlite](https://github.com/rusqlite/rusqlite) |
 | Date parsing (JS) | [chrono-node](https://github.com/wanasit/chrono) |
+| Calc expression engine | [math.js](https://mathjs.org) |
 
 ---
 

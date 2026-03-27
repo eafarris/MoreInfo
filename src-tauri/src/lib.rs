@@ -392,7 +392,7 @@ fn open_db() -> Result<Connection, String> {
 
 /// Bump this whenever the schema or indexing logic changes in a way that
 /// requires existing cached data to be discarded and rebuilt.
-const SCHEMA_VERSION: i64 = 10;
+const SCHEMA_VERSION: i64 = 11;
 
 fn init_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch("
@@ -458,6 +458,13 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         );
         CREATE INDEX IF NOT EXISTS idx_annotations_path    ON annotations(path);
         CREATE INDEX IF NOT EXISTS idx_annotations_keyword ON annotations(keyword);
+        CREATE TABLE IF NOT EXISTS task_contexts (
+            path        TEXT    NOT NULL,
+            line_number INTEGER NOT NULL,
+            context     TEXT    NOT NULL COLLATE NOCASE,
+            PRIMARY KEY (path, line_number, context)
+        );
+        CREATE INDEX IF NOT EXISTS idx_tc_context ON task_contexts(context);
     ").map_err(|e| e.to_string())?;
 
     // Migrate columns added after initial release (silently ignored if present).
@@ -480,7 +487,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
 
     if stored != Some(SCHEMA_VERSION) {
         conn.execute_batch(
-            "DELETE FROM wiki_links; DELETE FROM files; DELETE FROM fts; DELETE FROM file_tags; DELETE FROM file_aliases; DELETE FROM future_tasks; DELETE FROM tasks; DELETE FROM annotations; DELETE FROM meta WHERE key != 'schema_version';"
+            "DELETE FROM wiki_links; DELETE FROM files; DELETE FROM fts; DELETE FROM file_tags; DELETE FROM file_aliases; DELETE FROM future_tasks; DELETE FROM tasks; DELETE FROM annotations; DELETE FROM task_contexts; DELETE FROM meta WHERE key != 'schema_version';"
         ).map_err(|e| e.to_string())?;
         conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
@@ -510,6 +517,8 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
         conn.execute("DELETE FROM future_tasks WHERE path = ?1", [path_str])
             .map_err(|e| e.to_string())?;
         conn.execute("DELETE FROM annotations WHERE path = ?1", [path_str])
+            .map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM task_contexts WHERE path = ?1", [path_str])
             .map_err(|e| e.to_string())?;
         return Ok(());
     }
@@ -647,6 +656,20 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
         }
     }
 
+    // Index @context tags on task lines.
+    conn.execute("DELETE FROM task_contexts WHERE path = ?1", [path_str])
+        .map_err(|e| e.to_string())?;
+    for (i, line) in content.lines().enumerate() {
+        if let Some((_, task_text)) = parse_task_line(line) {
+            for context in parse_task_contexts(&task_text) {
+                conn.execute(
+                    "INSERT OR IGNORE INTO task_contexts (path, line_number, context) VALUES (?1, ?2, ?3)",
+                    rusqlite::params![path_str, i as i64 + 1, context],
+                ).map_err(|e| e.to_string())?;
+            }
+        }
+    }
+
     // Index annotation keywords: TODO, FIXME, NOTE, IDEA.
     // Stores the keyword and the trimmed text that follows it on the same line.
     const ANNOTATION_KEYWORDS: &[&str] = &["TODO", "FIXME", "NOTE", "IDEA"];
@@ -722,6 +745,41 @@ fn parse_task_line(line: &str) -> Option<(bool, String)> {
     let rest = s[bracket_end..].trim_start().to_string();
     let checked = x_checked || rest.contains("@done");
     Some((checked, rest))
+}
+
+/// Extract bare @context tags from task text (the part after the checkbox).
+/// Reserved names and parameterised @word(...) tags are excluded.
+fn parse_task_contexts(task_text: &str) -> Vec<String> {
+    const RESERVED: &[&str] = &[
+        "done", "cancelled", "waiting", "someday",
+        "due", "priority", "defer", "repeat",
+    ];
+    let mut contexts = Vec::new();
+    let bytes = task_text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'@' {
+            let start = i + 1;
+            let mut j = start;
+            while j < bytes.len()
+                && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_' || bytes[j] == b'-')
+            {
+                j += 1;
+            }
+            if j > start {
+                let name = &task_text[start..j];
+                let has_parens  = j < bytes.len() && bytes[j] == b'(';
+                let is_reserved = RESERVED.iter().any(|r| r.eq_ignore_ascii_case(name));
+                if !has_parens && !is_reserved {
+                    contexts.push(name.to_string());
+                }
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    contexts
 }
 
 fn is_word_char(c: char) -> bool {

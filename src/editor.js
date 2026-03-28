@@ -844,6 +844,46 @@ function camelToTitle(camel) {
 // are silently ignored unless a page by that title actually exists.
 const CAMELCASE_RE = /\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b/g;
 
+// ── Module-level click resolvers (shared by createEditor + createTasksEditor) ──
+
+// Resolve a [[wiki link]] title at a given document position, or null.
+// Constrained to the current line so cross-line false positives are impossible.
+function wikiTitleAt(view, pos) {
+  const line    = view.state.doc.lineAt(pos);
+  const text    = line.text;
+  const linePos = pos - line.from;
+
+  let s = linePos;
+  while (s > 1 && !(text[s - 2] === '[' && text[s - 1] === '[')) s--;
+  if (s < 2) return null;
+  s -= 2;
+
+  if (text.slice(s + 2, linePos).includes(']]')) return null;
+
+  let e = linePos;
+  while (e + 1 < text.length && !(text[e] === ']' && text[e + 1] === ']')) e++;
+  if (!(text[e] === ']' && text[e + 1] === ']')) return null;
+
+  return text.slice(s + 2, e).trim() || null;
+}
+
+// Resolve a CamelCase link at a given document position, or null.
+// Only matches if a page with that title actually exists.
+function camelTitleAt(view, pos) {
+  const line    = view.state.doc.lineAt(pos);
+  const text    = line.text;
+  const linePos = pos - line.from;
+  CAMELCASE_RE.lastIndex = 0;
+  let m;
+  while ((m = CAMELCASE_RE.exec(text)) !== null) {
+    if (m.index <= linePos && linePos <= m.index + m[0].length) {
+      const title = camelToTitle(m[0]);
+      if (_pageTitleSet.has(title)) return title;
+    }
+  }
+  return null;
+}
+
 // ── Journal placeholder ────────────────────────────────────────────────────
 // Reconfigure via placeholderCompartment.reconfigure(placeholder('…')) or []
 export const placeholderCompartment = new Compartment();
@@ -909,46 +949,6 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
     key: 'Space',
     run: acceptCompletion,
   };
-
-  // Resolve a CamelCase link at a given document position, or null.
-  function camelTitleAt(view, pos) {
-    const line    = view.state.doc.lineAt(pos);
-    const text    = line.text;
-    const linePos = pos - line.from;
-    CAMELCASE_RE.lastIndex = 0;
-    let m;
-    while ((m = CAMELCASE_RE.exec(text)) !== null) {
-      if (m.index <= linePos && linePos <= m.index + m[0].length) {
-        const title = camelToTitle(m[0]);
-        if (_pageTitleSet.has(title)) return title;
-      }
-    }
-    return null;
-  }
-
-  // Resolve the wiki-link title at a given document position, or null.
-  // Constrained to the current line so cross-line false positives are impossible.
-  function wikiTitleAt(view, pos) {
-    const line    = view.state.doc.lineAt(pos);
-    const text    = line.text;
-    const linePos = pos - line.from;   // click offset within this line
-
-    // Scan backward within the line for [[
-    let s = linePos;
-    while (s > 1 && !(text[s - 2] === '[' && text[s - 1] === '[')) s--;
-    if (s < 2) return null;
-    s -= 2; // s now points at the first [
-
-    // If there is a ]] between [[ and the click, pos is outside any link
-    if (text.slice(s + 2, linePos).includes(']]')) return null;
-
-    // Scan forward within the line for ]]
-    let e = linePos;
-    while (e + 1 < text.length && !(text[e] === ']' && text[e + 1] === ']')) e++;
-    if (!(text[e] === ']' && text[e + 1] === ']')) return null;
-
-    return text.slice(s + 2, e).trim() || null;
-  }
 
   const clickHandler = EditorView.domEventHandlers({
     click(event, view) {
@@ -1029,27 +1029,12 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
 // clicks.
 
 export function createTasksEditor({ parent, onUpdate, onPageClick }) {
-  // Reuse the same wiki-link resolver from createEditor.
-  function wikiTitleAt(view, pos) {
-    const line    = view.state.doc.lineAt(pos);
-    const text    = line.text;
-    const linePos = pos - line.from;
-    let s = linePos;
-    while (s > 1 && !(text[s - 2] === '[' && text[s - 1] === '[')) s--;
-    if (s < 2) return null;
-    s -= 2;
-    if (text.slice(s + 2, linePos).includes(']]')) return null;
-    let e = linePos;
-    while (e + 1 < text.length && !(text[e] === ']' && text[e + 1] === ']')) e++;
-    if (!(text[e] === ']' && text[e + 1] === ']')) return null;
-    return text.slice(s + 2, e).trim() || null;
-  }
-
+  // Uses module-level wikiTitleAt + camelTitleAt for consistent link resolution.
   const clickHandler = EditorView.domEventHandlers({
     click(event, view) {
       const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
       if (pos == null) return false;
-      const title = wikiTitleAt(view, pos);
+      const title = wikiTitleAt(view, pos) || camelTitleAt(view, pos);
       if (!title) return false;
       onPageClick(title);
       return true;

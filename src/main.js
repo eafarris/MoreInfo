@@ -8,7 +8,8 @@ import { ReferencesWidget }  from './widgets/ReferencesWidget.js';
 import { PageWidget }        from './widgets/PageWidget.js';
 import { ScratchPadWidget }  from './widgets/ScratchPadWidget.js';
 import { FavoritesWidget }  from './widgets/FavoritesWidget.js';
-import { TasksWidget }      from './widgets/TasksWidget.js';
+import { TasksWidget }         from './widgets/TasksWidget.js';
+import { AnnotationsWidget }   from './widgets/AnnotationsWidget.js';
 import { BrowserWidget }     from './widgets/BrowserWidget.js';
 import { CounterWidget }     from './widgets/CounterWidget.js';
 import { SearchWidget }      from './widgets/SearchWidget.js';
@@ -836,15 +837,18 @@ async function loadTasksView(pushHistory = true) {
 // with a line map.  The map keys are 1-based line numbers in the synthetic doc;
 // values are {path, sourceLineNo, originalText} for task lines, null otherwise.
 function buildSyntheticDoc(tasks) {
-  const groups   = [];
-  const pathIdx  = new Map();
+  const groups  = [];
+  const pathIdx = new Map();
   for (const t of tasks) {
-    if (isDeferred(t.defer_until)) continue;   // hide until defer date passes
+    if (isDeferred(t.defer_until)) continue;
     if (!pathIdx.has(t.path)) {
       pathIdx.set(t.path, groups.length);
-      groups.push({ path: t.path, title: t.title, tasks: [] });
+      groups.push({ path: t.path, title: t.title, byHeading: new Map() });
     }
-    groups[pathIdx.get(t.path)].tasks.push(t);
+    const g = groups[pathIdx.get(t.path)];
+    const h = t.implicit_heading || '';
+    if (!g.byHeading.has(h)) g.byHeading.set(h, []);
+    g.byHeading.get(h).push(t);
   }
 
   const lines   = [];
@@ -852,20 +856,26 @@ function buildSyntheticDoc(tasks) {
   let   lineNo  = 1;
 
   for (const g of groups) {
-    const heading = g.title || basename(g.path).replace(/\.md$/, '');
-    lines.push(`## ${heading}`);
+    const pageLabel = g.title || basename(g.path).replace(/\.md$/, '');
+    lines.push(`## ${pageLabel}`);
     lineMap.set(lineNo++, null);
-
     lines.push('');
     lineMap.set(lineNo++, null);
 
-    for (const t of g.tasks) {
-      lines.push(`[ ] ${t.text}`);
-      lineMap.set(lineNo++, { path: t.path, sourceLineNo: t.line_number, originalText: t.text });
+    for (const [heading, bucket] of g.byHeading) {
+      if (heading) {
+        lines.push(`### ${heading}`);
+        lineMap.set(lineNo++, null);
+        lines.push('');
+        lineMap.set(lineNo++, null);
+      }
+      for (const t of bucket) {
+        lines.push(`[ ] ${t.text}`);
+        lineMap.set(lineNo++, { path: t.path, sourceLineNo: t.line_number, originalText: t.text });
+      }
+      lines.push('');
+      lineMap.set(lineNo++, null);
     }
-
-    lines.push('');
-    lineMap.set(lineNo++, null);
   }
 
   return { doc: lines.join('\n'), lineMap };
@@ -1173,6 +1183,7 @@ const pageWidget = new PageWidget({
 mountWidgets('left', [
   new SearchWidget({ onOpen: (path, title) => pageWidget.loadPath(path, title) }),
   pageWidget,
+  new AnnotationsWidget({ onOpen: openFilePath }),
   // new OutlineWidget(),  // available but not in default layout
   // new BrowserWidget(),  // available but not in default layout
 ]);

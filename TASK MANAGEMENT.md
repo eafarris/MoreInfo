@@ -1,4 +1,4 @@
- # Task Management
+# Task Management
 
 Tasks in MoreInfo are plain-text items that can appear anywhere in a page — scattered through journal entries, embedded in project notes, or grouped under headings. The goal is low friction: a bare checkbox is a valid task, and every additional attribute is optional.
 
@@ -8,7 +8,7 @@ Tasks in MoreInfo are plain-text items that can appear anywhere in a page — sc
 
 A task is any line that begins with a checkbox marker, optionally preceded by a list marker:
 
-```
+```text
 [ ] Buy milk
 [] Buy milk
 - [ ] Buy milk
@@ -26,7 +26,7 @@ Attributes appear after the task text, in any order. There is no required field 
 
 A parenthesised integer ranks the task.
 
-```
+```text
 [ ] Send proposal  (1)
 [ ] Archive old files  (3)
 ```
@@ -37,7 +37,7 @@ Lower numbers are higher priority. Unprioritised tasks are treated as lowest pri
 
 A bare `@word` tag (no parentheses) marks the GTD-style context in which the task should be done.
 
-```
+```text
 [ ] Call the client  @phone
 [ ] Pick up dry cleaning  @errands
 [ ] Draft the intro section  @computer
@@ -49,7 +49,7 @@ A context tag is a plain label — it does not reference any page. Tasks can be 
 
 Associating a task with a MoreInfo page (a project, person, meeting, etc.) is done with a standard wiki link on the task line. The backlink system takes care of the rest: the task appears automatically in the References widget of the linked page.
 
-```
+```text
 [ ] Send proposal draft  (1)  @email  [[Anderson Contract]]  @due(friday)
 [ ] Follow up with client  @phone  [[Jane Smith]]  [[Anderson Contract]]
 [ ] Book conference room  [[Q1 Planning]]  @due(monday)
@@ -57,7 +57,7 @@ Associating a task with a MoreInfo page (a project, person, meeting, etc.) is do
 
 **CamelCase shorthand**: a CamelCase word that resolves to an existing page title is treated as a wiki link. This keeps task lines compact.
 
-```
+```text
 [ ] Send proposal draft  (1)  @email  AndersonContract  @due(friday)
 [ ] Follow up  @phone  JaneSmith  AndersonContract
 ```
@@ -69,7 +69,7 @@ Associating a task with a MoreInfo page (a project, person, meeting, etc.) is do
 Reserved tags carry a value in parentheses.
 
 | Tag | Meaning |
-|---|---|
+| --- | --- |
 | `@due(date)` | Due date; parsed by chrono-node, so natural language works: `@due(friday)`, `@due(2026-04-01)`, `@due(next month)` |
 | `@priority(n)` | Alternate priority form; equivalent to `(n)` |
 | `@defer(date)` | Hide the task until this date |
@@ -82,7 +82,7 @@ The full list of reserved tag names (never treated as page category references):
 ## Task states
 
 | State | How to set |
-|---|---|
+| --- | --- |
 | Open | Default — unchecked box |
 | Done | Check the box, or add `@done` |
 | Cancelled | `@cancelled` |
@@ -129,12 +129,11 @@ Tasks from journal pages and wiki pages are both included. Template pages are ex
 
 ## Minimum valid task
 
-```
+```text
 [ ] Buy milk
 ```
 
 No attributes required. Every attribute is additive.
-
 
 ---
 Other features

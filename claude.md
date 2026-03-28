@@ -32,7 +32,7 @@ Template
 : A special type of page that exists within the 'templates' folder of the datastore. Template pages can be used to quickly create other pages via "File->New from template" in the menu system. A page can be saved as a template via "File->Save as template" in the menu system. Templates retain all metadata and their values, with the exception of 'title,' which the user is prompted for on page creation. Content (non-metadata) within the template page is also retained when creating a page based on the template. Templates are helpful when creating 'categories' of pages; they define common content and metadata for future pages. The 'templates' folder is walked when updating the database only to enumerate the templates available; they are not indexed for search or links, as they don't represent any content themselves.
 
 Metadata
-: A series of key/value pairs that describe the document in a structured way. Some metadata variables are based on filesystem data by default and can be read-only. Most variables can be set within a YAML-like front-matter structure. The variable name and its value are delimited by zero or more spaces, followed by a colon ("`:`"), followed by zero or more spaces (regex `\s*:\s*`). The structure itself is delimited by triple-dashes ("`---`") alone on a line, followed by the variable assignments, followed by another line of only triple dashes. In typical YAML front-matter, this section must be at the beginning of the file; for MI pages this structure could be anywhere, including multiple places. A final structure for defining metadata comes at the end of a file, using the "email .sig" delimiter of double dashes followed by a space ("`-- `") alone on a line, then continuing to the end of the file. Any variable that is defined more than once will use its last definition, from top to bottom through the file. Variable names are _case-insensitive_, and stored in the db cache as such. Values are _case sensitive_, though reserved metadata variables can change this behavior (eg., "tags" are _case insensitive_).
+: A series of key/value pairs that describe the document in a structured way. Some metadata variables are based on filesystem data by default and can be read-only. Most variables can be set within a YAML-like front-matter structure. The variable name and its value are delimited by zero or more spaces, followed by a colon ("`:`"), followed by zero or more spaces (regex `\s*:\s*`). The structure itself is delimited by triple-dashes ("`---`") alone on a line, followed by the variable assignments, followed by another line of only triple dashes. In typical YAML front-matter, this section must be at the beginning of the file; for MI pages this structure could be anywhere, including multiple places. A final structure for defining metadata comes at the end of a file, using the "email .sig" delimiter of double dashes followed by a space alone on a line, then continuing to the end of the file. Any variable that is defined more than once will use its last definition, from top to bottom through the file. Variable names are _case-insensitive_, and stored in the db cache as such. Values are _case sensitive_, though reserved metadata variables can change this behavior (eg., "tags" are _case insensitive_).
 
 : Metadata variables are weakly typed, with four recognized types: string, date (or datetime), boolean, and array.
 
@@ -119,7 +119,7 @@ Alias
 : Same as "aliases," but holds only one string instead of an array.
 
 Favorite
-: A boolean value, when, if true, allows the page to show up in the FavoritesWidget. 
+: A boolean value, when, if true, allows the page to show up in the FavoritesWidget.
 
 ## Reserved task management parameters
 
@@ -150,7 +150,6 @@ Browser
 
 Search
 : A widget containing the results of a full-text search of the datastore. Has a top-bar UI for search terms which can be expanded to allow for operators and filters. The Search widget is resizable on both axes. Status: PARTIALLY IMPLEMENTED.
-
 
 ## Current Feature Implementation Status
 

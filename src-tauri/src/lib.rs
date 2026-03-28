@@ -392,7 +392,7 @@ fn open_db() -> Result<Connection, String> {
 
 /// Bump this whenever the schema or indexing logic changes in a way that
 /// requires existing cached data to be discarded and rebuilt.
-const SCHEMA_VERSION: i64 = 12;
+const SCHEMA_VERSION: i64 = 13;
 
 fn init_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch("
@@ -441,12 +441,13 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         );
         CREATE INDEX IF NOT EXISTS idx_task_path ON future_tasks(path);
         CREATE TABLE IF NOT EXISTS tasks (
-            id          INTEGER PRIMARY KEY AUTOINCREMENT,
-            path        TEXT    NOT NULL,
-            line_number INTEGER NOT NULL,
-            text        TEXT    NOT NULL DEFAULT '',
-            checked     INTEGER NOT NULL DEFAULT 0,
-            defer_until TEXT    NOT NULL DEFAULT ''
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            path             TEXT    NOT NULL,
+            line_number      INTEGER NOT NULL,
+            text             TEXT    NOT NULL DEFAULT '',
+            checked          INTEGER NOT NULL DEFAULT 0,
+            defer_until      TEXT    NOT NULL DEFAULT '',
+            implicit_heading TEXT    NOT NULL DEFAULT ''
         );
         CREATE INDEX IF NOT EXISTS idx_tasks_path    ON tasks(path);
         CREATE INDEX IF NOT EXISTS idx_tasks_checked ON tasks(checked);
@@ -474,7 +475,8 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         "ALTER TABLE wiki_links ADD COLUMN context     TEXT    NOT NULL DEFAULT ''",
         "ALTER TABLE files      ADD COLUMN body        TEXT    NOT NULL DEFAULT ''",
         "ALTER TABLE files      ADD COLUMN favorite    INTEGER NOT NULL DEFAULT 0",
-        "ALTER TABLE tasks      ADD COLUMN defer_until TEXT    NOT NULL DEFAULT ''",
+        "ALTER TABLE tasks      ADD COLUMN defer_until      TEXT    NOT NULL DEFAULT ''",
+        "ALTER TABLE tasks      ADD COLUMN implicit_heading TEXT    NOT NULL DEFAULT ''",
     ] {
         let _ = conn.execute_batch(sql);
     }
@@ -646,59 +648,62 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
         }
     }
 
-    // Index tasks: lines with [ ], [], [X], [x] checkbox patterns.
+    // Index tasks (with implicit heading), task contexts, and annotations in one pass.
     conn.execute("DELETE FROM tasks WHERE path = ?1", [path_str])
         .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM task_contexts WHERE path = ?1", [path_str])
+        .map_err(|e| e.to_string())?;
+    conn.execute("DELETE FROM annotations WHERE path = ?1", [path_str])
+        .map_err(|e| e.to_string())?;
+    const ANNOTATION_KEYWORDS: &[&str] = &["TODO", "FIXME", "NOTE", "IDEA"];
+    let mut current_heading = String::new();
     for (i, line) in content.lines().enumerate() {
+        let line_num = i as i64 + 1;
+
+        // Track ATX headings for implicit task context.
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('#') {
+            let after_hashes = trimmed.trim_start_matches('#');
+            if after_hashes.is_empty() || after_hashes.starts_with(' ') {
+                current_heading = after_hashes.trim().to_string();
+            }
+        }
+
+        // Task lines: insert task record and its @context tags.
         if let Some((checked, text)) = parse_task_line(line) {
             let defer = extract_defer_value(&text);
             conn.execute(
-                "INSERT INTO tasks (path, line_number, text, checked, defer_until) VALUES (?1, ?2, ?3, ?4, ?5)",
-                rusqlite::params![path_str, i as i64 + 1, text, checked as i64, defer],
+                "INSERT INTO tasks (path, line_number, text, checked, defer_until, implicit_heading) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![path_str, line_num, text, checked as i64, defer, &current_heading],
             ).map_err(|e| e.to_string())?;
-        }
-    }
-
-    // Index @context tags on task lines.
-    conn.execute("DELETE FROM task_contexts WHERE path = ?1", [path_str])
-        .map_err(|e| e.to_string())?;
-    for (i, line) in content.lines().enumerate() {
-        if let Some((_, task_text)) = parse_task_line(line) {
-            for context in parse_task_contexts(&task_text) {
+            for context in parse_task_contexts(&text) {
                 conn.execute(
                     "INSERT OR IGNORE INTO task_contexts (path, line_number, context) VALUES (?1, ?2, ?3)",
-                    rusqlite::params![path_str, i as i64 + 1, context],
+                    rusqlite::params![path_str, line_num, context],
                 ).map_err(|e| e.to_string())?;
             }
         }
-    }
 
-    // Index annotation keywords: TODO, FIXME, NOTE, IDEA.
-    // Stores the keyword and the trimmed text that follows it on the same line.
-    const ANNOTATION_KEYWORDS: &[&str] = &["TODO", "FIXME", "NOTE", "IDEA"];
-    conn.execute("DELETE FROM annotations WHERE path = ?1", [path_str])
-        .map_err(|e| e.to_string())?;
-    for (i, line) in content.lines().enumerate() {
+        // Annotation keywords: TODO, FIXME, NOTE, IDEA (with optional trailing colon).
         for kw in ANNOTATION_KEYWORDS {
             let mut search_from = 0;
             while search_from < line.len() {
                 match line[search_from..].find(kw) {
                     None => break,
                     Some(rel) => {
-                        let abs = search_from + rel;
+                        let abs   = search_from + rel;
                         let after = abs + kw.len();
-                        // Require word boundaries: char before and after must not be word chars.
                         let before_ok = abs == 0 || !line[..abs].chars().next_back()
                             .map_or(false, |c| c.is_alphanumeric() || c == '_');
                         let after_ok  = after >= line.len() || !line[after..].chars().next()
                             .map_or(false, |c| c.is_alphanumeric() || c == '_');
                         if before_ok && after_ok {
-                            let rest  = line[after..].trim_start();
-                            let rest  = rest.strip_prefix(':').unwrap_or(rest).trim();
-                            let text  = rest.to_string();
+                            let rest = line[after..].trim_start();
+                            let rest = rest.strip_prefix(':').unwrap_or(rest).trim();
                             conn.execute(
                                 "INSERT INTO annotations (path, line_number, keyword, text) VALUES (?1, ?2, ?3, ?4)",
-                                rusqlite::params![path_str, i as i64 + 1, kw, text],
+                                rusqlite::params![path_str, line_num, kw, rest],
                             ).map_err(|e| e.to_string())?;
                         }
                         search_from = abs + 1;
@@ -1126,12 +1131,13 @@ fn list_favorites() -> Result<Vec<FavoriteEntry>, String> {
 
 #[derive(serde::Serialize)]
 struct TaskEntry {
-    path:        String,
-    title:       String,
-    line_number: i64,
-    text:        String,
-    checked:     bool,
-    defer_until: String,
+    path:             String,
+    title:            String,
+    line_number:      i64,
+    text:             String,
+    checked:          bool,
+    defer_until:      String,
+    implicit_heading: String,
 }
 
 /// Return tasks from the index.
@@ -1142,25 +1148,26 @@ fn list_tasks(checked: Option<bool>) -> Result<Vec<TaskEntry>, String> {
     let conn = open_db()?;
     init_schema(&conn)?;
     let sql = match checked {
-        Some(true)  => "SELECT t.path, f.title, t.line_number, t.text, t.checked, t.defer_until \
+        Some(true)  => "SELECT t.path, f.title, t.line_number, t.text, t.checked, t.defer_until, t.implicit_heading \
                          FROM tasks t JOIN files f ON f.path = t.path \
                          WHERE t.checked = 1 ORDER BY t.path, t.line_number",
-        Some(false) => "SELECT t.path, f.title, t.line_number, t.text, t.checked, t.defer_until \
+        Some(false) => "SELECT t.path, f.title, t.line_number, t.text, t.checked, t.defer_until, t.implicit_heading \
                          FROM tasks t JOIN files f ON f.path = t.path \
                          WHERE t.checked = 0 ORDER BY t.path, t.line_number",
-        None        => "SELECT t.path, f.title, t.line_number, t.text, t.checked, t.defer_until \
+        None        => "SELECT t.path, f.title, t.line_number, t.text, t.checked, t.defer_until, t.implicit_heading \
                          FROM tasks t JOIN files f ON f.path = t.path \
                          ORDER BY t.path, t.line_number",
     };
     let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
     let entries: Vec<TaskEntry> = stmt
         .query_map([], |row| Ok(TaskEntry {
-            path:        row.get(0)?,
-            title:       row.get(1)?,
-            line_number: row.get(2)?,
-            text:        row.get(3)?,
-            checked:     row.get::<_, i64>(4)? != 0,
-            defer_until: row.get(5)?,
+            path:             row.get(0)?,
+            title:            row.get(1)?,
+            line_number:      row.get(2)?,
+            text:             row.get(3)?,
+            checked:          row.get::<_, i64>(4)? != 0,
+            defer_until:      row.get(5)?,
+            implicit_heading: row.get(6)?,
         }))
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
@@ -1213,6 +1220,39 @@ fn write_task_line(
     index_file(&conn, &path)?;
 
     Ok(())
+}
+
+/// Return all annotations across the datastore, ordered by host file's last-modified
+/// date (most recently changed files first), then by line number within each file.
+#[derive(serde::Serialize)]
+struct AnnotationEntry {
+    path:    String,
+    title:   String,
+    keyword: String,
+    text:    String,
+}
+
+#[tauri::command]
+fn list_annotations() -> Result<Vec<AnnotationEntry>, String> {
+    let conn = open_db()?;
+    init_schema(&conn)?;
+    let mut stmt = conn.prepare(
+        "SELECT a.path, COALESCE(f.title, ''), a.keyword, a.text
+         FROM annotations a
+         JOIN files f ON f.path = a.path
+         ORDER BY f.modified DESC, a.path, a.line_number",
+    ).map_err(|e| e.to_string())?;
+    let entries: Vec<AnnotationEntry> = stmt
+        .query_map([], |row| Ok(AnnotationEntry {
+            path:    row.get(0)?,
+            title:   row.get(1)?,
+            keyword: row.get(2)?,
+            text:    row.get(3)?,
+        }))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(entries)
 }
 
 /// A task from another page that explicitly references the current page via [[link]].
@@ -2001,6 +2041,7 @@ pub fn run() {
             search_pages,
             fetch_page,
             list_favorites,
+            list_annotations,
             list_tasks,
             write_task_line,
             get_linked_tasks,

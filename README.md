@@ -33,7 +33,7 @@ A markdown-based personal knowledge base (PKB) for macOS, with Windows and Linux
 - **Page templates** — scaffold new pages from a template
 - **Outline widget** — heading-based document outline
 - **Categories** — single-value taxonomy of pages that classify the type of content represented by the page
-- **Annotations** - In-line markers (FIXME, IDEA, NOTE, TODO) that highlights and indexes thoughts and ideas that are not tasks 
+- **Annotations** - In-line markers (FIXME, IDEA, NOTE, TODO) that highlights and indexes thoughts and ideas that are not tasks
 - **Filesystem watcher** keeps the database in sync with changes made outside the app
 - **User preferences** stored in `preferences.json` inside the datastore (travels with your data)
 
@@ -68,7 +68,7 @@ Results appear flush-right in the editor and in the preview pane and are selecta
 The result of each expression is stored in a variable called `_last` and silently carried forward as the left operand of the next line **when that line begins with a binary operator** (`+`, `-`, `*`, `/`, `%`, `**`, `^`) or a unit-conversion keyword (`in`, `to`). A line that starts with a number or function is evaluated independently.
 
 | Line | Interpretation |
-|---|---|
+| --- | --- |
 | `450 * 12` | standalone: `450 × 12 = 5,400` |
 | `+ 1200` | carry: `5,400 + 1,200 = 6,600` |
 | `* 1.08` | carry: `6,600 × 1.08 = 7,128` |
@@ -91,7 +91,7 @@ _last^2
 Expressions are evaluated by [math.js](https://mathjs.org), which supports a broad range of syntax:
 
 | Feature | Examples |
-|---|---|
+| --- | --- |
 | Basic operators | `+ - * / % ** ^` (`^` is an alias for `**`) |
 | Grouping | `(2 + 3) * 4` |
 | Constants | `pi`, `e` |
@@ -123,6 +123,7 @@ to meters
 Units carry through arithmetic — the result of `5 miles / 10 days` is `0.5 miles / day`, not a dimensionless number. Incompatible unit operations (e.g. `10 miles + 5 kg`) produce a **Unit error** rather than a silent wrong answer.
 
 ---
+
 ## Screenshots
 
 Main window, daily journal:
@@ -136,7 +137,7 @@ Page open with sidebar widgets:
 ## Tech stack
 
 | Layer | Technology |
-|---|---|
+| --- | --- |
 | Application framework | [Tauri v2](https://tauri.app) |
 | Backend | Rust (2021 edition) |
 | Frontend build | [Vite](https://vitejs.dev) |
@@ -185,7 +186,7 @@ This runs `vite build` followed by `tauri build` and produces a signed `.app` bu
 
 By default the datastore lives at `~/Documents/MoreInfo`. The location can be overridden in `~/Library/Application Support/MoreInfo/moreinfo.json`.
 
-```
+```text
 ~/Documents/MoreInfo/
   journal/          # YYYY-MM-DD.md daily journal files
   wiki/             # general-purpose pages

@@ -46,20 +46,25 @@ export class TasksWidget extends Widget {
   }
 
   _render(tasks) {
-    // Separate into active and deferred per page, preserving pages that have
-    // at least one task in either bucket.
+    // Separate into active and deferred per page → per heading bucket.
     const byPage = new Map();
     for (const task of tasks) {
       if (!byPage.has(task.path)) {
-        byPage.set(task.path, { title: task.title, active: [], deferred: [] });
+        byPage.set(task.path, { title: task.title, byHeading: new Map(), deferred: [] });
       }
       const entry = byPage.get(task.path);
-      (isDeferred(task.defer_until) ? entry.deferred : entry.active).push(task);
+      if (isDeferred(task.defer_until)) {
+        entry.deferred.push(task);
+      } else {
+        const h = task.implicit_heading || '';
+        if (!entry.byHeading.has(h)) entry.byHeading.set(h, []);
+        entry.byHeading.get(h).push(task);
+      }
     }
 
     // Pages with no tasks at all are excluded (checked=false filter handles this upstream).
     const pages = [...byPage.entries()].filter(
-      ([, { active, deferred }]) => active.length > 0 || deferred.length > 0
+      ([, { byHeading, deferred }]) => byHeading.size > 0 || deferred.length > 0
     );
 
     if (!pages.length) {
@@ -71,13 +76,24 @@ export class TasksWidget extends Widget {
       return;
     }
 
-    this._list.innerHTML = pages.map(([path, { title, active, deferred }]) => {
+    this._list.innerHTML = pages.map(([path, { title, byHeading, deferred }]) => {
       const label = esc(title || path.split('/').pop().replace(/\.md$/, ''));
-      const activeRows = active.map(t => `
-        <div class="flex items-start gap-2 px-3 py-1 hover:bg-olive-800/50 transition-colors">
-          <span class="cm-task-checkbox shrink-0 mt-px" style="pointer-events:none"></span>
-          <span class="text-xs text-olive-300 leading-snug">${esc(t.text || '…')}</span>
-        </div>`).join('');
+
+      // Build task rows, sub-grouped by implicit heading.
+      const activeRows = [...byHeading.entries()].map(([heading, taskList]) => {
+        const headingRow = heading ? `
+          <div class="flex items-center gap-1 px-3 pt-1.5 pb-0.5">
+            <i class="ph ph-hash text-[9px] text-olive-600 leading-none shrink-0"></i>
+            <span class="text-[9px] text-olive-600 truncate italic">${esc(heading)}</span>
+          </div>` : '';
+        const rows = taskList.map(t => `
+          <div class="flex items-start gap-2 px-3 py-1 hover:bg-olive-800/50 transition-colors">
+            <span class="cm-task-checkbox shrink-0 mt-px" style="pointer-events:none"></span>
+            <span class="text-xs text-olive-300 leading-snug">${esc(t.text || '…')}</span>
+          </div>`).join('');
+        return headingRow + rows;
+      }).join('');
+
       const deferredRow = deferred.length ? `
         <div class="flex items-start gap-2 px-3 py-1">
           <span class="cm-task-checkbox shrink-0 mt-px opacity-30" style="pointer-events:none"></span>

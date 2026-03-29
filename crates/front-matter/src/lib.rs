@@ -23,26 +23,24 @@ pub type FrontMatter = HashMap<String, Value>;
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-/// Parse all front-matter blocks in `content` and return a merged map.
+/// Parse front-matter from `content` and return a merged map.
 ///
-/// Blocks are found in two ways:
+/// Metadata is read from two locations only:
 ///
-/// 1. **Dashed blocks** – zero or more `^---$` … `^---$` pairs appearing
-///    *anywhere* in the document.  Pairs are matched top-to-bottom; an
-///    unmatched opening delimiter is ignored.
+/// 1. **Leading block** – an optional `^---$` … `^---$` pair that begins on
+///    the very first line of the document.  Any `---` pairs appearing later
+///    in the file are ignored; they render as thematic breaks (`<hr>`).
 ///
 /// 2. **Sig block** – the *last* line matching `^-- $` (note the trailing
 ///    space) acts like an email `.sig` delimiter.  Everything from the next
-///    line to EOF is treated as another metadata block with no closing
-///    delimiter.
+///    line to EOF is treated as a metadata block with no closing delimiter.
 ///
-/// Later definitions override earlier ones, so the sig block has the highest
-/// precedence.
+/// The sig block has the highest precedence: its keys override the front block.
 pub fn parse(content: &str) -> FrontMatter {
     let mut result = FrontMatter::new();
     let (dashed_region, sig_region) = split_sig(content);
 
-    for pairs in dashed_blocks(dashed_region) {
+    if let Some(pairs) = front_block(dashed_region) {
         for (k, v) in pairs {
             result.insert(k, v);
         }
@@ -57,34 +55,23 @@ pub fn parse(content: &str) -> FrontMatter {
     result
 }
 
-/// Return a copy of `content` with all front-matter blocks removed, ready for
-/// Markdown rendering.  The sig delimiter line and everything after it are
-/// also omitted.
+/// Return a copy of `content` with front-matter removed, ready for Markdown
+/// rendering.  Only the leading `---…---` block and the sig block are removed;
+/// any other `---` lines remain in place and render as thematic breaks.
 pub fn strip(content: &str) -> String {
     let (dashed_region, _) = split_sig(content);
     let lines: Vec<&str> = dashed_region.lines().collect();
-    let n = lines.len();
-    let mut out: Vec<&str> = Vec::with_capacity(n);
-    let mut i = 0;
 
-    while i < n {
-        if lines[i] == "---" {
-            let search = (i + 1).min(n);
-            if let Some(rel) = lines[search..n].iter().position(|l| *l == "---") {
-                // Skip the whole block including both delimiters.
-                i = search + rel + 1;
-            } else {
-                // Unmatched opener – keep as-is (will render as an <hr>).
-                out.push(lines[i]);
-                i += 1;
-            }
-        } else {
-            out.push(lines[i]);
-            i += 1;
+    // Remove a leading ---…--- block if present.
+    if lines.first() == Some(&"---") {
+        if let Some(rel) = lines[1..].iter().position(|l| *l == "---") {
+            // Skip the opening ---, the block content, and the closing ---.
+            return lines[rel + 2..].join("\n");
         }
+        // Unmatched opening --- at top: leave it in place (renders as <hr>).
     }
 
-    out.join("\n")
+    dashed_region.to_string()
 }
 
 // ── Internal helpers ──────────────────────────────────────────────────────────
@@ -92,7 +79,6 @@ pub fn strip(content: &str) -> String {
 /// Split `content` at the *last* `^-- $` line.
 /// Returns `(before, Some(after))` or `(content, None)` if no sig line exists.
 fn split_sig(content: &str) -> (&str, Option<&str>) {
-    // We need byte offsets, so walk the lines manually.
     let mut last_sig_byte: Option<usize> = None;
     let mut byte_offset: usize = 0;
 
@@ -116,28 +102,15 @@ fn split_sig(content: &str) -> (&str, Option<&str>) {
     }
 }
 
-/// Iterate over all matched `---`…`---` blocks in `region` and return each
-/// block's parsed key-value pairs.
-fn dashed_blocks(region: &str) -> Vec<Vec<(String, Value)>> {
+/// Parse the leading `---…---` block from `region`, if present.
+/// Returns `None` if the document does not begin with `---`.
+fn front_block(region: &str) -> Option<Vec<(String, Value)>> {
     let lines: Vec<&str> = region.lines().collect();
-    let n = lines.len();
-    let mut blocks = Vec::new();
-    let mut i = 0;
-
-    while i < n {
-        if lines[i] == "---" {
-            let search = (i + 1).min(n);
-            if let Some(rel) = lines[search..n].iter().position(|l| *l == "---") {
-                let block_lines = &lines[search..search + rel];
-                blocks.push(parse_pairs_slice(block_lines));
-                i = search + rel + 1;
-                continue;
-            }
-        }
-        i += 1;
+    if lines.first() != Some(&"---") {
+        return None;
     }
-
-    blocks
+    let close = lines[1..].iter().position(|l| *l == "---")?;
+    Some(parse_pairs_slice(&lines[1..1 + close]))
 }
 
 // ── Value parsing ─────────────────────────────────────────────────────────────
@@ -346,21 +319,25 @@ mod tests {
     }
 
     #[test]
-    fn multiple_blocks_later_overrides() {
-        let doc = "---\ntitle: First\n---\n\n---\ntitle: Second\n---";
-        let fm = parse(doc);
-        assert_eq!(fm["title"], text("Second"));
-    }
-
-    #[test]
-    fn block_anywhere_in_file() {
+    fn mid_document_block_is_ignored() {
+        // A ---…--- pair that does not start on line 1 is NOT parsed as metadata.
         let doc = "# Heading\n\nSome prose.\n\n---\nauthor: Jane\n---\n\nMore prose.";
         let fm = parse(doc);
-        assert_eq!(fm["author"], text("Jane"));
+        assert!(!fm.contains_key("author"));
     }
 
     #[test]
-    fn sig_delimiter_overrides_dashed() {
+    fn mid_document_block_stays_in_strip() {
+        // Mid-document --- pairs are left intact so they render as <hr>.
+        let doc = "# Heading\n\nProse.\n\n---\nauthor: Jane\n---\n\nMore.";
+        let stripped = strip(doc);
+        assert!(stripped.contains("---"));
+        assert!(stripped.contains("Prose."));
+        assert!(stripped.contains("More."));
+    }
+
+    #[test]
+    fn sig_delimiter_overrides_front_block() {
         let doc = "---\ntitle: Draft\n---\n\nBody.\n\n-- \ntitle: Final";
         let fm = parse(doc);
         assert_eq!(fm["title"], text("Final"));
@@ -374,7 +351,7 @@ mod tests {
     }
 
     #[test]
-    fn strip_removes_blocks_and_sig() {
+    fn strip_removes_front_block_and_sig() {
         let doc = "---\ntitle: Hi\n---\n\nBody.\n\n-- \nauthor: Me";
         let stripped = strip(doc);
         assert!(!stripped.contains("title:"));
@@ -409,11 +386,21 @@ mod tests {
     }
 
     #[test]
-    fn unmatched_opener_is_kept() {
+    fn unmatched_opener_at_top_is_kept() {
+        // An unmatched --- at the very top is not parsed as metadata and stays
+        // in the stripped output (renders as <hr>).
         let doc = "---\ntitle: Hi\n\nBody.";
+        let fm = parse(doc);
+        assert!(!fm.contains_key("title"));
         let stripped = strip(doc);
-        // Unmatched --- stays (renders as <hr> in markdown).
         assert!(stripped.contains("---"));
         assert!(stripped.contains("Body."));
+    }
+
+    #[test]
+    fn no_metadata_when_not_at_top() {
+        let doc = "Body text.\n\n---\ntitle: Should be ignored\n---";
+        let fm = parse(doc);
+        assert!(fm.is_empty());
     }
 }

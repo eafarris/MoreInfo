@@ -660,13 +660,15 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
     for (i, line) in content.lines().enumerate() {
         let line_num = i as i64 + 1;
 
-        // Track ATX headings for implicit task context.
+        // Track ATX headings and thematic breaks for implicit task context.
         let trimmed = line.trim_start();
         if trimmed.starts_with('#') {
             let after_hashes = trimmed.trim_start_matches('#');
             if after_hashes.is_empty() || after_hashes.starts_with(' ') {
                 current_heading = after_hashes.trim().to_string();
             }
+        } else if trimmed == "---" || trimmed == "***" || trimmed == "___" {
+            current_heading.clear();
         }
 
         // Task lines: insert task record and its @context tags.

@@ -15,6 +15,7 @@ import {
   history,
   defaultKeymap,
   historyKeymap,
+  insertNewline,
 } from '@codemirror/commands';
 import {
   syntaxHighlighting,
@@ -918,6 +919,21 @@ function wikiLinkSource(context) {
 // ── Editor factory ─────────────────────────────────────────────────────────
 
 export function createEditor({ parent, onDocChange, onCursorChange, onPageClick, onCmdClick }) {
+  const enterKeymap = {
+    key: 'Enter',
+    run(view) {
+      // Inside a @calc block, suppress list-continuation so that lines
+      // starting with operators (- + *) don't spawn a new list item.
+      const lineNo = view.state.doc.lineAt(view.state.selection.main.head).number;
+      for (let n = lineNo - 1; n >= 1; n--) {
+        const text = view.state.doc.line(n).text.trim();
+        if (text === '@calc') return insertNewline(view);
+        if (text === '') break;
+      }
+      return false;
+    },
+  };
+
   const tabKeymap = {
     key: 'Tab',
     run(view) {
@@ -1003,6 +1019,7 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
       wikiLinkPunctHandler,
       checkboxClickHandler,
       keymap.of([
+        enterKeymap,
         tabKeymap,
         shiftTabKeymap,
         spaceKeymap,

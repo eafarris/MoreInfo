@@ -26,6 +26,7 @@
     "@mozilla/readability": "^0.6.0",
     "@tauri-apps/plugin-window-state": "^2",
     "chrono-node": "^2.9.0",
+    "luxon": "^3.7.2",
     "mathjs": "^15.1.1"
   }
 }

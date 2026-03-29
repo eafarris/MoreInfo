@@ -26,7 +26,7 @@ A markdown-based personal knowledge base (PKB) for macOS, with Windows and Linux
 - **Favorites** — star any page; favorited pages appear in the Favorites widget
 - **@calc blocks** — tape-calculator arithmetic and unit math / conversions inside any page or the Scratch Pad (see below)
 - **Full-text search** with SQLite FTS5
-- **Metadata** — YAML-style front matter anywhere in the file, plus end-of-file sig-block metadata; supports string, date, boolean, and array types
+- **Metadata** — YAML-style front matter at the top of the file (`---`…`---` starting on line 1), plus end-of-file sig-block metadata; supports string, date, boolean, and array types. Any `---` line that doesn't open the file is a thematic break.
 - **Tags** via metadata
 - **Sidebar layout** — resizable left, right, top, and bottom sidebars can hold widgets in a VS Code-style arrangement
 - **Widgets**: Calendar, Metadata, References, Counter, Page, Browser, Search, Favorites, Scratchpad
@@ -39,11 +39,11 @@ A markdown-based personal knowledge base (PKB) for macOS, with Windows and Linux
 
 ### Partially implemented
 
-- **Task management** — `[ ]` checkboxes render as clickable UI; checking stamps `@done(timestamp)` automatically. GTD-style `@context` tags on task lines are highlighted and indexed. Due dates, priorities, repeating tasks, and the Tasks widget are still planned.
+- **Task management** — `[ ]` checkboxes render as clickable UI; checking stamps `@done(timestamp)` automatically. GTD-style `@context` tags are highlighted and indexed. Tasks inherit implicit context from their nearest preceding heading; a thematic break resets that context. A Tasks widget showing all open tasks grouped by page and heading is partially implemented. Due dates, priorities, and filter UI are still planned.
 
 ### Planned / in progress
 
-- **Tasks widget** — filtered view of all open tasks across the datastore
+- **Tasks widget** — filter UI (by context, page, due date, priority) for the partially-implemented Tasks widget
 - **Static site export** — publish some or all notes as a website
 - **Focus mode** — distraction-free single-document view
 - **iOS / iPadOS binaries** (Tauri roadmap dependent)
@@ -122,6 +122,31 @@ to meters
 
 Units carry through arithmetic — the result of `5 miles / 10 days` is `0.5 miles / day`, not a dimensionless number. Incompatible unit operations (e.g. `10 miles + 5 kg`) produce a **Unit error** rather than a silent wrong answer.
 
+### Date math
+
+Calc blocks understand dates and date arithmetic. Natural-language date expressions (parsed by chrono-node) and Luxon-powered arithmetic are both supported.
+
+```text
+@calc
+today
++ 3 days
++ 2 weeks
+next friday - today
+2026-06-01 - 2 weeks
+```
+
+| Expression | Result |
+| --- | --- |
+| `today` | today's date |
+| `next friday` | the upcoming Friday |
+| `2026-04-01` | a specific date |
+| `today + 3 days` | 3 days from today |
+| `2026-06-01 - 2 weeks` | 2 weeks before June 1 |
+| `2026-06-01 - today` | duration between two dates |
+| `+ 1 month` | carry-forward: 1 month after the previous date result |
+
+Operators must be surrounded by spaces (`today + 3 days`, not `today+3 days`) so that hyphens in ISO dates are never misread as subtraction. Date results carry forward just like numbers — a subsequent line starting with `+` or `-` applies to the previous date. Switching to a numeric expression clears the date context.
+
 ---
 
 ## Screenshots
@@ -148,6 +173,7 @@ Page open with sidebar widgets:
 | Metadata parsing (Rust) | Custom `front-matter` crate (local) |
 | Database | SQLite via [rusqlite](https://github.com/rusqlite/rusqlite) |
 | Date parsing (JS) | [chrono-node](https://github.com/wanasit/chrono) |
+| Date arithmetic (JS) | [Luxon](https://moment.github.io/luxon/) |
 | Calc expression engine | [math.js](https://mathjs.org) |
 
 ---

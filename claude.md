@@ -82,9 +82,9 @@ Annotation
 
 - Supports daily journals. These are markdown files with the filename pattern of `YYYY-MM-DD.md`. Each day may have up to one daily journal page. Like wiki pages, these files are not created until they are opened. Files for dates in the future are supported. "Journal Notes" is the default view of the app, which opens the current day's daily journal. Status: FULLY IMPLEMENTED.
 
-- Supports Jekyll-style front matter. Pages can have metadata embedded in them using lines between triple-dashes ("---"). In addition, late-matter metadata can be added to the end of the file using lines defined by the start of the metadata with the "email .signature" delimiter, double-dash plus space ("-- "), and continuing until the end of the file. Front matter are used as variables, both some built-in variables with significance as well as on-the-fly database columns using user-defined metadata items. Reserved variables are listed below. Metadata can have four types: string, date, boolean, and array. Metadata variable names are _case-insensitive_ — the parser normalises all keys to lowercase before storage, so `Title:`, `title:`, and `TITLE:` are identical. **"Slick by default" rule**: MI reads triple-dash front matter (for compatibility with Obsidian, Jekyll, etc.) but never _emits_ it. All app-generated metadata (new page titles, favorite flags, etc.) is written to the sig block (the `--` delimiter line) at the end of the file. Existing metadata is edited in-place wherever it lives. Status: FULLY IMPLEMENTED.
+- Supports Jekyll-style front matter. Pages can have metadata in two locations: a **front block** (`---`…`---`) that must begin on the very first line of the file, and a **sig block** introduced by the email `.sig` delimiter (two dashes followed by a single space, alone on a line) that runs to the end of the file. Any `---` line that does not open the file is treated as a Markdown thematic break (`<hr>`), not metadata — this makes `---` safe to use as a section separator. When the same key appears in both blocks, the sig block wins. Front matter is used as variables: some built-in (title, tags, aliases, etc.) and the rest become on-the-fly database columns. Metadata can have four types: string, date, boolean, and array. Metadata variable names are _case-insensitive_ — the parser normalises all keys to lowercase before storage, so `Title:`, `title:`, and `TITLE:` are identical. **"Slick by default" rule**: MI reads triple-dash front matter (for compatibility with Obsidian, Jekyll, etc.) but never _emits_ it. All app-generated metadata (new page titles, favorite flags, etc.) is written to the sig block at the end of the file. Existing metadata is edited in-place wherever it lives. Status: FULLY IMPLEMENTED.
 
-- Support for numerous types of task management. Any line can be turned into a task by beginning the line with a square-bracket pair, either with or without a space between (ie., "`[]`" or "`[ ]`"). GFM's default task list format of `- []` is also supported. Once a line has been marked as being a task, it is rendered with a clickable checkbox. Checking the box stamps `@done(YYYY-MM-DD HH:MM)` on the line automatically; unchecking removes it. Task lines support GTD-style `@context` tags (bare `@word` tokens), `[[wiki links]]` to associate tasks with pages, and CamelCase page references. Reserved `@` parameters (`@due`, `@priority`, `@defer`, `@repeat`, etc.) are planned. Task management gets its own spec document, "TASK MANAGEMENT.md". Status: PARTIALLY IMPLEMENTED.
+- Support for numerous types of task management. Any line can be turned into a task by beginning the line with a square-bracket pair, either with or without a space between (ie., "`[]`" or "`[ ]`"). GFM's default task list format of `- []` is also supported. Once a line has been marked as being a task, it is rendered with a clickable checkbox. Checking the box stamps `@done(YYYY-MM-DD HH:MM)` on the line automatically; unchecking removes it. Task lines support GTD-style `@context` tags (bare `@word` tokens), `[[wiki links]]` to associate tasks with pages, and CamelCase page references. Tasks inherit **implicit heading context** from the nearest preceding ATX heading in their source file; this context resets when a new heading or thematic break (`---`, `***`, `___`) is encountered. Reserved `@` parameters (`@due`, `@priority`, `@defer`, `@repeat`, etc.) are planned. Task management gets its own spec document, "TASK MANAGEMENT.md". Status: PARTIALLY IMPLEMENTED.
 
 - Support for use as a Static Site Generator (SSG) for exporting some or all notes and journals as a complete web site. SSG gets its own spec document, "SSG.md". Status: PLANNING.
 
@@ -96,7 +96,7 @@ Annotation
 
 - Focus mode. MI can be configured with a single document in a single viewport with no surrounding sidebars and a minimum of window chrome, for maximum focus on only the active document. Status: PLANNING.
 
-- Calc blocks. Typing '@calc' by itself on a line puts the editor into calculator mode, where each line is considered a mathematical expression. The result of each expression is stored in `_last` and implicitly carried forward as the left operand of the next line when that line begins with a binary operator (`+`, `-`, `*`, `/`, `%`, `**`, `^`) or a unit-conversion keyword (`in`, `to`). `_last` is always in scope and can be used explicitly (e.g., `sqrt(_last)`). Expressions are evaluated by math.js, which supports unit-aware arithmetic and conversions (`2 miles in km`, `5 miles / 10 days`). `[[wiki links]]` and CamelCase references on a calc line are stripped before evaluation. Results are displayed flush-right and are selectable for clipboard copy. Calc blocks are supported in all pages, including the Scratch Pad widget. Status: FULLY IMPLEMENTED.
+- Calc blocks. Typing '@calc' by itself on a line puts the editor into calculator mode, where each line is considered a mathematical expression. The result of each expression is stored in `_last` and implicitly carried forward as the left operand of the next line when that line begins with a binary operator (`+`, `-`, `*`, `/`, `%`, `**`, `^`) or a unit-conversion keyword (`in`, `to`). `_last` is always in scope and can be used explicitly (e.g., `sqrt(_last)`). Expressions are evaluated by math.js, which supports unit-aware arithmetic and conversions (`2 miles in km`, `5 miles / 10 days`). Date math is also supported: natural-language dates (`today`, `next friday`, `2026-04-01`) are parsed by chrono-node; date arithmetic (`today + 3 days`, `2026-06-01 - 2 weeks`) and date differences (`2026-06-01 - today` → duration) are handled by Luxon. A date result carries forward just like a number — a subsequent `+ 1 month` adds to the previous date. `[[wiki links]]` and CamelCase references on a calc line are stripped before evaluation. Results are displayed flush-right and are selectable for clipboard copy. Calc blocks are supported in all pages, including the Scratch Pad widget. Status: FULLY IMPLEMENTED.
 
 ## Reserved metadata variables
 
@@ -149,7 +149,7 @@ Page
 : A widget displaying any page from the datastore, including the active document. Has a top-bar UI for searching for pages. By default, the Page Widget lives on the left sidebar. The Page widget is resizable on both axes. Status: PARTIALLY IMPLEMENTED.
 
 Tasks
-: A widget containing all uncompleted tasks found in daily journals. A small UI at the top of the widget allows filtering which tasks appear. The Task widget is resizable on both axes. See the task management spec document "TASK MANAGMENT.md" file for more information. Status: PLANNING.
+: A widget containing all uncompleted tasks across the datastore, grouped by source page and heading. Tasks are displayed with their implicit heading context and wiki links are clickable. A filter UI at the top is planned. The Task widget is resizable on both axes. See the task management spec document "TASK MANAGEMENT.md" for more information. Status: PARTIALLY IMPLEMENTED.
 
 Browser
 : A _simple_ display of any URI-reachable content. The UI would consist entirely of the title bar and forward/back pages. We will not be building a full browser UI. Clicked links will open in the same widget, while Cmd+Click will open in a new Browser widget, smartly positioned based on the location and position of the current widget. The Browser widget is resizable on both axes. Status: PARTIALLY IMPLEMENTED.
@@ -169,6 +169,7 @@ Search
 - [X] Resizable sidebars
 - [X] Full-text search
 - [X] @calc blocks (math.js, unit math, `_last`, `in`/`to` conversion, selectable results)
+- [X] @calc date math (chrono-node + Luxon: natural-language dates, date arithmetic, date differences, date carry-forward)
 - [ ] Operators, filters for full-text search
 - [X] SQLite database as cache for linked references
 - [X] SQLite database as cache for full-text search
@@ -187,7 +188,8 @@ Search
 - [X] Page templates
 - [X] Basic tasks (clickable checkboxes, `@done` auto-stamp)
 - [X] Task `@context` tags (GTD-style bare `@word`, highlighted + indexed)
+- [X] Task implicit heading context (nearest ATX heading; resets at thematic breaks)
 - [X] Annotations: TODO, NOTE, IDEA, and FIXME (highlighted, indexed; not tasks)
-- [ ] Tasks widget
+- [~] Tasks widget (grouped by page + heading, wiki links clickable; filter UI planned)
 - [ ] Expanded task params: `@due`, `@priority`, `@defer`, `@repeat`
 - [X] CamelCase wiki links (existing pages only, never creates)

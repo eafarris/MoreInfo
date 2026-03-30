@@ -45,6 +45,14 @@
 .cm-task-done-line .cm-link-text        { color: var(--color-amber-700); }
 .cm-task-done-line .cm-url              { color: var(--color-olive-700); text-decoration-color: var(--color-olive-800); }
 
+/* Overdue task lines: keep elements readable on red background */
+.cm-task-overdue .cm-wikilink-bracket { color: rgba(255,255,255,0.6) !important; }
+.cm-task-overdue .cm-wikilink-title   { color: #fff !important; text-decoration-color: rgba(255,255,255,0.4) !important; }
+.cm-task-overdue .cm-hashtag-punct    { color: rgba(255,255,255,0.6); }
+.cm-task-overdue .cm-hashtag          { color: #fff; }
+.cm-task-overdue .cm-link-text        { color: #fff; }
+.cm-task-overdue .cm-url              { color: rgba(255,255,255,0.6); text-decoration-color: rgba(255,255,255,0.3); }
+
 /* CodeMirror editor fills its container */
 .cm-editor {
   height: 100%;

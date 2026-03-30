@@ -8,7 +8,7 @@ MI is built using Rust and Tauri. Styling of the front-end is done with Tailwind
 
 Its datastore is a structured folder hierarchy consisting of plain text files in markdown format as its source of truth. While a 'moreinfo.sqlite' SQLite database exists, it is created and updated based on the contents of the markdown files. The database exists to speed up things like searching and linking, and other routines that would be easier to create and cache rather than build from the filesystem. A file watch mechanism exists to allow MI to automatically keep the database in sync with the filesystem, including a journal within the database keeping track of the last time the database was updated, which would trigger an update with newer files on launch or reindex.
 
-To wit, the SQLite database is _derived_ from the content of the markdown files in the datastore. The database is _not authoritative_, and only reflects the truth as it exists in the MD files on disk. No functionality or data is lost should the SQLite database be destroyed or corrupted. It can always be reconstructed by parsing the Markdown files on disk.
+To wit, the SQLite database is *derived* from the content of the markdown files in the datastore. The database is *not authoritative*, and only reflects the truth as it exists in the MD files on disk. No functionality or data is lost should the SQLite database be destroyed or corrupted. It can always be reconstructed by parsing the Markdown files on disk.
 
 The Markdown files in the datastore themselves are given a filename on first save, derived by various means. Once the file (a "page" in MI parlance) has a filename, that filename is immutable. The idea of the MI datastore is that filenames don't matter to the user at all.
 
@@ -38,27 +38,27 @@ Metadata
 
 : **Sig block**: a final metadata section at the end of a file, introduced by the "email .sig" delimiter — `--` followed by a single space, alone on a line — and continuing to the end of the file. The sig block is where MI writes all app-generated metadata (title, favorite flag, etc.).
 
-: When the same key appears in both blocks, the sig block wins (it is always last). Variable names are _case-insensitive_ and stored in the database as lowercase. Values are _case sensitive_, though some reserved variables override this (e.g., `tags` are _case insensitive_).
+: When the same key appears in both blocks, the sig block wins (it is always last). Variable names are *case-insensitive* and stored in the database as lowercase. Values are *case sensitive*, though some reserved variables override this (e.g., `tags` are *case insensitive*).
 
 : Metadata variables are weakly typed, with four recognized types: string, date (or datetime), boolean, and array.
 
 Metadata string
-: A variable is defined as a string based on the data after the delimiter (regex '\s*:\s*'). If strings are surrounded by single or double quotes, the quotes themselves are not considered part of the string (so `string` would match `'string'` or `"string"`). If the string can be successfully parsed by "chrono_node," a pulled-in JS library, it is considered a metadata _date_ rather than a string. If the string can be successfully parsed as an array delimited by commas, it is considered a metadata _array_ rather than a string, _unless_ the string is surrounded in quotes. If the string matches one of the metadata boolean values (defined below), it is considered a metadata _boolean_ rather than a string. String values are _case sensitive_.
+: A variable is defined as a string based on the data after the delimiter (regex '\s*:\\s*'). If strings are surrounded by single or double quotes, the quotes themselves are not considered part of the string (so `string` would match `'string'` or `"string"`). If the string can be successfully parsed by "chrono_node," a pulled-in JS library, it is considered a metadata _date_ rather than a string. If the string can be successfully parsed as an array delimited by commas, it is considered a metadata _array_ rather than a string, _unless_ the string is surrounded in quotes. If the string matches one of the metadata boolean values (defined below), it is considered a metadata _boolean_ rather than a string. String values are _case sensitive_.
 
 Metadata date
-: A variable is defined as a date based on the data after the delimiter (regex: '\s*:\s*'). If the data can be successfully parsed by the JS library "chromo-node," it is considered a Metadata date. This allows not only for date patterns (eg., "YYYY-MM-DD") but also human-parsable relative dates like "tomorrow," "last may," or "1st Tuesday each month."
+: A variable is defined as a date based on the data after the delimiter (regex: '\s*:\\s*'). If the data can be successfully parsed by the JS library "chromo-node," it is considered a Metadata date. This allows not only for date patterns (eg., "YYYY-MM-DD") but also human-parsable relative dates like "tomorrow," "last may," or "1st Tuesday each month."
 
 Metadata boolean
-: A variable is consider a boolean when its value is one and only one of the following pairs (_case insensitive_): True/False, T/F, 1/0, Yes/No, Y/N, On/Off. In each case, the former value results to a "TRUE" value and the latter to "FALSE."
+: A variable is consider a boolean when its value is one and only one of the following pairs (*case insensitive*): True/False, T/F, 1/0, Yes/No, Y/N, On/Off. In each case, the former value results to a "TRUE" value and the latter to "FALSE."
 
 Metadata array
-: A variable is defined as an array based on the data after the delimiter (regex: '\s*:\s*'). If the data can be parsed into an array delimited by commas, it is considered a metadata array. While spaces around the commas are considered part of the delimiter, spaces not around the commas are considered significant to the element of the array. For example, the metadata `tags: tag one, two, three` is exploded into the array named `tags` consisting of three elements: `['tag one', 'two', 'three']`. A user may write a metadata array using brackets and quotes (eg., ['one', 'two', 'three']) for clarity or as their own style if they wish.
+: A variable is defined as an array based on the data after the delimiter (regex: '\s*:\\s*'). If the data can be parsed into an array delimited by commas, it is considered a metadata array. While spaces around the commas are considered part of the delimiter, spaces not around the commas are considered significant to the element of the array. For example, the metadata `tags: tag one, two, three` is exploded into the array named `tags` consisting of three elements: `['tag one', 'two', 'three']`. A user may write a metadata array using brackets and quotes (eg., ['one', 'two', 'three']) for clarity or as their own style if they wish.
 
 Wiki link
-: Pages are linked across other pages through their titles or aliases. When a word or phrase is surrounded in double-square brackets ("`[[`…`]]`"), that is treated as a link to a page with that title. When clicking on a wiki link, the user is either taken to the page with that title, or a new active document is created with that title. Also supported is using "CamelCase" to create a link to a page titled "Camel Case," but _CamelCase cannot create new pages_. UI in the active document area allows for breadcrumb navigation back through previous links. Explicit wiki links to journal pages can also be created, using [[YYYY-MM-DD]] format. As with wiki pages, journal pages can be created if they do not previously exist.
+: Pages are linked across other pages through their titles or aliases. When a word or phrase is surrounded in double-square brackets ("`[[`…`]]`"), that is treated as a link to a page with that title. When clicking on a wiki link, the user is either taken to the page with that title, or a new active document is created with that title. Also supported is using "CamelCase" to create a link to a page titled "Camel Case," but *CamelCase cannot create new pages*. UI in the active document area allows for breadcrumb navigation back through previous links. Explicit wiki links to journal pages can also be created, using [[YYYY-MM-DD]] format. As with wiki pages, journal pages can be created if they do not previously exist.
 
 Backlink
-: Pages that have links _to_ them will show those links in the ReferencesWidget. There are two types of backlinks: "Linked References" include any explicit link (ie., bracketed wiki links) link to the page. "Unlinked References" include any time the title of the page exists in a full-text search of all wiki pages or journal pages (but not templates). Each reference found is enumerated in the appropriate section as bottom-matter on the page.
+: Pages that have links *to* them will show those links in the ReferencesWidget. There are two types of backlinks: "Linked References" include any explicit link (ie., bracketed wiki links) link to the page. "Unlinked References" include any time the title of the page exists in a full-text search of all wiki pages or journal pages (but not templates). Each reference found is enumerated in the appropriate section as bottom-matter on the page.
 
 Linked Reference
 : An explicit link to a page, by including the title of the page within double-square brackets. Linked References create a 'two-way' link between pages: A click on the reference to get to the page, and a click on the "Linked References" in the ReferencesWidget to go to the previous page.
@@ -82,7 +82,7 @@ Annotation
 
 - Supports daily journals. These are markdown files with the filename pattern of `YYYY-MM-DD.md`. Each day may have up to one daily journal page. Like wiki pages, these files are not created until they are opened. Files for dates in the future are supported. "Journal Notes" is the default view of the app, which opens the current day's daily journal. Status: FULLY IMPLEMENTED.
 
-- Supports Jekyll-style front matter. Pages can have metadata in two locations: a **front block** (`---`…`---`) that must begin on the very first line of the file, and a **sig block** introduced by the email `.sig` delimiter (two dashes followed by a single space, alone on a line) that runs to the end of the file. Any `---` line that does not open the file is treated as a Markdown thematic break (`<hr>`), not metadata — this makes `---` safe to use as a section separator. When the same key appears in both blocks, the sig block wins. Front matter is used as variables: some built-in (title, tags, aliases, etc.) and the rest become on-the-fly database columns. Metadata can have four types: string, date, boolean, and array. Metadata variable names are _case-insensitive_ — the parser normalises all keys to lowercase before storage, so `Title:`, `title:`, and `TITLE:` are identical. **"Slick by default" rule**: MI reads triple-dash front matter (for compatibility with Obsidian, Jekyll, etc.) but never _emits_ it. All app-generated metadata (new page titles, favorite flags, etc.) is written to the sig block at the end of the file. Existing metadata is edited in-place wherever it lives. Status: FULLY IMPLEMENTED.
+- Supports Jekyll-style front matter. Pages can have metadata in two locations: a **front block** (`---`…`---`) that must begin on the very first line of the file, and a **sig block** introduced by the email `.sig` delimiter (two dashes followed by a single space, alone on a line) that runs to the end of the file. Any `---` line that does not open the file is treated as a Markdown thematic break (`<hr>`), not metadata — this makes `---` safe to use as a section separator. When the same key appears in both blocks, the sig block wins. Front matter is used as variables: some built-in (title, tags, aliases, etc.) and the rest become on-the-fly database columns. Metadata can have four types: string, date, boolean, and array. Metadata variable names are *case-insensitive* — the parser normalises all keys to lowercase before storage, so `Title:`, `title:`, and `TITLE:` are identical. **"Slick by default" rule**: MI reads triple-dash front matter (for compatibility with Obsidian, Jekyll, etc.) but never *emits* it. All app-generated metadata (new page titles, favorite flags, etc.) is written to the sig block at the end of the file. Existing metadata is edited in-place wherever it lives. Status: FULLY IMPLEMENTED.
 
 - Support for numerous types of task management. Any line can be turned into a task by beginning the line with a square-bracket pair, either with or without a space between (ie., "`[]`" or "`[ ]`"). GFM's default task list format of `- []` is also supported. Once a line has been marked as being a task, it is rendered with a clickable checkbox. Checking the box stamps `@done(YYYY-MM-DD HH:MM)` on the line automatically; unchecking removes it. Task lines support GTD-style `@context` tags (bare `@word` tokens), `[[wiki links]]` to associate tasks with pages, and CamelCase page references. Tasks inherit **implicit heading context** from the nearest preceding ATX heading in their source file; this context resets when a new heading or thematic break (`---`, `***`, `___`) is encountered. Reserved `@` parameters (`@due`, `@priority`, `@defer`, `@repeat`, etc.) are planned. Task management gets its own spec document, "TASK MANAGEMENT.md". Status: PARTIALLY IMPLEMENTED.
 
@@ -101,7 +101,7 @@ Annotation
 ## Reserved metadata variables
 
 Title
-: Used as in the header of the active document viewport. Can be explicitly set within metadata. Defaults to "DD MMM YYYY" if the page is a journal page. Non-journal pages should use the `<title>` tag of the document, or, if not specified, the first `<h1>` of the document. If none of these are specified, the filename from the filesystem will be used as a last resort. Once a file is given a filename, that name in the filesystem does _not_ change based on any edits to the page that change the _title_. Title and Filename are separate concepts; meeting only that a page needs a filename that can be extracted from a title, and a file needs a title, that can be extracted from a filename. But this only happens _once_ to give the page an initial filename on the filesystem.
+: Used as in the header of the active document viewport. Can be explicitly set within metadata. Defaults to "DD MMM YYYY" if the page is a journal page. Non-journal pages should use the `<title>` tag of the document, or, if not specified, the first `<h1>` of the document. If none of these are specified, the filename from the filesystem will be used as a last resort. Once a file is given a filename, that name in the filesystem does *not* change based on any edits to the page that change the *title*. Title and Filename are separate concepts; meeting only that a page needs a filename that can be extracted from a title, and a file needs a title, that can be extracted from a filename. But this only happens *once* to give the page an initial filename on the filesystem.
 
 Category
 : A wiki page can have one optional category, which can be used to group like pages together. Categories describe the type of entity that a page represents, like a 'meeting', 'person,' 'project,' etc. Typically page templates are used to create a page within a category, as these pages should all share a similar structure and metadata. Categories have two important distinctions from tags: A page can have zero or one category, where a page can have many tags; and a category answers the question "what kind of page is this?" whereas tags answers "what topics is this page about?" Unlike other metadata, a page created based on a template will retain the category metadata value from a template.
@@ -113,13 +113,13 @@ Created-date
 : Datetime the page was created. Read only variable. Defaults to the creation date of the document from the filesystem.
 
 Unpublish-date
-: Datetime the page should be unpublished, when exporting. Can _only_ be set within metadata; there is no default.
+: Datetime the page should be unpublished, when exporting. Can *only* be set within metadata; there is no default.
 
 Tags
-: An array of taxonomical tags associated with this page. Can _only_ be set within metadata; there is no default. The reserved "tags" variable name has special behavior in that the array values are treated and stored as _case insensitive_, ie., there is no difference between the tag "One", "one", or "oNe".
+: An array of taxonomical tags associated with this page. Can *only* be set within metadata; there is no default. The reserved "tags" variable name has special behavior in that the array values are treated and stored as *case insensitive*, ie., there is no difference between the tag "One", "one", or "oNe".
 
 Aliases
-: An array of aliases for this page. Can _only_ be set within metadata; there is no default. Aliases are treated the same as page titles when linking; they can be defined as linked references, or found as unlinked references. Aliases are treated as surrounded by whitespace and other alphanumeric boundaries. That is, a page with an alias of "eric" will hit on the string "Eric said this" but not on the string "The future of America."  The reserved "aliases" variable name has special behavior in that the array values are treated and stored as _case insensitive_, ie., there is no difference between the aliases "Eric" and "eric".
+: An array of aliases for this page. Can *only* be set within metadata; there is no default. Aliases are treated the same as page titles when linking; they can be defined as linked references, or found as unlinked references. Aliases are treated as surrounded by whitespace and other alphanumeric boundaries. That is, a page with an alias of "eric" will hit on the string "Eric said this" but not on the string "The future of America."  The reserved "aliases" variable name has special behavior in that the array values are treated and stored as *case insensitive*, ie., there is no difference between the aliases "Eric" and "eric".
 
 Alias
 : Same as "aliases," but holds only one string instead of an array.
@@ -152,7 +152,7 @@ Tasks
 : A widget containing all uncompleted tasks across the datastore, grouped by source page and heading. Tasks are displayed with their implicit heading context and wiki links are clickable. A filter UI at the top is planned. The Task widget is resizable on both axes. See the task management spec document "TASK MANAGEMENT.md" for more information. Status: PARTIALLY IMPLEMENTED.
 
 Browser
-: A _simple_ display of any URI-reachable content. The UI would consist entirely of the title bar and forward/back pages. We will not be building a full browser UI. Clicked links will open in the same widget, while Cmd+Click will open in a new Browser widget, smartly positioned based on the location and position of the current widget. The Browser widget is resizable on both axes. Status: PARTIALLY IMPLEMENTED.
+: A *simple* display of any URI-reachable content. The UI would consist entirely of the title bar and forward/back pages. We will not be building a full browser UI. Clicked links will open in the same widget, while Cmd+Click will open in a new Browser widget, smartly positioned based on the location and position of the current widget. The Browser widget is resizable on both axes. Status: PARTIALLY IMPLEMENTED.
 
 Search
 : A widget containing the results of a full-text search of the datastore. Has a top-bar UI for search terms which can be expanded to allow for operators and filters. The Search widget is resizable on both axes. Status: PARTIALLY IMPLEMENTED.
@@ -165,31 +165,31 @@ Search
 - [x] Metadata widget
 - [x] Left, Right sidebars
 - [x] side-by-side realtime Markdown render preview
-- [X] Top, bottom sidebars
-- [X] Resizable sidebars
-- [X] Full-text search
-- [X] @calc blocks (math.js, unit math, `_last`, `in`/`to` conversion, selectable results)
-- [X] @calc date math (chrono-node + Luxon: natural-language dates, date arithmetic, date differences, date carry-forward)
+- [x] Top, bottom sidebars
+- [x] Resizable sidebars
+- [x] Full-text search
+- [x] @calc blocks (math.js, unit math, `_last`, `in`/`to` conversion, selectable results)
+- [x] @calc date math (chrono-node + Luxon: natural-language dates, date arithmetic, date differences, date carry-forward)
 - [ ] Operators, filters for full-text search
-- [X] SQLite database as cache for linked references
-- [X] SQLite database as cache for full-text search
-- [X] SQLite database as cache for unlinked references
-- [ ] SQLite database as cache for exposed tasks
-- [X] Filesystem watcher to keep DB up to date and autosave
-- [X] Basic widget API
-- [X] Counter widget
-- [X] Outline widget
-- [X] Page widget
-- [X] Browser widget
-- [X] Search widget
-- [X] Wiki links
-- [X] Page aliases
-- [X] Page References widget
-- [X] Page templates
-- [X] Basic tasks (clickable checkboxes, `@done` auto-stamp)
-- [X] Task `@context` tags (GTD-style bare `@word`, highlighted + indexed)
-- [X] Task implicit heading context (nearest ATX heading; resets at thematic breaks)
-- [X] Annotations: TODO, NOTE, IDEA, and FIXME (highlighted, indexed; not tasks)
+- [x] SQLite database as cache for linked references
+- [x] SQLite database as cache for full-text search
+- [x] SQLite database as cache for unlinked references
+- [x] SQLite database as cache for exposed tasks
+- [x] Filesystem watcher to keep DB up to date and autosave
+- [x] Basic widget API
+- [x] Counter widget
+- [x] Outline widget
+- [x] Page widget
+- [x] Browser widget
+- [x] Search widget
+- [x] Wiki links
+- [x] Page aliases
+- [x] Page References widget
+- [x] Page templates
+- [x] Basic tasks (clickable checkboxes, `@done` auto-stamp)
+- [ ] Task `@context` tags (GTD-style bare `@word`, highlighted + indexed)
+- [x] Task implicit heading context (nearest ATX heading; resets at thematic breaks)
+- [x] Annotations: TODO, NOTE, IDEA, and FIXME (highlighted, indexed; not tasks)
 - [~] Tasks widget (grouped by page + heading, wiki links clickable; filter UI planned)
 - [ ] Expanded task params: `@due`, `@priority`, `@defer`, `@repeat`
-- [X] CamelCase wiki links (existing pages only, never creates)
+- [x] CamelCase wiki links (existing pages only, never creates)

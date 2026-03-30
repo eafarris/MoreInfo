@@ -1,5 +1,6 @@
 use front_matter;
 
+use chrono::Datelike;
 use pulldown_cmark::{html, Options, Parser};
 use rusqlite::Connection;
 use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
@@ -392,7 +393,7 @@ fn open_db() -> Result<Connection, String> {
 
 /// Bump this whenever the schema or indexing logic changes in a way that
 /// requires existing cached data to be discarded and rebuilt.
-const SCHEMA_VERSION: i64 = 13;
+const SCHEMA_VERSION: i64 = 15;
 
 fn init_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch("
@@ -477,6 +478,9 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
         "ALTER TABLE files      ADD COLUMN favorite    INTEGER NOT NULL DEFAULT 0",
         "ALTER TABLE tasks      ADD COLUMN defer_until      TEXT    NOT NULL DEFAULT ''",
         "ALTER TABLE tasks      ADD COLUMN implicit_heading TEXT    NOT NULL DEFAULT ''",
+        "ALTER TABLE tasks      ADD COLUMN due_date         TEXT    NOT NULL DEFAULT ''",
+        "ALTER TABLE tasks      ADD COLUMN priority         INTEGER NOT NULL DEFAULT 10",
+        "ALTER TABLE tasks      ADD COLUMN first_seen       TEXT    NOT NULL DEFAULT ''",
     ] {
         let _ = conn.execute_batch(sql);
     }
@@ -649,6 +653,21 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
     }
 
     // Index tasks (with implicit heading), task contexts, and annotations in one pass.
+    // Preserve first_seen dates so due-date priority boosting has a stable creation anchor.
+    let mut saved_first_seen: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    {
+        let mut stmt = conn.prepare(
+            "SELECT text, first_seen FROM tasks WHERE path = ?1 AND first_seen != ''"
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([path_str], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        }).map_err(|e| e.to_string())?;
+        for r in rows { if let Ok((t, fs)) = r { saved_first_seen.insert(t, fs); } }
+    }
+    let today_iso = {
+        let now = chrono::Local::now();
+        format!("{}-{:02}-{:02}", now.year(), now.month(), now.day())
+    };
     conn.execute("DELETE FROM tasks WHERE path = ?1", [path_str])
         .map_err(|e| e.to_string())?;
     conn.execute("DELETE FROM task_contexts WHERE path = ?1", [path_str])
@@ -673,11 +692,16 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
 
         // Task lines: insert task record and its @context tags.
         if let Some((checked, text)) = parse_task_line(line) {
-            let defer = extract_defer_value(&text);
+            let defer    = extract_defer_value(&text);
+            let due      = extract_due_value(&text);
+            let priority = extract_priority_value(&text);
+            let first_seen = saved_first_seen.get(&text)
+                .cloned()
+                .unwrap_or_else(|| today_iso.clone());
             conn.execute(
-                "INSERT INTO tasks (path, line_number, text, checked, defer_until, implicit_heading) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                rusqlite::params![path_str, line_num, text, checked as i64, defer, &current_heading],
+                "INSERT INTO tasks (path, line_number, text, checked, defer_until, due_date, implicit_heading, priority, first_seen) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                rusqlite::params![path_str, line_num, text, checked as i64, defer, due, &current_heading, priority, first_seen],
             ).map_err(|e| e.to_string())?;
             for context in parse_task_contexts(&text) {
                 conn.execute(
@@ -748,6 +772,58 @@ fn extract_defer_value(task_text: &str) -> String {
         }
     }
     String::new()
+}
+
+/// Extract the raw value inside `@due(...)` from task text, or return an
+/// empty string if the tag is absent.
+fn extract_due_value(task_text: &str) -> String {
+    const PREFIX: &str = "@due(";
+    if let Some(start) = task_text.find(PREFIX) {
+        let rest = &task_text[start + PREFIX.len()..];
+        if let Some(end) = rest.find(')') {
+            return rest[..end].trim().to_string();
+        }
+    }
+    String::new()
+}
+
+/// Extract an explicit priority from task text.
+/// Recognises `@priority(n)` and a bare parenthesised integer `(n)` where
+/// n is 1–5.  `@priority(n)` takes precedence.  Returns 10 (implicit
+/// default) when no explicit priority is found.
+fn extract_priority_value(task_text: &str) -> i64 {
+    // Try @priority(n) first.
+    const PREFIX: &str = "@priority(";
+    if let Some(start) = task_text.find(PREFIX) {
+        let rest = &task_text[start + PREFIX.len()..];
+        if let Some(end) = rest.find(')') {
+            if let Ok(n) = rest[..end].trim().parse::<i64>() {
+                if (1..=5).contains(&n) { return n; }
+            }
+        }
+    }
+    // Fall back to bare (n) — scan for a `(digit)` token surrounded by
+    // whitespace / line boundaries.
+    let bytes = task_text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'(' {
+            // Must be preceded by whitespace or start-of-string.
+            if i > 0 && bytes[i - 1] != b' ' && bytes[i - 1] != b'\t' {
+                i += 1;
+                continue;
+            }
+            let start = i + 1;
+            if let Some(close) = task_text[start..].find(')') {
+                let inner = task_text[start..start + close].trim();
+                if let Ok(n) = inner.parse::<i64>() {
+                    if (1..=5).contains(&n) { return n; }
+                }
+            }
+        }
+        i += 1;
+    }
+    10 // implicit default
 }
 
 /// If `line` is a task line, return `Some((checked, task_text))`.
@@ -1139,7 +1215,10 @@ struct TaskEntry {
     text:             String,
     checked:          bool,
     defer_until:      String,
+    due_date:         String,
     implicit_heading: String,
+    priority:         i64,
+    first_seen:       String,
 }
 
 /// Return tasks from the index.
@@ -1150,15 +1229,15 @@ fn list_tasks(checked: Option<bool>) -> Result<Vec<TaskEntry>, String> {
     let conn = open_db()?;
     init_schema(&conn)?;
     let sql = match checked {
-        Some(true)  => "SELECT t.path, f.title, t.line_number, t.text, t.checked, t.defer_until, t.implicit_heading \
+        Some(true)  => "SELECT t.path, f.title, t.line_number, t.text, t.checked, t.defer_until, t.due_date, t.implicit_heading, t.priority, t.first_seen \
                          FROM tasks t JOIN files f ON f.path = t.path \
-                         WHERE t.checked = 1 ORDER BY t.path, t.line_number",
-        Some(false) => "SELECT t.path, f.title, t.line_number, t.text, t.checked, t.defer_until, t.implicit_heading \
+                         WHERE t.checked = 1 ORDER BY t.priority, t.path, t.line_number",
+        Some(false) => "SELECT t.path, f.title, t.line_number, t.text, t.checked, t.defer_until, t.due_date, t.implicit_heading, t.priority, t.first_seen \
                          FROM tasks t JOIN files f ON f.path = t.path \
-                         WHERE t.checked = 0 ORDER BY t.path, t.line_number",
-        None        => "SELECT t.path, f.title, t.line_number, t.text, t.checked, t.defer_until, t.implicit_heading \
+                         WHERE t.checked = 0 ORDER BY t.priority, t.path, t.line_number",
+        None        => "SELECT t.path, f.title, t.line_number, t.text, t.checked, t.defer_until, t.due_date, t.implicit_heading, t.priority, t.first_seen \
                          FROM tasks t JOIN files f ON f.path = t.path \
-                         ORDER BY t.path, t.line_number",
+                         ORDER BY t.priority, t.path, t.line_number",
     };
     let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
     let entries: Vec<TaskEntry> = stmt
@@ -1169,7 +1248,10 @@ fn list_tasks(checked: Option<bool>) -> Result<Vec<TaskEntry>, String> {
             text:             row.get(3)?,
             checked:          row.get::<_, i64>(4)? != 0,
             defer_until:      row.get(5)?,
-            implicit_heading: row.get(6)?,
+            due_date:         row.get(6)?,
+            implicit_heading: row.get(7)?,
+            priority:         row.get(8)?,
+            first_seen:       row.get(9)?,
         }))
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())

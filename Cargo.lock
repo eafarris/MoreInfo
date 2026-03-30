@@ -1986,6 +1986,7 @@ dependencies = [
 name = "more-info"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "front-matter",
  "pulldown-cmark",
  "reqwest 0.12.28",

@@ -13,9 +13,9 @@ import { AnnotationsWidget }   from './widgets/AnnotationsWidget.js';
 import { BrowserWidget }     from './widgets/BrowserWidget.js';
 import { CounterWidget }     from './widgets/CounterWidget.js';
 import { SearchWidget }      from './widgets/SearchWidget.js';
-import { createEditor, createTasksEditor, setEditorPages, placeholderCompartment } from './editor.js';
+import { createEditor, createTasksEditor, createTaskPriorityPlugin, setEditorPages, placeholderCompartment } from './editor.js';
 import { placeholder } from '@codemirror/view';
-import { formatJournalDate, isDeferred, todayIso } from './dateUtils.js';
+import { formatJournalDate, isDeferred, todayIso, computeEffectivePriority } from './dateUtils.js';
 
 // ── State ─────────────────────────────────────────
 
@@ -819,10 +819,12 @@ async function loadTasksView(pushHistory = true) {
 
   // Create the CM instance once and reuse it.
   if (!tasksEditorView) {
+    const priPlugin = createTaskPriorityPlugin(lineNo => taskLineMap.get(lineNo)?.effectivePriority);
     tasksEditorView = createTasksEditor({
-      parent:      tasksView,
-      onUpdate:    onTasksDocChanged,
-      onPageClick: openWikiPage,
+      parent:         tasksView,
+      onUpdate:       onTasksDocChanged,
+      onPageClick:    openWikiPage,
+      priorityPlugin: priPlugin,
     });
   }
 
@@ -869,9 +871,15 @@ function buildSyntheticDoc(tasks) {
         lines.push('');
         lineMap.set(lineNo++, null);
       }
+      bucket.sort((a, b) => {
+        const pa = computeEffectivePriority(a.priority ?? 10, a.due_date, a.first_seen);
+        const pb = computeEffectivePriority(b.priority ?? 10, b.due_date, b.first_seen);
+        return pa - pb;
+      });
       for (const t of bucket) {
+        const ep = computeEffectivePriority(t.priority ?? 10, t.due_date, t.first_seen);
         lines.push(`[ ] ${t.text}`);
-        lineMap.set(lineNo++, { path: t.path, sourceLineNo: t.line_number, originalText: t.text });
+        lineMap.set(lineNo++, { path: t.path, sourceLineNo: t.line_number, originalText: t.text, effectivePriority: ep });
       }
       lines.push('');
       lineMap.set(lineNo++, null);

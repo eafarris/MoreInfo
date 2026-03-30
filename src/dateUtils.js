@@ -100,3 +100,62 @@ export function isDeferred(deferUntil) {
   if (best.text.length < trimmed.length * 0.6) return false;
   return toIso(best.start.date()) > todayIso();
 }
+
+/**
+ * Return true if `dueDate` (the raw string from a `@due(...)` tag)
+ * represents a date that is strictly before today.
+ *
+ * @param {string} dueDate  Raw value extracted from @due(...)
+ * @returns {boolean}
+ */
+export function isOverdue(dueDate) {
+  if (!dueDate || !dueDate.trim()) return false;
+  const trimmed = dueDate.trim();
+  const results = chrono.parse(trimmed, new Date(), { forwardDate: false });
+  if (!results.length) return false;
+  const best = results[0];
+  if (best.text.length < trimmed.length * 0.6) return false;
+  return toIso(best.start.date()) < todayIso();
+}
+
+/**
+ * Compute the effective priority of a task, accounting for due-date urgency.
+ *
+ * Base priority is the explicit value (1–5) or the implicit default (10).
+ * When a @due(date) is present, the priority is halved each time the
+ * remaining time is cut in half relative to the total span from first_seen
+ * to due.  Concretely: at the halfway point the priority is halved, at the
+ * 3/4 point halved again, at 7/8 again, etc., with a floor of 1.
+ *
+ * @param {number} basePriority  Explicit priority (1–5) or 10 (implicit)
+ * @param {string} dueDate       Raw @due(...) value (natural language ok)
+ * @param {string} firstSeen     YYYY-MM-DD when the task was first indexed
+ * @returns {number}  Effective priority (lower = more urgent), minimum 1
+ */
+export function computeEffectivePriority(basePriority, dueDate, firstSeen) {
+  if (!dueDate || !dueDate.trim() || !firstSeen) return basePriority;
+
+  const dueResults = chrono.parse(dueDate.trim(), new Date(), { forwardDate: false });
+  if (!dueResults.length) return basePriority;
+  const dueBest = dueResults[0];
+  if (dueBest.text.length < dueDate.trim().length * 0.6) return basePriority;
+
+  const dueMs     = dueBest.start.date().getTime();
+  const createdMs = new Date(firstSeen + 'T00:00:00').getTime();
+  const nowMs     = Date.now();
+
+  const totalSpan     = dueMs - createdMs;
+  const remainingSpan = dueMs - nowMs;
+
+  // If due date is in the past or total span is non-positive, max urgency.
+  if (remainingSpan <= 0 || totalSpan <= 0) return 1;
+
+  // fraction of time remaining (1.0 = just created, 0.0 = due now)
+  const fraction = Math.min(remainingSpan / totalSpan, 1.0);
+
+  // Each halving of remaining time halves the priority.
+  // halvings = -log2(fraction): 0 at creation, 1 at halfway, 2 at 3/4, etc.
+  const halvings = -Math.log2(fraction);
+  const effective = basePriority / Math.pow(2, halvings);
+  return Math.max(1, Math.round(effective));
+}

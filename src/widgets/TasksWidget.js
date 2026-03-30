@@ -1,11 +1,17 @@
 import { Widget } from './Widget.js';
 import { invoke } from '../tauri.js';
-import { isDeferred } from '../dateUtils.js';
+import { isDeferred, isOverdue, computeEffectivePriority } from '../dateUtils.js';
 
 function esc(s) {
   return String(s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;')
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+const OVERDUE_RE = /@overdue(?![a-zA-Z0-9_-])/;
+
+function taskIsOverdue(task) {
+  return OVERDUE_RE.test(task.text) || isOverdue(task.due_date);
 }
 
 export class TasksWidget extends Widget {
@@ -53,6 +59,9 @@ export class TasksWidget extends Widget {
         byPage.set(task.path, { title: task.title, byHeading: new Map(), deferred: [] });
       }
       const entry = byPage.get(task.path);
+      task._effectivePriority = computeEffectivePriority(
+        task.priority ?? 10, task.due_date, task.first_seen
+      );
       if (isDeferred(task.defer_until)) {
         entry.deferred.push(task);
       } else {
@@ -86,11 +95,31 @@ export class TasksWidget extends Widget {
             <i class="ph ph-hash text-[9px] text-olive-600 leading-none shrink-0"></i>
             <span class="text-[9px] text-olive-600 truncate italic">${esc(heading)}</span>
           </div>` : '';
-        const rows = taskList.map(t => `
-          <div class="flex items-start gap-2 px-3 py-1 hover:bg-olive-800/50 transition-colors">
-            <span class="cm-task-checkbox shrink-0 mt-px" style="pointer-events:none"></span>
-            <span class="text-xs text-olive-300 leading-snug">${esc(t.text || '…')}</span>
-          </div>`).join('');
+        taskList.sort((a, b) => a._effectivePriority - b._effectivePriority);
+        const rows = taskList.map(t => {
+          const overdue = taskIsOverdue(t);
+          const rowCls  = overdue
+            ? 'flex items-start gap-2 px-3 py-1 rounded-sm bg-red-800/70 hover:bg-red-700/70 transition-colors'
+            : 'flex items-start gap-2 px-3 py-1 hover:bg-olive-800/50 transition-colors';
+          const textCls = overdue ? 'text-xs text-white leading-snug' : 'text-xs text-olive-300 leading-snug';
+          const cbCls   = overdue ? 'shrink-0 mt-px text-white' : 'cm-task-checkbox shrink-0 mt-px';
+          const ep = t._effectivePriority;
+          const badgeBase = 'shrink-0 size-5 rounded-full text-xs font-bold leading-none inline-flex items-center justify-center';
+          const priBadge = ep <= 5
+            ? `<span class="${badgeBase} ${
+                ep <= 1 ? 'bg-red-700 text-white' :
+                ep <= 2 ? 'bg-amber-700 text-white' :
+                ep <= 3 ? 'bg-amber-800 text-amber-200' :
+                          'bg-olive-700 text-olive-300'
+              }">${ep}</span>`
+            : `<span class="${badgeBase} bg-olive-800/50"></span>`;
+          return `
+          <div class="${rowCls}">
+            <span class="${cbCls}" style="pointer-events:none"></span>
+            ${priBadge}
+            <span class="${textCls}">${esc(t.text || '…')}</span>
+          </div>`;
+        }).join('');
         return headingRow + rows;
       }).join('');
 

@@ -28,6 +28,7 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { autocompletion, acceptCompletion } from '@codemirror/autocomplete';
 import { tags } from '@lezer/highlight';
 import { scanCalcBlocks } from './calcBlock.js';
+import { isOverdue } from './dateUtils.js';
 
 // ── Theme ──────────────────────────────────────────────────────────────────
 // Matches the olive/amber palette used throughout the app.
@@ -84,7 +85,7 @@ export const miTheme = EditorView.theme({
   // emphasis marks. We target every span except the result widget, which
   // catches both the explicit cm-meta/cm-list-marker classes set by our own
   // plugins and the generated Lezer highlight classes set by miHighlightStyle.
-  '.cm-calc-expr span:not(.cm-calc-result)': {
+  '.cm-calc-expr span:not(.cm-calc-result):not(.cm-calc-comment)': {
     color:      'inherit',
     fontWeight: 'inherit',
     fontStyle:  'inherit',
@@ -119,6 +120,18 @@ export const miTheme = EditorView.theme({
   // @context tags on task lines (bare @word, not a reserved param)
   '.cm-at-context': {
     color: 'oklch(87.9% 0.169 91.605)',   // amber-300
+  },
+  // Overdue tasks — white text on red background
+  '.cm-task-overdue': {
+    backgroundColor: 'oklch(50% 0.19 27)',  // muted red
+    color:           '#fff',
+    borderRadius:    '2px',
+  },
+  '.cm-task-overdue .cm-task-checkbox': {
+    color: '#fff',
+  },
+  '.cm-task-overdue .cm-at-context': {
+    color: 'oklch(90% 0.05 27)',  // light pinkish — visible on red
   },
   // Journal placeholder ("Tell me about your day…")
   '.cm-placeholder': {
@@ -557,6 +570,8 @@ const taskAtPlugin = ViewPlugin.fromClass(class {
 const TASK_CB_RE    = /^([ \t]*(?:[-*+]|\d+[.)]) +)?\[([xX ]?)\]/;
 const DONE_STAMP_RE = /@done\([^)]*\)/;
 const DONE_BARE_RE  = /@done(?!\()/;
+const DUE_VALUE_RE  = /@due\(([^)]*)\)/;
+const OVERDUE_RE    = /@overdue(?![a-zA-Z0-9_-])/;
 
 export function doneStamp() {
   const d   = new Date();
@@ -585,7 +600,15 @@ const taskCheckboxPlugin = ViewPlugin.fromClass(class {
                        || DONE_BARE_RE.test(line.text);
           const cls     = checked ? 'cm-task-checkbox cm-task-checked' : 'cm-task-checkbox';
           deco.push(Decoration.mark({ class: cls }).range(cbFrom, cbFrom + cbLen));
-          if (checked) deco.push(Decoration.line({ class: 'cm-task-done-line' }).range(line.from));
+          if (checked) {
+            deco.push(Decoration.line({ class: 'cm-task-done-line' }).range(line.from));
+          } else {
+            // Overdue: explicit @overdue context, or @due(date) in the past.
+            const dueMatch = DUE_VALUE_RE.exec(line.text);
+            if (OVERDUE_RE.test(line.text) || (dueMatch && isOverdue(dueMatch[1]))) {
+              deco.push(Decoration.line({ class: 'cm-task-overdue' }).range(line.from));
+            }
+          }
         }
         pos = line.to + 1;
       }
@@ -704,6 +727,8 @@ class CalcResultWidget extends WidgetType {
   ignoreEvent() { return true; }
 }
 
+const calcCommentMark = Decoration.mark({ class: 'cm-calc-comment' });
+
 export const calcBlockPlugin = ViewPlugin.fromClass(class {
   constructor(view) { this.decorations = this._build(view); }
   update(u) {
@@ -728,6 +753,12 @@ export const calcBlockPlugin = ViewPlugin.fromClass(class {
         } else if (results.has(line.number)) {
           const res = results.get(line.number);
           deco.push(Decoration.line({ class: 'cm-calc-expr' }).range(line.from));
+          // Mark inline comment portion (from ';' to end of line text).
+          const lineText = doc.sliceString(line.from, line.to);
+          const semiIdx  = lineText.indexOf(';');
+          if (semiIdx >= 0) {
+            deco.push(calcCommentMark.range(line.from + semiIdx, line.to));
+          }
           deco.push(
             Decoration.widget({
               widget: new CalcResultWidget(res.formatted, res.error),
@@ -1051,7 +1082,65 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
 // changed; the caller drives write-back.  onPageClick is called for wiki-link
 // clicks.
 
-export function createTasksEditor({ parent, onUpdate, onPageClick }) {
+// ── Task priority badge decoration (tasks pseudo-page only) ─────────────────
+// Renders a small circular badge before each task line showing effective
+// priority.  `getPriority(lineNo)` returns a number or undefined.
+
+class PriorityBadgeWidget extends WidgetType {
+  constructor(priority) { super(); this.priority = priority; }
+  eq(other) { return this.priority === other.priority; }
+  toDOM() {
+    const span = document.createElement('span');
+    const p = this.priority;
+    const hasP = p <= 5;
+    span.className = 'cm-priority-badge';
+    span.style.cssText =
+      'display:inline-flex;align-items:center;justify-content:center;' +
+      'width:1.25rem;height:1.25rem;border-radius:9999px;font-size:12px;' +
+      'font-weight:700;line-height:1;margin-right:6px;flex-shrink:0;vertical-align:middle;';
+    if (hasP) {
+      span.textContent = String(p);
+      span.style.color = p <= 2 ? '#fff' : '';
+      span.style.backgroundColor =
+        p <= 1 ? 'var(--cm-pri-1, #b91c1c)' :
+        p <= 2 ? 'var(--cm-pri-2, #b45309)' :
+        p <= 3 ? 'var(--cm-pri-3, #92400e)' :
+                 'var(--cm-pri-45, #3f3f46)';
+    } else {
+      span.style.backgroundColor = 'rgba(63,63,70,0.35)';
+    }
+    return span;
+  }
+}
+
+export function createTaskPriorityPlugin(getPriority) {
+  return ViewPlugin.fromClass(class {
+    constructor(view) { this.decorations = this._build(view); }
+    update(u) {
+      if (u.docChanged || u.viewportChanged) this.decorations = this._build(u.view);
+    }
+    _build(view) {
+      const deco = [];
+      for (const { from, to } of view.visibleRanges) {
+        let pos = from;
+        while (pos <= to) {
+          const line = view.state.doc.lineAt(pos);
+          if (TASK_CB_RE.test(line.text)) {
+            const p = getPriority(line.number);
+            if (p != null) {
+              deco.push(Decoration.widget({ widget: new PriorityBadgeWidget(p), side: -1 })
+                .range(line.from));
+            }
+          }
+          pos = line.to + 1;
+        }
+      }
+      return Decoration.set(deco, true);
+    }
+  }, { decorations: v => v.decorations });
+}
+
+export function createTasksEditor({ parent, onUpdate, onPageClick, priorityPlugin }) {
   // Uses module-level wikiTitleAt + camelTitleAt for consistent link resolution.
   const clickHandler = EditorView.domEventHandlers({
     click(event, view) {
@@ -1082,6 +1171,7 @@ export function createTasksEditor({ parent, onUpdate, onPageClick }) {
       taskAtPlugin,
       taskCheckboxPlugin,
       autoDoneStampListener,
+      ...(priorityPlugin ? [priorityPlugin] : []),
       EditorView.lineWrapping,
       checkboxClickHandler,
       keymap.of([

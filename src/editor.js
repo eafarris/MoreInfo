@@ -101,6 +101,10 @@ export const miTheme = EditorView.theme({
   '.cm-calc-result.cm-calc-result-error': {
     color: 'oklch(70% 0.19 27)',             // muted red
   },
+  '.cm-calc-comment': {
+    color:     'oklch(39.4% 0.023 107.4)',   // olive-700 — dimmed like header
+    fontStyle: 'italic',
+  },
   // Task checkboxes — plain-text [ ] / [X] made clickable
   '.cm-task-checkbox': {
     cursor:    'pointer',
@@ -708,7 +712,7 @@ export const calcBlockPlugin = ViewPlugin.fromClass(class {
   _build(view) {
     const doc   = view.state.doc;
     const text  = doc.toString();
-    const { results, headerLines } = scanCalcBlocks(text);
+    const { results, headerLines, commentLines } = scanCalcBlocks(text);
 
     const deco = [];
 
@@ -719,6 +723,8 @@ export const calcBlockPlugin = ViewPlugin.fromClass(class {
 
         if (headerLines.has(line.number)) {
           deco.push(Decoration.line({ class: 'cm-calc-header' }).range(line.from));
+        } else if (commentLines.has(line.number)) {
+          deco.push(Decoration.line({ class: 'cm-calc-expr cm-calc-comment' }).range(line.from));
         } else if (results.has(line.number)) {
           const res = results.get(line.number);
           deco.push(Decoration.line({ class: 'cm-calc-expr' }).range(line.from));

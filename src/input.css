@@ -107,6 +107,10 @@
 .mi-calc-block .mi-calc-error {
   color: oklch(70% 0.19 27);
 }
+.mi-calc-block .mi-calc-comment {
+  color: var(--color-olive-600, oklch(47% 0.03 107));
+  font-style: italic;
+}
 /* Wiki links rendered inside the markdown preview */
 .wiki-link {
   color: var(--color-amber-400);

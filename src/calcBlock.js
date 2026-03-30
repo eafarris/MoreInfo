@@ -4,7 +4,8 @@
  * A @calc block starts with a line containing exactly "@calc" and continues
  * until a blank line or end of document. Each non-blank line is treated as an
  * arithmetic expression. math.js handles evaluation, including unit math and
- * conversions.
+ * conversions. A semicolon (;) starts a comment that runs to end of line;
+ * comments can appear inline after an expression or on their own line.
  *
  * Implicit-prepend rule:
  *   If an expression starts with a binary operator (+  -  *  /  %  **  ^),
@@ -178,8 +179,13 @@ export function evalCalcExpr(expr, scope) {
   const trimmed = expr.trim();
   if (!trimmed) return { value: null };
 
+  // Strip comments: semicolon to end of line.
+  const semi = trimmed.indexOf(';');
+  const beforeComment = semi >= 0 ? trimmed.slice(0, semi).trim() : trimmed;
+  if (!beforeComment) return { value: null };   // comment-only line
+
   // Strip [[wiki links]] — page references are decorative, not operands.
-  let e = trimmed.replace(/\[\[[^\]]*\]\]/g, '').trim();
+  let e = beforeComment.replace(/\[\[[^\]]*\]\]/g, '').trim();
   if (!e) return { value: null };
 
   // Try date math before the implicit-prepend transformation so carry-forward
@@ -232,9 +238,10 @@ function formatResult(result, t) {
  * }}
  */
 export function scanCalcBlocks(text) {
-  const results     = new Map();
-  const headerLines = new Set();
-  const docLines    = text.split('\n');
+  const results      = new Map();
+  const headerLines  = new Set();
+  const commentLines = new Set();
+  const docLines     = text.split('\n');
 
   let inBlock = false;
   let scope   = null;
@@ -255,15 +262,20 @@ export function scanCalcBlocks(text) {
         scope   = null;
       } else {
         const res = evalCalcExpr(trimmed, scope);
-        results.set(lineNo, {
-          formatted: res.formatted ?? null,
-          error:     res.error     ?? null,
-        });
+        if (res.value === null && !res.formatted && !res.error) {
+          // Comment-only or empty-after-strip line — no result widget.
+          commentLines.add(lineNo);
+        } else {
+          results.set(lineNo, {
+            formatted: res.formatted ?? null,
+            error:     res.error     ?? null,
+          });
+        }
       }
     }
   }
 
-  return { results, headerLines };
+  return { results, headerLines, commentLines };
 }
 
 // ── Preview pre-processor ─────────────────────────────────────────────────
@@ -284,10 +296,14 @@ export function preprocessCalcBlocks(markdown) {
     if (!block || block.length === 0) { block = null; return; }
     out.push('<table class="mi-calc-block"><tbody>');
     for (const row of block) {
-      const res = row.error != null
-        ? `<td class="mi-calc-result mi-calc-error">${esc(row.error)}</td>`
-        : `<td class="mi-calc-result">= ${esc(row.formatted)}</td>`;
-      out.push(`<tr><td class="mi-calc-expr">${esc(row.text)}</td>${res}</tr>`);
+      if (row.comment) {
+        out.push(`<tr><td class="mi-calc-expr mi-calc-comment" colspan="2">${esc(row.text)}</td></tr>`);
+      } else {
+        const res = row.error != null
+          ? `<td class="mi-calc-result mi-calc-error">${esc(row.error)}</td>`
+          : `<td class="mi-calc-result">= ${esc(row.formatted)}</td>`;
+        out.push(`<tr><td class="mi-calc-expr">${esc(row.text)}</td>${res}</tr>`);
+      }
     }
     out.push('</tbody></table>');
     block = null;
@@ -308,7 +324,11 @@ export function preprocessCalcBlocks(markdown) {
         out.push(raw);
       } else {
         const res = evalCalcExpr(trimmed, scope);
-        block.push({ text: trimmed, formatted: res.formatted ?? null, error: res.error ?? null });
+        if (res.value === null && !res.formatted && !res.error) {
+          block.push({ text: trimmed, comment: true });
+        } else {
+          block.push({ text: trimmed, formatted: res.formatted ?? null, error: res.error ?? null });
+        }
       }
     }
   }

@@ -1053,6 +1053,19 @@ window.__TAURI__.event.listen('menu', async e => {
     case 'toggle-top':    togglePin('top');    break;
     case 'toggle-bottom': togglePin('bottom'); break;
 
+    case 'view-today': {
+      const d = new Date();
+      const dateStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      openJournalDate(dateStr);
+      break;
+    }
+    case 'view-tasks':  loadTasksView(); break;
+    case 'view-render': {
+      const next = editorArea.dataset.mode === 'render' ? 'edit' : 'render';
+      setMode(next);
+      break;
+    }
+
     case 'file-new': {
       const title = await promptModal('New page title:');
       if (title) await openWikiPage(title);

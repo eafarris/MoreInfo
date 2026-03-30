@@ -1951,6 +1951,10 @@ pub fn run() {
             let toggle_top    = MenuItem::with_id(handle, "toggle-top",    "Toggle Top Panel",      true, None::<&str>)?;
             let toggle_bottom = MenuItem::with_id(handle, "toggle-bottom", "Toggle Bottom Panel",   true, None::<&str>)?;
 
+            let view_today    = MenuItem::with_id(handle, "view-today",    "Today's Journal",       true, Some("CmdOrCtrl+Shift+T"))?;
+            let view_tasks    = MenuItem::with_id(handle, "view-tasks",    "Tasks",                 true, Some("CmdOrCtrl+Shift+K"))?;
+            let view_render   = MenuItem::with_id(handle, "view-render",   "Render Markdown",       true, Some("CmdOrCtrl+Shift+R"))?;
+
             let file_new              = MenuItem::with_id(handle, "file-new",              "New Page\u{2026}",          true, Some("CmdOrCtrl+N"))?;
             let file_new_template     = MenuItem::with_id(handle, "file-new-template",     "New Template\u{2026}",      true, None::<&str>)?;
             let file_from_template    = MenuItem::with_id(handle, "file-from-template",    "New from Template\u{2026}", true, None::<&str>)?;
@@ -1994,6 +1998,10 @@ pub fn run() {
                         .build()?,
                     // ── View ────────────────────────────────────────
                     &SubmenuBuilder::new(handle, "View")
+                        .item(&view_today)
+                        .item(&view_tasks)
+                        .item(&view_render)
+                        .separator()
                         .item(&toggle_left)
                         .item(&toggle_right)
                         .separator()

@@ -1,6 +1,6 @@
 import { Widget } from './Widget.js';
 import { invoke } from '../tauri.js';
-import { isDeferred, isOverdue, computeEffectivePriority } from '../dateUtils.js';
+import { isDeferred, isOverdue, isDueToday, computeEffectivePriority } from '../dateUtils.js';
 
 function esc(s) {
   return String(s)
@@ -11,7 +11,7 @@ function esc(s) {
 const OVERDUE_RE = /@overdue(?![a-zA-Z0-9_-])/;
 
 function taskIsOverdue(task) {
-  return OVERDUE_RE.test(task.text) || isOverdue(task.due_date);
+  return OVERDUE_RE.test(task.text) || isOverdue(task.due_date, task.first_seen);
 }
 
 export class TasksWidget extends Widget {
@@ -97,12 +97,19 @@ export class TasksWidget extends Widget {
           </div>` : '';
         taskList.sort((a, b) => a._effectivePriority - b._effectivePriority);
         const rows = taskList.map(t => {
-          const overdue = taskIsOverdue(t);
+          const overdue  = taskIsOverdue(t);
+          const dueToday = !overdue && isDueToday(t.due_date, t.first_seen);
           const rowCls  = overdue
             ? 'flex items-start gap-2 px-3 py-1 rounded-sm bg-red-800/70 hover:bg-red-700/70 transition-colors'
+            : dueToday
+            ? 'flex items-start gap-2 px-3 py-1 rounded-sm bg-amber-800/60 hover:bg-amber-700/60 transition-colors'
             : 'flex items-start gap-2 px-3 py-1 hover:bg-olive-800/50 transition-colors';
-          const textCls = overdue ? 'text-xs text-white leading-snug' : 'text-xs text-olive-300 leading-snug';
-          const cbCls   = overdue ? 'shrink-0 mt-px text-white' : 'cm-task-checkbox shrink-0 mt-px';
+          const textCls = overdue ? 'text-xs text-white leading-snug'
+            : dueToday ? 'text-xs text-amber-200 leading-snug'
+            : 'text-xs text-olive-300 leading-snug';
+          const cbCls   = overdue ? 'shrink-0 mt-px text-white'
+            : dueToday ? 'shrink-0 mt-px text-amber-300'
+            : 'cm-task-checkbox shrink-0 mt-px';
           const ep = t._effectivePriority;
           const badgeBase = 'shrink-0 size-5 rounded-full text-xs font-bold leading-none inline-flex items-center justify-center';
           const priBadge = ep <= 5

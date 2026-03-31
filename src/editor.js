@@ -28,7 +28,7 @@ import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { autocompletion, acceptCompletion } from '@codemirror/autocomplete';
 import { tags } from '@lezer/highlight';
 import { scanCalcBlocks } from './calcBlock.js';
-import { isOverdue } from './dateUtils.js';
+import { isOverdue, isDueToday } from './dateUtils.js';
 
 // ── Theme ──────────────────────────────────────────────────────────────────
 // Matches the olive/amber palette used throughout the app.
@@ -132,6 +132,18 @@ export const miTheme = EditorView.theme({
   },
   '.cm-task-overdue .cm-at-context': {
     color: 'oklch(90% 0.05 27)',  // light pinkish — visible on red
+  },
+  // Due-today tasks — amber background
+  '.cm-task-due-today': {
+    backgroundColor: 'oklch(45% 0.12 75)',  // muted amber
+    color:           'oklch(90% 0.12 85)',   // warm light text
+    borderRadius:    '2px',
+  },
+  '.cm-task-due-today .cm-task-checkbox': {
+    color: 'oklch(87.9% 0.169 91.605)',  // amber-300
+  },
+  '.cm-task-due-today .cm-at-context': {
+    color: 'oklch(90% 0.08 85)',  // light amber — visible on amber bg
   },
   // Journal placeholder ("Tell me about your day…")
   '.cm-placeholder': {
@@ -603,10 +615,11 @@ const taskCheckboxPlugin = ViewPlugin.fromClass(class {
           if (checked) {
             deco.push(Decoration.line({ class: 'cm-task-done-line' }).range(line.from));
           } else {
-            // Overdue: explicit @overdue context, or @due(date) in the past.
             const dueMatch = DUE_VALUE_RE.exec(line.text);
             if (OVERDUE_RE.test(line.text) || (dueMatch && isOverdue(dueMatch[1]))) {
               deco.push(Decoration.line({ class: 'cm-task-overdue' }).range(line.from));
+            } else if (dueMatch && isDueToday(dueMatch[1])) {
+              deco.push(Decoration.line({ class: 'cm-task-due-today' }).range(line.from));
             }
           }
         }

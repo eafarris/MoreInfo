@@ -102,20 +102,54 @@ export function isDeferred(deferUntil) {
 }
 
 /**
+ * Resolve a raw @due(...) value to a YYYY-MM-DD string.
+ *
+ * Relative expressions like "tomorrow" or "friday" are interpreted relative
+ * to `referenceDate`.  When called from the editor (live typing), pass
+ * `new Date()`.  When called for stored/indexed tasks, pass the task's
+ * `first_seen` date so that "tomorrow" written yesterday resolves to today,
+ * not to tomorrow again.
+ *
+ * @param {string}      raw            Raw value from @due(...)
+ * @param {Date|string} [referenceDate] Anchor for relative expressions (default: now)
+ * @returns {string|null}  YYYY-MM-DD or null on parse failure
+ */
+export function resolveDueDate(raw, referenceDate) {
+  if (!raw || !raw.trim()) return null;
+  const trimmed = raw.trim();
+  const ref = referenceDate instanceof Date ? referenceDate
+    : typeof referenceDate === 'string' ? new Date(referenceDate + 'T12:00:00')
+    : new Date();
+  const results = chrono.parse(trimmed, ref, { forwardDate: false });
+  if (!results.length) return null;
+  const best = results[0];
+  if (best.text.length < trimmed.length * 0.6) return null;
+  return toIso(best.start.date());
+}
+
+/**
  * Return true if `dueDate` (the raw string from a `@due(...)` tag)
  * represents a date that is strictly before today.
  *
- * @param {string} dueDate  Raw value extracted from @due(...)
+ * @param {string}      dueDate        Raw value extracted from @due(...)
+ * @param {Date|string} [referenceDate] Anchor for relative expressions (default: now)
  * @returns {boolean}
  */
-export function isOverdue(dueDate) {
-  if (!dueDate || !dueDate.trim()) return false;
-  const trimmed = dueDate.trim();
-  const results = chrono.parse(trimmed, new Date(), { forwardDate: false });
-  if (!results.length) return false;
-  const best = results[0];
-  if (best.text.length < trimmed.length * 0.6) return false;
-  return toIso(best.start.date()) < todayIso();
+export function isOverdue(dueDate, referenceDate) {
+  const iso = resolveDueDate(dueDate, referenceDate);
+  return iso != null && iso < todayIso();
+}
+
+/**
+ * Return true if `dueDate` resolves to today's date.
+ *
+ * @param {string}      dueDate        Raw value extracted from @due(...)
+ * @param {Date|string} [referenceDate] Anchor for relative expressions (default: now)
+ * @returns {boolean}
+ */
+export function isDueToday(dueDate, referenceDate) {
+  const iso = resolveDueDate(dueDate, referenceDate);
+  return iso != null && iso === todayIso();
 }
 
 /**
@@ -135,12 +169,10 @@ export function isOverdue(dueDate) {
 export function computeEffectivePriority(basePriority, dueDate, firstSeen) {
   if (!dueDate || !dueDate.trim() || !firstSeen) return basePriority;
 
-  const dueResults = chrono.parse(dueDate.trim(), new Date(), { forwardDate: false });
-  if (!dueResults.length) return basePriority;
-  const dueBest = dueResults[0];
-  if (dueBest.text.length < dueDate.trim().length * 0.6) return basePriority;
+  const dueIso = resolveDueDate(dueDate, firstSeen);
+  if (!dueIso) return basePriority;
 
-  const dueMs     = dueBest.start.date().getTime();
+  const dueMs     = new Date(dueIso + 'T00:00:00').getTime();
   const createdMs = new Date(firstSeen + 'T00:00:00').getTime();
   const nowMs     = Date.now();
 

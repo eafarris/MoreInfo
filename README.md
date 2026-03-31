@@ -237,4 +237,4 @@ I'm an [Apple Newton](https://en.wikipedia.org/wiki/Apple_Newton) fan, and used 
 
 ## License
 
-Not yet decided. Source is public for reference. If you're interested in using or contributing, open an issue.
+This project is licensed under the terms of the MIT license.

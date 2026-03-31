@@ -2,6 +2,7 @@
 name = "more-info"
 version = "0.1.0"
 edition = "2021"
+license = "MIT"
 
 [lib]
 name = "more_info_lib"

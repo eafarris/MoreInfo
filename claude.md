@@ -32,11 +32,13 @@ Template
 : A special type of page that exists within the 'templates' folder of the datastore. Template pages can be used to quickly create other pages via "File->New from template" in the menu system. A page can be saved as a template via "File->Save as template" in the menu system. Templates retain all metadata and their values, with the exception of 'title,' which the user is prompted for on page creation. Content (non-metadata) within the template page is also retained when creating a page based on the template. Templates are helpful when creating 'categories' of pages; they define common content and metadata for future pages. The 'templates' folder is walked when updating the database only to enumerate the templates available; they are not indexed for search or links, as they don't represent any content themselves.
 
 Metadata
-: A series of key/value pairs that describe the document in a structured way. Some metadata variables are based on filesystem data by default and can be read-only. Most variables can be set in one of two places: a **front block** at the very beginning of the file, or a **sig block** at the very end.
+: A series of key/value pairs that describe the document in a structured way. Some metadata variables are based on filesystem data by default and can be read-only. Most variables can be set in one of two places: a front block at the very beginning of the file, or a sig block at the very end.
 
-: **Front block**: an optional `---` … `---` pair that must begin on the very first line of the file (true front matter, compatible with Obsidian, Jekyll, Hugo, etc.). Any `---` line appearing after the front block is treated as a Markdown thematic break (`<hr>`) and is not parsed as metadata. The variable name and its value are delimited by zero or more spaces, a colon (`:`), and zero or more spaces (regex `\s*:\s*`).
+Front block
+: an optional `---` … `---` pair that must begin on the very first line of the file (true front matter, compatible with Obsidian, Jekyll, Hugo, etc.). Any `---` line appearing after the front block is treated as a Markdown thematic break (`<hr>`) and is not parsed as metadata. The variable name and its value are delimited by zero or more spaces, a colon (`:`), and zero or more spaces (regex `\s*:\s*`).
 
-: **Sig block**: a final metadata section at the end of a file, introduced by the "email .sig" delimiter — `--` followed by a single space, alone on a line — and continuing to the end of the file. The sig block is where MI writes all app-generated metadata (title, favorite flag, etc.).
+Sig block
+: a final metadata section at the end of a file, introduced by the "email .sig" delimiter — `--` followed by a single space, alone on a line — and continuing to the end of the file. The sig block is where MI writes all app-generated metadata (title, favorite flag, etc.).
 
 : When the same key appears in both blocks, the sig block wins (it is always last). Variable names are *case-insensitive* and stored in the database as lowercase. Values are *case sensitive*, though some reserved variables override this (e.g., `tags` are *case insensitive*).
 

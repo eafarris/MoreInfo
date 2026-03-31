@@ -2,6 +2,7 @@
   "name": "more-info",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "scripts": {
     "dev:vite": "vite",
     "build:vite": "vite build",

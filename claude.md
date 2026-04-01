@@ -190,8 +190,9 @@ Search
 - [x] Page templates
 - [x] Basic tasks (clickable checkboxes, `@done` auto-stamp)
 - [ ] Task `@context` tags (GTD-style bare `@word`, highlighted + indexed)
+- [ ] Reserved context tags — @someday, @waiting
 - [x] Task implicit heading context (nearest ATX heading; resets at thematic breaks)
 - [x] Annotations: TODO, NOTE, IDEA, and FIXME (highlighted, indexed; not tasks)
 - [~] Tasks widget (grouped by page + heading, wiki links clickable; filter UI planned)
-- [ ] Expanded task params: `@due`, `@priority`, `@defer`, `@repeat`
+- [X] Expanded task params: `@due`, `@priority`, `@defer`
 - [x] CamelCase wiki links (existing pages only, never creates)

@@ -1025,7 +1025,7 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
       if (event.metaKey || event.ctrlKey) {
         onCmdClick(title);
       } else {
-        onPageClick(title);
+        onPageClick(title, { x: event.clientX, y: event.clientY });
       }
       return true;
     },

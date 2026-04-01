@@ -243,8 +243,8 @@ const cmView = createEditor({
   onCursorChange(line, col) {
     updateCursor(line, col);
   },
-  onPageClick(title) {
-    openWikiPage(title);
+  onPageClick(title, coords) {
+    openWikiPage(title, coords);
   },
   onCmdClick(title) {
     const lc   = title.toLowerCase();
@@ -759,11 +759,48 @@ async function navigateTo(path, content) {
 
 // ── Wiki pages ────────────────────────────────────
 
-async function openWikiPage(title) {
+async function openWikiPage(title, coords) {
   if (title.toLowerCase() === 'tasks') { await loadTasksView(); return; }
+
+  // If the page already exists, navigate directly.
+  const lc = title.toLowerCase();
+  const existing = allPages.find(
+    p => p.title.toLowerCase() === lc ||
+         (p.aliases || []).some(a => a === lc)
+  );
+  if (existing) {
+    try {
+      const { path, content } = await invoke('open_wiki_page', { title });
+      await navigateTo(path, content);
+    } catch (e) { console.error('open_wiki_page failed:', e); }
+    return;
+  }
+
+  // Page doesn't exist — offer templates or a blank page.
   try {
-    const { path, content } = await invoke('open_wiki_page', { title });
+    const templates = await invoke('list_templates');
+    const options = templates.map(t => ({ value: `tpl:${t.slug}`, label: `New ${t.title}` }));
+    options.push({ value: 'blank', label: 'New page' });
+
+    let choice;
+    if (options.length === 1) {
+      choice = 'blank'; // no templates, skip the menu
+    } else if (coords) {
+      choice = await popupMenu(coords, options);
+    } else {
+      choice = await pickModal(`Create "${title}"`, options);
+    }
+    if (!choice) return;
+
+    let path, content;
+    if (choice === 'blank') {
+      ({ path, content } = await invoke('open_wiki_page', { title }));
+    } else {
+      const slug = choice.slice(4); // strip "tpl:" prefix
+      ({ path, content } = await invoke('new_from_template', { templateSlug: slug, title }));
+    }
     await navigateTo(path, content);
+    refreshPages();
   } catch (e) {
     console.error('open_wiki_page failed:', e);
   }
@@ -1052,6 +1089,60 @@ function pickModal(message, options) {
   });
 }
 
+/**
+ * Show a small popup menu anchored near {x, y} screen coordinates.
+ * Returns the chosen option's `value`, or null if dismissed.
+ * `options` is an array of `{ value, label }` objects.
+ */
+function popupMenu(coords, options) {
+  return new Promise(resolve => {
+    if (!options.length) { resolve(null); return; }
+
+    const overlay = document.createElement('div');
+    overlay.className = 'fixed inset-0 z-[9999]';
+    overlay.tabIndex = -1;
+
+    const menu = document.createElement('div');
+    menu.className =
+      'absolute bg-olive-900 border border-olive-700 rounded-lg shadow-xl py-1 min-w-[10rem] max-h-64 overflow-y-auto';
+
+    menu.innerHTML = options.map(o => `
+      <div data-value="${o.value}"
+        class="px-3 py-1.5 text-sm text-olive-100 cursor-pointer hover:bg-olive-700
+               hover:text-amber-300 select-none whitespace-nowrap">
+        ${o.label}
+      </div>`).join('');
+
+    overlay.appendChild(menu);
+    document.body.appendChild(overlay);
+
+    // Position: prefer below-right of click, flip if it would overflow.
+    const pad = 4;
+    const { innerWidth: vw, innerHeight: vh } = window;
+    const rect = menu.getBoundingClientRect();
+    let left = coords.x;
+    let top  = coords.y + pad;
+    if (left + rect.width > vw - pad) left = vw - rect.width - pad;
+    if (top + rect.height > vh - pad) top = coords.y - rect.height - pad;
+    if (left < pad) left = pad;
+    if (top < pad) top = pad;
+    menu.style.left = `${left}px`;
+    menu.style.top  = `${top}px`;
+
+    overlay.focus();
+
+    const finish = val => { overlay.remove(); resolve(val); };
+
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay) { finish(null); return; }
+      const item = e.target.closest('[data-value]');
+      if (item) finish(item.dataset.value);
+    });
+    overlay.addEventListener('keydown', e => { if (e.key === 'Escape') finish(null); });
+    overlay.addEventListener('blur', () => finish(null), true);
+  });
+}
+
 // ── Menu event handling ───────────────────────────
 
 window.__TAURI__.event.listen('menu', async e => {
@@ -1174,15 +1265,20 @@ invoke('get_datastore_path').then(p => { datastorePath = p; }).catch(console.err
 
 // Index the datastore on startup (runs in background; does not block the UI).
 // Status is permanently visible in the status bar.
-(function () {
+(async function () {
   function setIndexStatus(html) {
     indexStatusEl.innerHTML = html;
   }
 
   setIndexStatus('<i class="ph ph-circle-notch animate-spin leading-none"></i><span>Indexing…</span>');
 
+  const unlisten = await window.__TAURI__.event.listen('index-progress', e => {
+    setIndexStatus(`<i class="ph ph-circle-notch animate-spin leading-none"></i><span>Indexing… ${e.payload}</span>`);
+  });
+
   invoke('index_datastore')
     .then(n => {
+      unlisten();
       if (n > 0) {
         setIndexStatus(`<i class="ph ph-check leading-none"></i><span>Indexed ${n} file${n !== 1 ? 's' : ''}</span>`);
       } else {
@@ -1190,6 +1286,7 @@ invoke('get_datastore_path').then(p => { datastorePath = p; }).catch(console.err
       }
     })
     .catch(e => {
+      unlisten();
       console.warn('[MI] index_datastore failed:', e);
       setIndexStatus('<i class="ph ph-warning leading-none text-yellow-300"></i><span class="text-yellow-300">Index failed</span>');
     });

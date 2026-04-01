@@ -42,6 +42,12 @@ import * as chrono from 'chrono-node';
 // ** must be tested before * so two-character tokens aren't split.
 const LEADING_BINOP = /^(\*\*|[-+*/%^])/;
 
+// Currency symbols recognised in @calc expressions.  The symbol is stripped
+// before evaluation and re-applied when formatting the result.  Only one
+// currency per expression is supported; if multiple appear, the first wins.
+const CURRENCY_RE = /[$€£¥]/g;
+const CURRENCY_SYMBOLS = { $: '$', '€': '€', '£': '£', '¥': '¥' };
+
 // ── Date math helpers ─────────────────────────────────────────────────────
 
 // Maps singular unit names to Luxon Duration keys.
@@ -188,6 +194,16 @@ export function evalCalcExpr(expr, scope) {
   let e = beforeComment.replace(/\[\[[^\]]*\]\]/g, '').trim();
   if (!e) return { value: null };
 
+  // Detect and strip currency symbols (e.g. $100, 24 * €50).
+  // The symbol is remembered so it can be re-applied to the formatted result.
+  const currencyMatch = e.match(CURRENCY_RE);
+  const currency = currencyMatch ? currencyMatch[0] : scope._lastCurrency || null;
+  if (currencyMatch) {
+    e = e.replace(CURRENCY_RE, '').trim();
+    if (!e) return { value: null };
+    scope._lastCurrency = currencyMatch[0];
+  }
+
   // Try date math before the implicit-prepend transformation so carry-forward
   // (`+ 3 days` when _lastDate is set) is intercepted before it becomes `_last + 3 days`.
   const dateResult = tryDateExpr(e, scope);
@@ -204,7 +220,9 @@ export function evalCalcExpr(expr, scope) {
     if (t !== 'number' && t !== 'Unit') return { error: 'Error' };
     scope._last = result;
     scope._lastDate = null;   // clear date context when switching to a number result
-    return { formatted: formatResult(result, t) };
+    if (!currencyMatch) scope._lastCurrency = null;
+    const fmt = formatResult(result, t);
+    return { formatted: currency && t === 'number' ? `${currency}${fmt}` : fmt };
   } catch (err) {
     const msg = (err.message || '').toLowerCase();
     if (msg.includes('unit') || msg.includes('dimension')) return { error: 'Unit error' };
@@ -253,7 +271,7 @@ export function scanCalcBlocks(text) {
     if (!inBlock) {
       if (trimmed === '@calc') {
         inBlock = true;
-        scope   = { _last: 0, _lastDate: null };
+        scope   = { _last: 0, _lastDate: null, _lastCurrency: null };
         headerLines.add(lineNo);
       }
     } else {
@@ -314,7 +332,7 @@ export function preprocessCalcBlocks(markdown) {
     if (!block) {
       if (trimmed === '@calc') {
         block = [];
-        scope = { _last: 0, _lastDate: null };
+        scope = { _last: 0, _lastDate: null, _lastCurrency: null };
       } else {
         out.push(raw);
       }

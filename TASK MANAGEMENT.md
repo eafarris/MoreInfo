@@ -73,7 +73,6 @@ Reserved tags carry a value in parentheses.
 | `@due(date)` | Due date; parsed by chrono-node, so natural language works: `@due(friday)`, `@due(2026-04-01)`, `@due(next month)` |
 | `@priority(n)` | Alternate priority form; equivalent to `(n)` |
 | `@defer(date)` | Hide the task until this date |
-| `@repeat(expr)` | Repeating task interval (spec TBD) |
 
 The full list of reserved tag names (never treated as page category references): `due`, `priority`, `done`, `cancelled`, `waiting`, `defer`, `repeat`.
 
@@ -85,7 +84,6 @@ The full list of reserved tag names (never treated as page category references):
 | --- | --- |
 | Open | Default — unchecked box |
 | Done | Check the box, or add `@done` |
-| Cancelled | `@cancelled` |
 | Waiting | `@waiting` — blocked on someone or something else |
 | Someday | `@someday` — not actionable now, not forgotten |
 | Deferred | `@defer(date)` — snoozed until a date |
@@ -138,11 +136,8 @@ No attributes required. Every attribute is additive.
 ---
 Other features
 
-Move tasks forward
-: takes incomplete tasks from today's journal to tomorrow (or maybe select a date?) This might be a user preference, and just happens.
-
 Annotations vs. Tasks
-: Inline markers like TODO, FIXME, NOTE, and IDEA are **annotations** — not tasks. They are highlighted and indexed but carry no completion state, checkbox, or deadline. An annotation captures a thought in passing; a task is an explicit commitment to act. Promote an annotation to a task manually by adding a `[ ]` checkbox. Automatic TODO→task conversion was considered and rejected.
+: Inline markers like TODO, FIXME, NOTE, and IDEA are **annotations** — not tasks. They are highlighted and indexed but carry no completion state, checkbox, or deadline. An annotation captures a thought in passing; a task is an explicit commitment to act. Promote an annotation to a task manually by adding a `[ ]` checkbox.
 
 TaskWidget
 : Exposes all incomplete tasks across the datastore. Filter UI planned for context, page/project, due date, state, and priority. Tasks from journal and wiki pages are included; templates are excluded.

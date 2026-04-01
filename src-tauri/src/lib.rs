@@ -1498,19 +1498,19 @@ fn collect_md_files(dir: &std::path::Path, out: &mut std::collections::HashSet<S
 /// Delete `moreinfo.sqlite` entirely and rebuild it from scratch.
 /// Triggered by File → Reindex.  Returns the number of files indexed.
 #[tauri::command]
-fn full_reindex() -> Result<u32, String> {
+fn full_reindex(app: tauri::AppHandle) -> Result<u32, String> {
     let db_path = datastore_dir()?.join("moreinfo.sqlite");
     if db_path.exists() {
         std::fs::remove_file(&db_path).map_err(|e| e.to_string())?;
     }
-    index_datastore()
+    index_datastore(app)
 }
 
 /// wiki-link cache in `moreinfo.sqlite`.
 ///
 /// Returns the number of files that were re-indexed.
 #[tauri::command]
-fn index_datastore() -> Result<u32, String> {
+fn index_datastore(app: tauri::AppHandle) -> Result<u32, String> {
     let conn = open_db()?;
     init_schema(&conn)?;
 
@@ -1543,6 +1543,11 @@ fn index_datastore() -> Result<u32, String> {
 
     let count = to_index.len() as u32;
     for path_str in &to_index {
+        let short = std::path::Path::new(path_str)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(path_str);
+        app.emit("index-progress", short).ok();
         index_file(&conn, path_str)?;
     }
 

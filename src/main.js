@@ -14,6 +14,7 @@ import { BrowserWidget }     from './widgets/BrowserWidget.js';
 import { CounterWidget }     from './widgets/CounterWidget.js';
 import { SearchWidget }      from './widgets/SearchWidget.js';
 import { createEditor, createTasksEditor, createTaskPriorityPlugin, setEditorPages, placeholderCompartment } from './editor.js';
+import { initWidgetDrag } from './widgetDrag.js';
 import { placeholder } from '@codemirror/view';
 import { formatJournalDate, isDeferred, todayIso, computeEffectivePriority } from './dateUtils.js';
 
@@ -207,7 +208,7 @@ function updateDocTitle(fm, content) {
     // Immediate save so the DB is updated right away
     if (currentFile) {
       invoke('write_file', { path: currentFile, content: newContent })
-        .then(() => favoritesWidget?.refresh())
+        .then(() => widgetRegistry.get('favorites')?.refresh())
         .catch(console.error);
     }
   });
@@ -500,7 +501,7 @@ const UI_STATE_KEY = 'mi-ui-state';
 
 function saveUiState() {
   try {
-    localStorage.setItem(UI_STATE_KEY, JSON.stringify({ sbState, sbSizes }));
+    localStorage.setItem(UI_STATE_KEY, JSON.stringify({ sbState, sbSizes, widgetLayout, widgetSizes }));
   } catch { /* storage unavailable */ }
 }
 
@@ -517,6 +518,9 @@ function loadUiState() {
     for (const k of ['left', 'right', 'top', 'bottom']) {
       if (typeof saved.sbSizes?.[k] === 'number') sbSizes[k] = saved.sbSizes[k];
     }
+    // Restore widget layout and sizes
+    if (saved.widgetLayout) widgetLayout = saved.widgetLayout;
+    if (saved.widgetSizes)  widgetSizes  = saved.widgetSizes;
   } catch { /* ignore corrupt storage */ }
 }
 
@@ -660,6 +664,15 @@ Object.keys(sbConfig).forEach(name => {
 
 const mountedWidgets = [];
 
+// Widget registry: id → widget instance (survives remounts).
+const widgetRegistry = new Map();
+
+// Layout: which widget IDs live in each sidebar, in order.
+let widgetLayout = { left: [], right: [], top: [], bottom: [] };
+
+// User-set widget sizes (px) keyed by widget ID.
+let widgetSizes = {};
+
 /**
  * Mount an ordered list of widgets into a sidebar's .widget-stack element.
  * Each widget gets a wrapper div; the widget's wrapperClass controls sizing.
@@ -671,15 +684,58 @@ function mountWidgets(sidebarName, widgets) {
   const stack = sidebar.querySelector('.widget-stack');
   if (!stack) return;
   const orientation = (sidebarName === 'top' || sidebarName === 'bottom') ? 'horizontal' : 'vertical';
-  widgets.forEach(widget => {
+  const horiz = orientation === 'horizontal';
+  widgets.forEach((widget, i) => {
     const wrapper = document.createElement('div');
-    widget.wrapperClass.split(/\s+/).filter(Boolean).forEach(cls => wrapper.classList.add(cls));
+    const savedSize = widgetSizes[widget.id];
+    const isLast = i === widgets.length - 1;
+    if (savedSize && !isLast) {
+      wrapper.style.flex = `0 0 ${savedSize}px`;
+    } else if (isLast) {
+      wrapper.style.flex = '1 1 0';
+      wrapper.style[horiz ? 'minWidth' : 'minHeight'] = '0';
+    } else {
+      widget.wrapperClass.split(/\s+/).filter(Boolean).forEach(cls => wrapper.classList.add(cls));
+    }
     wrapper.dataset.widgetId = widget.id;
     stack.appendChild(wrapper);
     widget.mount(wrapper, orientation);
-    mountedWidgets.push(widget);
+    if (!mountedWidgets.includes(widget)) mountedWidgets.push(widget);
+    widgetRegistry.set(widget.id, widget);
+    if (!widgetLayout[sidebarName].includes(widget.id)) {
+      widgetLayout[sidebarName].push(widget.id);
+    }
   });
+  if (_widgetDrag) _widgetDrag.wireUp(sidebarName);
 }
+
+/**
+ * Tear down and remount all widgets in a sidebar from the layout registry.
+ */
+function remountSidebar(sidebarName) {
+  const { sidebar } = sbConfig[sidebarName];
+  const stack = sidebar.querySelector('.widget-stack');
+  if (!stack) return;
+
+  // Destroy existing widgets in this stack.
+  for (const wrapper of [...stack.querySelectorAll('[data-widget-id]')]) {
+    const w = widgetRegistry.get(wrapper.dataset.widgetId);
+    if (w) w.destroy();
+  }
+  stack.innerHTML = '';
+
+  // Rebuild from layout.
+  const ids = widgetLayout[sidebarName] || [];
+  const widgets = ids.map(id => widgetRegistry.get(id)).filter(Boolean);
+
+  // Clear layout for this sidebar so mountWidgets repopulates it cleanly.
+  widgetLayout[sidebarName] = [];
+  mountWidgets(sidebarName, widgets);
+  saveUiState();
+}
+
+// Drag system handle — initialised after sbConfig is ready.
+let _widgetDrag = null;
 
 // ── Navigation history (breadcrumbs) ─────────────
 
@@ -1292,49 +1348,76 @@ invoke('get_datastore_path').then(p => { datastorePath = p; }).catch(console.err
     });
 }());
 
+// ── Widget instantiation ──────────────────────────
+// Create all widgets up front and register them.  The layout (which sidebar
+// each widget lives in, and in what order) is either restored from
+// localStorage or falls back to the defaults below.
+
 const pageWidget = new PageWidget({
   onOpenInEditor: openWikiPage,
   onOpenJournal:  openJournalDate,
   onEditPage:     openFilePath,
 });
 
-mountWidgets('left', [
-  new SearchWidget({ onOpen: (path, title) => pageWidget.loadPath(path, title) }),
-  pageWidget,
-  new AnnotationsWidget({ onOpen: openFilePath }),
-  // new OutlineWidget(),  // available but not in default layout
-  // new BrowserWidget(),  // available but not in default layout
-]);
-
-const favoritesWidget = new FavoritesWidget({
-  onOpen: openFilePath,
-});
-
-mountWidgets('right', [
-  new CalendarWidget({ onDateSelected: openJournalDate }),
-  new ScratchPadWidget(),
-  new TasksWidget({ onOpen: openFilePath }),
-  favoritesWidget,
-]);
-
-// Auto-show/hide the bottom sidebar based on whether either bottom widget
-// has content.  Both widgets report their state via onStateChange(bool).
 const bottomContentState = { refs: false, meta: false };
 function updateBottomVisibility() {
   const hasAny = bottomContentState.refs || bottomContentState.meta;
   setSbState('bottom', hasAny ? 'pinned' : 'hidden');
 }
 
-mountWidgets('bottom', [
-  new ReferencesWidget({
+const allWidgetInstances = {
+  search:      new SearchWidget({ onOpen: (path, title) => pageWidget.loadPath(path, title) }),
+  page:        pageWidget,
+  annotations: new AnnotationsWidget({ onOpen: openFilePath }),
+  calendar:    new CalendarWidget({ onDateSelected: openJournalDate }),
+  scratchPad:  new ScratchPadWidget(),
+  tasks:       new TasksWidget({ onOpen: openFilePath }),
+  favorites:   new FavoritesWidget({ onOpen: openFilePath }),
+  references:  new ReferencesWidget({
     onOpen: openFilePath,
     onStateChange: has => { bottomContentState.refs = has; updateBottomVisibility(); },
   }),
-  new MetadataWidget({
+  metadata:    new MetadataWidget({
     onStateChange: has => { bottomContentState.meta = has; updateBottomVisibility(); },
   }),
-  // new CounterWidget(),  // hidden by default
-]);
+};
+
+// Register all instances.
+for (const [id, inst] of Object.entries(allWidgetInstances)) {
+  widgetRegistry.set(id, inst);
+}
+
+const defaultLayout = {
+  left:   ['search', 'page', 'annotations'],
+  right:  ['calendar', 'scratchPad', 'tasks', 'favorites'],
+  top:    [],
+  bottom: ['references', 'metadata'],
+};
+
+// Use saved layout if valid; otherwise fall back to defaults.
+const hasSavedLayout = Object.values(widgetLayout).some(arr => arr.length > 0);
+if (!hasSavedLayout) {
+  widgetLayout = JSON.parse(JSON.stringify(defaultLayout));
+}
+
+// Initialise drag system.
+_widgetDrag = initWidgetDrag({
+  sbConfig,
+  getLayout:      () => widgetLayout,
+  setLayout:      l  => { widgetLayout = l; saveUiState(); },
+  getRegistry:    () => widgetRegistry,
+  remountSidebar,
+  getWidgetSizes: () => widgetSizes,
+  setWidgetSizes: s  => { widgetSizes = s; saveUiState(); },
+});
+
+// Mount widgets per layout.
+for (const sidebarName of ['left', 'right', 'top', 'bottom']) {
+  const ids = widgetLayout[sidebarName] || [];
+  const widgets = ids.map(id => widgetRegistry.get(id)).filter(Boolean);
+  widgetLayout[sidebarName] = []; // cleared so mountWidgets repopulates
+  mountWidgets(sidebarName, widgets);
+}
 
 setMode('edit');
 updateCursor(1, 1);

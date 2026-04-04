@@ -146,6 +146,32 @@ function setFavoriteInContent(content, newVal) {
   return `${content}${trailing}\n-- \nfavorite: ${valStr}\n`;
 }
 
+/**
+ * Set any metadata key in `content`, following the MI metadata manipulation rule:
+ * - If the key already exists, update it in place.
+ * - If absent, append to the sig block (creating one if needed).
+ * @param {string} content  Raw document text
+ * @param {string} key      Metadata key (case-insensitive match)
+ * @param {string} rawValue The raw value string to write after "key: "
+ * @returns {string} Updated content
+ */
+function setMetadataInContent(content, key, rawValue) {
+  const existingRe = new RegExp(`^(${key}\\s*:\\s*)(.*)$`, 'mi');
+  if (existingRe.test(content)) {
+    return content.replace(existingRe, `$1${rawValue}`);
+  }
+  // Key absent → append to last sig block or create one
+  const allSigs = [...content.matchAll(/^-- $/mg)];
+  if (allSigs.length > 0) {
+    const last = allSigs[allSigs.length - 1];
+    const nlIdx = content.indexOf('\n', last.index + last[0].length);
+    const insertAt = nlIdx !== -1 ? nlIdx + 1 : content.length;
+    return content.slice(0, insertAt) + `${key}: ${rawValue}\n` + content.slice(insertAt);
+  }
+  const trailing = content.endsWith('\n') ? '' : '\n';
+  return `${content}${trailing}\n-- \n${key}: ${rawValue}\n`;
+}
+
 // ── Title derivation ──────────────────────────────
 
 function isJournalFile(path) {
@@ -826,9 +852,9 @@ async function openWikiPage(title, coords) {
   );
   if (existing) {
     try {
-      const { path, content } = await invoke('open_wiki_page', { title });
-      await navigateTo(path, content);
-    } catch (e) { console.error('open_wiki_page failed:', e); }
+      const content = await invoke('read_file', { path: existing.path });
+      await navigateTo(existing.path, content);
+    } catch (e) { console.error('Failed to open existing page:', e); }
     return;
   }
 
@@ -1379,6 +1405,16 @@ const allWidgetInstances = {
   }),
   metadata:    new MetadataWidget({
     onStateChange: has => { bottomContentState.meta = has; updateBottomVisibility(); },
+    onEdit: (key, rawValue) => {
+      const newContent = setMetadataInContent(cmView.state.doc.toString(), key, rawValue);
+      cmView.dispatch({
+        changes: { from: 0, to: cmView.state.doc.length, insert: newContent },
+        userEvent: 'metadata.edit',
+      });
+      if (currentFile) {
+        invoke('write_file', { path: currentFile, content: newContent }).catch(console.error);
+      }
+    },
   }),
 };
 

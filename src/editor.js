@@ -171,6 +171,20 @@ export const miTheme = EditorView.theme({
     backgroundColor: 'var(--color-amber-700, #b45309)',
     color: '#fff',
   },
+  // Wiki link bracket + title decorations.  Defined in the theme so the
+  // editor-root scope selector raises specificity above the generated
+  // HighlightStyle heading rules — otherwise headings override the color.
+  // CM6 nests syntax-highlight spans inside decoration spans, so a heading
+  // class on the inner span overrides the parent's color.  The `*` selector
+  // forces all descendants to inherit the wikilink color.
+  '.cm-wikilink-bracket, .cm-wikilink-bracket *': {
+    color: 'oklch(46.6% 0.025 107.3) !important',  // olive-600
+    cursor: 'pointer',
+  },
+  '.cm-wikilink-title, .cm-wikilink-title *': {
+    color: '#fbbf24 !important',                    // amber-400
+    cursor: 'pointer',
+  },
 }, { dark: true });
 
 // ── Syntax highlighting ────────────────────────────────────────────────────
@@ -192,6 +206,7 @@ export const miHighlightStyle = HighlightStyle.define([
   { tag: tags.contentSeparator, color: 'oklch(39.4% 0.023 107.4)' /* olive-700 */       },
   { tag: tags.list,             color: 'inherit'                                         }, // colored via listMarkerPlugin instead
   { tag: tags.atom,            color: '#fbbf24'                                           },
+  { tag: tags.squareBracket,   color: 'inherit'                                           }, // defer to wikilinkPlugin decoration
 ]);
 
 // ── Wiki-link decoration ───────────────────────────────────────────────────
@@ -363,6 +378,9 @@ const linkPlugin = ViewPlugin.fromClass(class {
         from, to,
         enter(node) {
           if (node.name !== 'Link') return;
+          // Skip wiki links — [[title]] is handled by wikilinkPlugin.
+          const linkText = view.state.doc.sliceString(node.from, Math.min(node.from + 2, node.to));
+          if (linkText === '[[') return;
           const cursor = node.node.cursor();
           if (!cursor.firstChild()) return;
           let textEnd = null;

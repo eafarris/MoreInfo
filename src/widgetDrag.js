@@ -276,8 +276,6 @@ export function initWidgetDrag({
 
         const startX = e.clientX;
         const startY = e.clientY;
-        let mode = null; // null | 'resize' | 'move'
-
         function onFirstMove(ev) {
           const dx = ev.clientX - startX;
           const dy = ev.clientY - startY;
@@ -285,24 +283,7 @@ export function initWidgetDrag({
 
           document.removeEventListener('mousemove', onFirstMove);
           document.removeEventListener('mouseup', onFirstUp);
-
-          // Determine mode: if dragging along the sidebar axis and there's a widget
-          // below, it's a resize.  Otherwise it's a move.
-          const horiz = sidebarName === 'top' || sidebarName === 'bottom';
-          const axisDelta = horiz ? dx : dy;
-          const crossDelta = horiz ? dy : dx;
-
-          const wrappers = [...stack.querySelectorAll('[data-widget-id]')];
-          const idx = wrappers.findIndex(w => w.dataset.widgetId === wrapper.dataset.widgetId);
-          const hasNeighbourBelow = idx >= 0 && idx < wrappers.length - 1;
-
-          if (hasNeighbourBelow && Math.abs(axisDelta) > Math.abs(crossDelta)) {
-            mode = 'resize';
-            startResize(e, sidebarName, wrapper.dataset.widgetId);
-          } else {
-            mode = 'move';
-            startDragMove(e, sidebarName, wrapper.dataset.widgetId);
-          }
+          startDragMove(e, sidebarName, wrapper.dataset.widgetId);
         }
 
         function onFirstUp() {

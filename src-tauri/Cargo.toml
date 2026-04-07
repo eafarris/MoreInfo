@@ -1,8 +1,12 @@
 [package]
 name = "more-info"
-version = "0.1.0"
+version = "0.8.0"
 edition = "2021"
 license = "MIT"
+
+[[bin]]
+name = "MoreInfo"
+path = "src/main.rs"
 
 [lib]
 name = "more_info_lib"
@@ -14,6 +18,7 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri             = { version = "2", features = [] }
 tauri-plugin-dialog       = "2"
+tauri-plugin-process      = "2"
 tauri-plugin-window-state = "2"
 serde             = { version = "1", features = ["derive"] }
 serde_json        = "1"

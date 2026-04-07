@@ -13,7 +13,7 @@ import { AnnotationsWidget }   from './widgets/AnnotationsWidget.js';
 import { BrowserWidget }     from './widgets/BrowserWidget.js';
 import { CounterWidget }     from './widgets/CounterWidget.js';
 import { SearchWidget }      from './widgets/SearchWidget.js';
-import { createEditor, createTasksEditor, createTaskPriorityPlugin, setEditorPages, placeholderCompartment } from './editor.js';
+import { createEditor, createTasksEditor, createTaskPriorityPlugin, createReadOnlyEditor, setEditorPages, placeholderCompartment } from './editor.js';
 import { initWidgetDrag } from './widgetDrag.js';
 import { placeholder } from '@codemirror/view';
 import { formatJournalDate, isDeferred, todayIso, computeEffectivePriority } from './dateUtils.js';
@@ -27,13 +27,19 @@ let changeTimer   = null;
 let saveTimer     = null;
 let mdTimer       = null;
 
-// Sentinel path used when the Tasks pseudo-page is active.
-const TASKS_PSEUDO_PAGE = '::tasks::';
+// Sentinel paths used when pseudo-pages are active.
+const TASKS_PSEUDO_PAGE    = '::tasks::';
+const METADATA_PSEUDO_PAGE = '::metadata::';
 
 // Tasks pseudo-page state.
 let tasksEditorView  = null;
 let taskLineMap      = new Map(); // syntheticLineNo (1-based) → {path, sourceLineNo, originalText} | null
 const pendingWrites  = new Map(); // syntheticLineNo → setTimeout id
+
+// Metadata pseudo-page state.
+let metadataEditorView = null;
+let metadataLineMap    = new Map(); // syntheticLineNo → { path } | null
+let metadataQuery      = null;      // { key, value } currently displayed
 
 // Strips the checkbox prefix from a synthetic task line to get the task text.
 const TASK_TEXT_RE = /^(?:[ \t]*(?:[-*+]|\d+[.)]) +)?\[[xX ]?\]\s*/;
@@ -45,6 +51,7 @@ const editorDiv           = document.getElementById('editor');
 const editorArea          = document.getElementById('editor-area');
 const editorPane          = document.getElementById('editor-pane');
 const tasksView       = document.getElementById('tasks-view');
+const metadataView    = document.getElementById('metadata-view');
 const vDivider        = document.getElementById('v-divider');
 const markdownPane    = document.getElementById('markdown-pane');
 const markdownContent = document.getElementById('markdown-content');
@@ -613,6 +620,12 @@ Object.keys(sbConfig).forEach(name => {
     if (sbState[name] === 'pinned') setSbState(name, 'hidden');
     else if (sbState[name] === 'flyout') setSbState(name, 'pinned');
   });
+
+  const manageBtn = sidebar.querySelector('.sb-manage-btn');
+  manageBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    showWidgetPicker(name, manageBtn);
+  });
 });
 
 btnToggleLeft.addEventListener('click',   () => togglePin('left'));
@@ -712,6 +725,7 @@ function mountWidgets(sidebarName, widgets) {
   const orientation = (sidebarName === 'top' || sidebarName === 'bottom') ? 'horizontal' : 'vertical';
   const horiz = orientation === 'horizontal';
   widgets.forEach((widget, i) => {
+    if (mountedWidgets.includes(widget)) return; // guard: each instance mounts at most once
     const wrapper = document.createElement('div');
     const savedSize = widgetSizes[widget.id];
     const isLast = i === widgets.length - 1;
@@ -746,7 +760,11 @@ function remountSidebar(sidebarName) {
   // Destroy existing widgets in this stack.
   for (const wrapper of [...stack.querySelectorAll('[data-widget-id]')]) {
     const w = widgetRegistry.get(wrapper.dataset.widgetId);
-    if (w) w.destroy();
+    if (w) {
+      w.destroy();
+      const idx = mountedWidgets.indexOf(w);
+      if (idx !== -1) mountedWidgets.splice(idx, 1);
+    }
   }
   stack.innerHTML = '';
 
@@ -787,6 +805,8 @@ breadcrumbsEl.addEventListener('click', async e => {
   try {
     if (entry.path === TASKS_PSEUDO_PAGE) {
       await loadTasksView(/* pushHistory= */ false);
+    } else if (entry.path === METADATA_PSEUDO_PAGE && metadataQuery) {
+      await loadMetadataView(metadataQuery.key, metadataQuery.value, false);
     } else {
       const content = await invoke('read_file', { path: entry.path });
       await loadFile(entry.path, content);
@@ -801,9 +821,14 @@ breadcrumbsEl.addEventListener('click', async e => {
 const JOURNAL_RE = /\d{4}-\d{2}-\d{2}\.md$/;
 
 async function loadFile(path, content) {
-  // Leaving Tasks view: restore normal editor layout.
+  // Leaving a pseudo-page view: restore normal editor layout.
   if (currentFile === TASKS_PSEUDO_PAGE) {
     tasksView.style.display    = 'none';
+    editorPane.style.display   = '';
+    vDivider.style.display     = '';
+    markdownPane.style.display = '';
+  } else if (currentFile === METADATA_PSEUDO_PAGE) {
+    metadataView.style.display = 'none';
     editorPane.style.display   = '';
     vDivider.style.display     = '';
     markdownPane.style.display = '';
@@ -833,7 +858,7 @@ async function navigateTo(path, content) {
   if (currentFile) {
     navHistory.push({
       path:  currentFile,
-      title: currentTitle || (currentFile === TASKS_PSEUDO_PAGE ? 'Tasks' : basename(currentFile).replace(/\.[^.]+$/, '')),
+      title: currentTitle || (currentFile === TASKS_PSEUDO_PAGE ? 'Tasks' : currentFile === METADATA_PSEUDO_PAGE ? (metadataQuery ? `${metadataQuery.key}` : 'Metadata') : basename(currentFile).replace(/\.[^.]+$/, '')),
     });
   }
   await loadFile(path, content);
@@ -925,10 +950,11 @@ async function loadTasksView(pushHistory = true) {
     });
   }
 
-  editorPane.style.display   = 'none';
-  vDivider.style.display     = 'none';
-  markdownPane.style.display = 'none';
-  tasksView.style.display    = 'block';
+  editorPane.style.display     = 'none';
+  vDivider.style.display       = 'none';
+  markdownPane.style.display   = 'none';
+  metadataView.style.display   = 'none';
+  tasksView.style.display      = 'block';
 
   currentFile  = TASKS_PSEUDO_PAGE;
   currentTitle = 'Tasks';
@@ -1068,6 +1094,121 @@ function onTasksDocChanged(update) {
 }
 
 document.getElementById('btn-tasks').addEventListener('click', () => loadTasksView());
+
+// ── Metadata pseudo-page ──────────────────────────
+
+async function loadMetadataView(key, value, pushHistory = true) {
+  if (pushHistory && currentFile && currentFile !== METADATA_PSEUDO_PAGE) {
+    navHistory.push({
+      path:  currentFile,
+      title: currentTitle || basename(currentFile).replace(/\.[^.]+$/, ''),
+    });
+  }
+
+  // Hide normal editor, show metadata view.
+  editorPane.style.display   = 'none';
+  vDivider.style.display     = 'none';
+  markdownPane.style.display = 'none';
+  tasksView.style.display    = 'none';
+  metadataView.style.display = 'block';
+
+  metadataQuery = { key, value };
+  const label = value != null ? `${key}: ${value}` : key;
+  currentFile  = METADATA_PSEUDO_PAGE;
+  currentTitle = label;
+  fileNameEl.textContent = label;
+  document.title = `MoreInfo \u2014 ${label}`;
+  docTitle.textContent = label;
+
+  if (!metadataEditorView) {
+    metadataEditorView = createReadOnlyEditor({
+      parent:      metadataView,
+      onPageClick: openWikiPage,
+    });
+  }
+
+  mountedWidgets.forEach(w => { try { w.onFileOpen(METADATA_PSEUDO_PAGE, '', {}); } catch(e) {} });
+  renderBreadcrumbs();
+  updateNavButtonStates();
+
+  await refreshMetadataView();
+}
+
+async function refreshMetadataView() {
+  if (!metadataQuery || !metadataEditorView) return;
+  try {
+    const hits = await invoke('search_metadata', {
+      key:   metadataQuery.key,
+      value: metadataQuery.value ?? null,
+    });
+    const { doc, lineMap } = buildMetadataDoc(hits, metadataQuery);
+    metadataLineMap = lineMap;
+    metadataEditorView.dispatch({
+      changes: { from: 0, to: metadataEditorView.state.doc.length, insert: doc },
+    });
+  } catch(e) {
+    console.error('search_metadata failed:', e);
+  }
+}
+
+function buildMetadataDoc(hits, query) {
+  const lines   = [];
+  const lineMap = new Map();
+  let lineNo    = 1;
+
+  if (query.value != null) {
+    // Showing all pages where key = value.
+    lines.push(`# ${query.key}: ${query.value}`);
+    lineMap.set(lineNo++, null);
+    lines.push('');
+    lineMap.set(lineNo++, null);
+
+    if (hits.length === 0) {
+      lines.push('*No pages found.*');
+      lineMap.set(lineNo++, null);
+    } else {
+      for (const h of hits) {
+        lines.push(`- [[${h.title}]]`);
+        lineMap.set(lineNo++, { path: h.path });
+      }
+    }
+  } else {
+    // Showing all distinct values for a key, grouped.
+    const byValue = new Map();
+    for (const h of hits) {
+      // For arrays, split into individual values.
+      const vals = h.vtype === 'array'
+        ? h.value.split(',').map(v => v.trim()).filter(Boolean)
+        : [h.value];
+      for (const v of vals) {
+        if (!byValue.has(v)) byValue.set(v, []);
+        byValue.get(v).push(h);
+      }
+    }
+
+    lines.push(`# ${query.key}`);
+    lineMap.set(lineNo++, null);
+    lines.push('');
+    lineMap.set(lineNo++, null);
+
+    const sortedValues = [...byValue.keys()].sort((a, b) => a.localeCompare(b));
+    for (const val of sortedValues) {
+      const pages = byValue.get(val);
+      lines.push(`## ${val} (${pages.length})`);
+      lineMap.set(lineNo++, null);
+      lines.push('');
+      lineMap.set(lineNo++, null);
+      for (const h of pages) {
+        lines.push(`- [[${h.title}]]`);
+        lineMap.set(lineNo++, { path: h.path });
+      }
+      lines.push('');
+      lineMap.set(lineNo++, null);
+    }
+  }
+
+  return { doc: lines.join('\n'), lineMap };
+}
 
 // ── Wiki link navigation ──────────────────────────
 
@@ -1225,6 +1366,192 @@ function popupMenu(coords, options) {
   });
 }
 
+/**
+ * Show a checkmark menu of all widgets, positioned below `anchorEl`.
+ * Checked items are currently in `sidebarName`.
+ * Clicking a checked item removes it; clicking an unchecked item adds it
+ * (moving from any other sidebar it currently occupies).
+ */
+function showWidgetPicker(sidebarName, anchorEl) {
+  // Widget display labels — keyed by ID.
+  const WIDGET_LABELS = {
+    search:      'Search',
+    page:        'Page',
+    annotations: 'Annotations',
+    calendar:    'Calendar',
+    scratchPad:  'Scratch Pad',
+    tasks:       'Tasks',
+    favorites:   'Favorites',
+    references:  'References',
+    metadata:    'Metadata',
+  };
+
+  const current = new Set(widgetLayout[sidebarName] || []);
+
+  // Build items: checked ones first, then unchecked, alphabetical within each group.
+  const ids = Object.keys(WIDGET_LABELS);
+  const checked   = ids.filter(id =>  current.has(id)).sort((a,b) => WIDGET_LABELS[a].localeCompare(WIDGET_LABELS[b]));
+  const unchecked = ids.filter(id => !current.has(id)).sort((a,b) => WIDGET_LABELS[a].localeCompare(WIDGET_LABELS[b]));
+  const ordered   = [...checked, ...unchecked];
+
+  const rect = anchorEl.getBoundingClientRect();
+  const overlay = document.createElement('div');
+  overlay.className = 'fixed inset-0 z-[9999]';
+  overlay.tabIndex  = -1;
+
+  const menu = document.createElement('div');
+  menu.className = 'absolute bg-olive-900 border border-olive-700 rounded-lg shadow-xl py-1 min-w-[11rem]';
+
+  menu.innerHTML = ordered.map(id => {
+    const isChecked = current.has(id);
+    return `
+      <div data-widget-id="${id}"
+        class="flex items-center gap-2 px-3 py-1.5 text-sm cursor-pointer hover:bg-olive-700 select-none whitespace-nowrap
+               ${isChecked ? 'text-olive-100' : 'text-olive-500'}">
+        <i class="ph ${isChecked ? 'ph-check-square text-amber-400' : 'ph-square text-olive-700'} text-sm leading-none shrink-0"></i>
+        ${WIDGET_LABELS[id]}
+      </div>`;
+  }).join('');
+
+  overlay.appendChild(menu);
+  document.body.appendChild(overlay);
+
+  // Position below the anchor button, flush-right.
+  const pad = 4;
+  const { innerWidth: vw, innerHeight: vh } = window;
+  menu.style.top  = `${rect.bottom + pad}px`;
+  // After measuring width, right-align to anchor.
+  requestAnimationFrame(() => {
+    const mw = menu.offsetWidth;
+    let left = rect.right - mw;
+    if (left < pad) left = pad;
+    if (left + mw > vw - pad) left = vw - mw - pad;
+    menu.style.left = `${left}px`;
+  });
+
+  overlay.focus();
+
+  const finish = () => overlay.remove();
+
+  overlay.addEventListener('click', e => {
+    if (e.target === overlay) { finish(); return; }
+    const item = e.target.closest('[data-widget-id]');
+    if (!item) return;
+    finish();
+
+    const id  = item.dataset.widgetId;
+    const inCurrent = current.has(id);
+
+    if (inCurrent) {
+      // Remove from this sidebar.
+      widgetLayout[sidebarName] = widgetLayout[sidebarName].filter(w => w !== id);
+    } else {
+      // Remove from any other sidebar it may occupy.
+      for (const sb of Object.keys(widgetLayout)) {
+        if (sb !== sidebarName) {
+          widgetLayout[sb] = widgetLayout[sb].filter(w => w !== id);
+        }
+      }
+      // Add to the end of this sidebar.
+      widgetLayout[sidebarName] = [...(widgetLayout[sidebarName] || []), id];
+    }
+
+    // Remount all sidebars (a move may affect the source sidebar too).
+    for (const sb of Object.keys(widgetLayout)) remountSidebar(sb);
+    saveUiState();
+  });
+
+  overlay.addEventListener('keydown', e => { if (e.key === 'Escape') finish(); });
+  overlay.addEventListener('blur', () => finish(), true);
+}
+
+// ── Settings dialog ───────────────────────────────
+
+async function showSettingsDialog() {
+  const { open: openDialog, ask } = window.__TAURI__.dialog;
+  const { restart } = window.__TAURI__.process;
+
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className = 'fixed inset-0 z-[9999] flex items-center justify-center bg-black/60';
+
+    const currentPath = datastorePath || '(not set)';
+    overlay.innerHTML = `
+      <div class="bg-olive-900 border border-olive-700 rounded-lg shadow-xl p-5 w-[480px] flex flex-col gap-4">
+        <h2 class="text-sm font-semibold text-olive-100">Settings</h2>
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs text-olive-500 font-mono">Datastore location</label>
+          <div class="flex items-center gap-2">
+            <input id="mi-settings-path" type="text" readonly
+              value="${currentPath.replace(/"/g, '&quot;')}"
+              class="flex-1 bg-olive-800 border border-olive-600 rounded px-3 py-1.5 text-sm text-olive-200
+                     font-mono focus:outline-none cursor-default truncate" />
+            <button id="mi-settings-choose"
+              class="shrink-0 px-3 py-1.5 text-xs rounded bg-olive-700 text-olive-200 hover:bg-olive-600 whitespace-nowrap">
+              Choose\u2026
+            </button>
+          </div>
+          <p class="text-xs text-olive-600">The folder where MoreInfo stores all your pages, journals, and templates.</p>
+        </div>
+        <div class="flex justify-end gap-2 pt-1">
+          <button id="mi-settings-cancel"
+            class="px-3 py-1.5 text-xs rounded bg-olive-700 text-olive-200 hover:bg-olive-600">
+            Cancel
+          </button>
+          <button id="mi-settings-ok"
+            class="px-3 py-1.5 text-xs rounded bg-amber-700 text-white hover:bg-amber-600">
+            Done
+          </button>
+        </div>
+      </div>`;
+
+    document.body.appendChild(overlay);
+    const pathInput = overlay.querySelector('#mi-settings-path');
+    const chooseBtn = overlay.querySelector('#mi-settings-choose');
+    const okBtn     = overlay.querySelector('#mi-settings-ok');
+    const cancelBtn = overlay.querySelector('#mi-settings-cancel');
+
+    let pendingPath = null;  // set if user picked a new path
+
+    chooseBtn.addEventListener('click', async () => {
+      const chosen = await openDialog({ directory: true, multiple: false, title: 'Choose Datastore Folder' });
+      if (!chosen) return;
+      const newPath = Array.isArray(chosen) ? chosen[0] : chosen;
+      pendingPath = newPath;
+      pathInput.value = newPath;
+      pathInput.title = newPath;
+    });
+
+    const finish = async (save) => {
+      overlay.remove();
+      if (!save || !pendingPath || pendingPath === datastorePath) { resolve(); return; }
+
+      try {
+        await invoke('init_datastore', { path: pendingPath });
+        await invoke('set_datastore_path', { path: pendingPath });
+        datastorePath = pendingPath;
+
+        const confirmed = await ask(
+          'The datastore location has been changed. MoreInfo needs to restart to use the new location.\n\nRestart now?',
+          { title: 'Restart Required', kind: 'info', okLabel: 'Restart', cancelLabel: 'Later' }
+        );
+        if (confirmed) await restart();
+      } catch (err) {
+        console.error('Settings save failed:', err);
+      }
+      resolve();
+    };
+
+    okBtn.addEventListener('click',    () => finish(true));
+    cancelBtn.addEventListener('click',() => finish(false));
+    overlay.addEventListener('click',  e => { if (e.target === overlay) finish(false); });
+    overlay.addEventListener('keydown', e => {
+      if (e.key === 'Escape') finish(false);
+      if (e.key === 'Enter')  finish(true);
+    });
+  });
+}
+
 // ── Menu event handling ───────────────────────────
 
 window.__TAURI__.event.listen('menu', async e => {
@@ -1312,6 +1639,11 @@ window.__TAURI__.event.listen('menu', async e => {
     case 'file-reindex': {
       const count = await invoke('full_reindex');
       console.log(`Reindex complete — ${count} files indexed.`);
+      break;
+    }
+
+    case 'file-settings': {
+      await showSettingsDialog();
       break;
     }
   }
@@ -1415,6 +1747,7 @@ const allWidgetInstances = {
         invoke('write_file', { path: currentFile, content: newContent }).catch(console.error);
       }
     },
+    onNavigate: (key, value) => loadMetadataView(key, value),
   }),
 };
 
@@ -1434,6 +1767,17 @@ const defaultLayout = {
 const hasSavedLayout = Object.values(widgetLayout).some(arr => arr.length > 0);
 if (!hasSavedLayout) {
   widgetLayout = JSON.parse(JSON.stringify(defaultLayout));
+} else {
+  // Merge: any widget in the default layout that is absent from every saved
+  // sidebar gets inserted into its default sidebar (handles newly-added widgets).
+  const allSaved = new Set(Object.values(widgetLayout).flat());
+  for (const [sb, ids] of Object.entries(defaultLayout)) {
+    for (const id of ids) {
+      if (!allSaved.has(id)) {
+        widgetLayout[sb] = [...(widgetLayout[sb] || []), id];
+      }
+    }
+  }
 }
 
 // Initialise drag system.

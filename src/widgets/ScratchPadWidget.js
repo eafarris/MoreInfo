@@ -18,7 +18,7 @@ import { miTheme, miHighlightStyle, calcBlockPlugin } from '../editor.js';
 
 export class ScratchPadWidget extends Widget {
   constructor() {
-    super({ id: 'scratchpad', title: 'Scratch Pad', icon: 'ph-pencil-simple' });
+    super({ id: 'scratchPad', title: 'Scratch Pad', icon: 'ph-pencil-simple' });
     this._editor    = null;
     this._saveTimer = null;
   }

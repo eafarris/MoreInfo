@@ -183,7 +183,7 @@
   </style>
 </head>
 
-<body class="bg-olive-900 text-olive-300 h-screen flex flex-col overflow-hidden select-none">
+<body class="bg-gradient-to-br from-black to-olive-800 text-olive-300 h-screen flex flex-col overflow-hidden select-none">
 
   <!-- ── Toolbar ──────────────────────────────────────────────── -->
   <header
@@ -260,7 +260,7 @@
 
     <!-- ── Top sidebar (full width, above content-row) ────────── -->
     <div id="top-sidebar" data-sb-state="hidden"
-      class="shrink-0 border-b border-olive-700 flex flex-col bg-olive-900 data-[sb-state=flyout]:bg-olive-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
+      class="shrink-0 border-b border-olive-700 flex flex-col bg-transparent data-[sb-state=flyout]:bg-olive-950/80 data-[sb-state=flyout]:backdrop-blur-lg"
       style="height:160px">
 
       <!-- Bottom resize handle -->
@@ -270,10 +270,15 @@
       <!-- Header -->
       <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700/60 bg-olive-800">
         <span class="text-xs font-semibold text-olive-600 tracking-wider uppercase">Top Panel</span>
-        <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-300 hover:bg-olive-700 transition-colors">
-          <i class="sb-icon-pin ph ph-push-pin text-xs leading-none"></i>
-          <i class="sb-icon-close ph ph-x text-xs leading-none"></i>
-        </button>
+        <span class="flex items-center gap-0.5">
+          <button class="sb-manage-btn w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-300 hover:bg-olive-700 transition-colors" title="Manage widgets">
+            <i class="ph ph-columns-plus-right text-xs leading-none"></i>
+          </button>
+          <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-300 hover:bg-olive-700 transition-colors">
+            <i class="sb-icon-pin ph ph-push-pin text-xs leading-none"></i>
+            <i class="sb-icon-close ph ph-x text-xs leading-none"></i>
+          </button>
+        </span>
       </div>
       <!-- Widget stack -->
       <div class="widget-stack flex-1 min-h-0 flex flex-col" data-widgets="top"></div>
@@ -291,7 +296,7 @@
 
       <!-- ── Left sidebar (full height) ───────────────────────── -->
       <aside id="left-sidebar" data-sb-state="pinned"
-        class="shrink-0 border-r border-olive-700 flex flex-col bg-olive-900 data-[sb-state=flyout]:bg-olive-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
+        class="shrink-0 border-r border-olive-700 flex flex-col bg-transparent data-[sb-state=flyout]:bg-olive-950/80 data-[sb-state=flyout]:backdrop-blur-lg"
         style="width:208px">
 
         <!-- Right resize handle -->
@@ -301,10 +306,15 @@
         <!-- Header: label + action button -->
         <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700/60 bg-olive-800">
           <span class="text-xs font-semibold text-olive-600 tracking-wider uppercase">Left Sidebar</span>
-          <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-300 hover:bg-olive-700 transition-colors">
-            <i class="sb-icon-pin ph ph-push-pin text-xs leading-none"></i>
-            <i class="sb-icon-close ph ph-x text-xs leading-none"></i>
-          </button>
+          <span class="flex items-center gap-0.5">
+            <button class="sb-manage-btn w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-300 hover:bg-olive-700 transition-colors" title="Manage widgets">
+              <i class="ph ph-rows-plus-bottom text-xs leading-none"></i>
+            </button>
+            <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-300 hover:bg-olive-700 transition-colors">
+              <i class="sb-icon-pin ph ph-push-pin text-xs leading-none"></i>
+              <i class="sb-icon-close ph ph-x text-xs leading-none"></i>
+            </button>
+          </span>
         </div>
         <!-- Widget stack -->
         <div class="widget-stack flex-1 min-h-0 flex flex-col" data-widgets="left"></div>
@@ -326,6 +336,9 @@
           <!-- Tasks pseudo-page CM container (shown instead of editor-pane) -->
           <div id="tasks-view" class="flex-1 min-h-0 overflow-hidden" style="display:none"></div>
 
+          <!-- Metadata pseudo-page CM container -->
+          <div id="metadata-view" class="flex-1 min-h-0 overflow-hidden" style="display:none"></div>
+
           <!-- Editor pane -->
           <div id="editor-pane" class="flex-1 min-h-0 relative overflow-hidden">
             <div id="doc-title" class="px-6 pt-5 pb-3 text-xl font-semibold text-olive-100 leading-tight select-text"></div>
@@ -344,14 +357,14 @@
           </div>
 
           <!-- Markdown preview pane (render mode only) -->
-          <div id="markdown-pane" class="overflow-auto bg-olive-900">
+          <div id="markdown-pane" class="overflow-auto bg-transparent">
             <div id="markdown-content" class="prose prose-invert prose-sm max-w-none p-6 select-text"></div>
           </div>
         </main>
 
         <!-- ── Bottom sidebar ─────────────────────────────────── -->
         <div id="bottom-sidebar" data-sb-state="hidden"
-          class="shrink-0 border-t border-olive-700 flex flex-col bg-olive-900 data-[sb-state=flyout]:bg-olive-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
+          class="shrink-0 border-t border-olive-700 flex flex-col bg-transparent data-[sb-state=flyout]:bg-olive-950/80 data-[sb-state=flyout]:backdrop-blur-lg"
           style="height:180px">
 
           <!-- Top resize handle -->
@@ -361,10 +374,15 @@
           <!-- Header -->
           <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700/60 bg-olive-800">
             <span class="text-xs font-semibold text-olive-600 tracking-wider uppercase">Bottom Panel</span>
-            <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-300 hover:bg-olive-700 transition-colors">
-              <i class="sb-icon-pin ph ph-push-pin text-xs leading-none"></i>
-              <i class="sb-icon-close ph ph-x text-xs leading-none"></i>
-            </button>
+            <span class="flex items-center gap-0.5">
+              <button class="sb-manage-btn w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-300 hover:bg-olive-700 transition-colors" title="Manage widgets">
+                <i class="ph ph-columns-plus-right text-xs leading-none"></i>
+              </button>
+              <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-300 hover:bg-olive-700 transition-colors">
+                <i class="sb-icon-pin ph ph-push-pin text-xs leading-none"></i>
+                <i class="sb-icon-close ph ph-x text-xs leading-none"></i>
+              </button>
+            </span>
           </div>
           <!-- Widget stack: flex-row for side-by-side widgets -->
           <div class="widget-stack flex-1 min-h-0 flex flex-row" data-widgets="bottom"></div>
@@ -374,7 +392,7 @@
 
       <!-- ── Right sidebar (full height) ──────────────────────── -->
       <aside id="right-sidebar" data-sb-state="pinned"
-        class="shrink-0 border-l border-olive-700 flex flex-col bg-olive-900 data-[sb-state=flyout]:bg-olive-900/10 data-[sb-state=flyout]:backdrop-blur-lg"
+        class="shrink-0 border-l border-olive-700 flex flex-col bg-transparent data-[sb-state=flyout]:bg-olive-950/80 data-[sb-state=flyout]:backdrop-blur-lg"
         style="width:208px">
 
         <!-- Left resize handle -->
@@ -384,10 +402,15 @@
         <!-- Header: label + action button -->
         <div class="flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700/60 bg-olive-800">
           <span class="text-xs font-semibold text-olive-600 tracking-wider uppercase">Right Sidebar</span>
-          <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-300 hover:bg-olive-700 transition-colors">
-            <i class="sb-icon-pin ph ph-push-pin text-xs leading-none"></i>
-            <i class="sb-icon-close ph ph-x text-xs leading-none"></i>
-          </button>
+          <span class="flex items-center gap-0.5">
+            <button class="sb-manage-btn w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-300 hover:bg-olive-700 transition-colors" title="Manage widgets">
+              <i class="ph ph-rows-plus-bottom text-xs leading-none"></i>
+            </button>
+            <button class="sb-action-btn w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-300 hover:bg-olive-700 transition-colors">
+              <i class="sb-icon-pin ph ph-push-pin text-xs leading-none"></i>
+              <i class="sb-icon-close ph ph-x text-xs leading-none"></i>
+            </button>
+          </span>
         </div>
         <!-- Widget stack (populated by mountWidgets in main.js) -->
         <div class="widget-stack flex-1 min-h-0 flex flex-col" data-widgets="right"></div>

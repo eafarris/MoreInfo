@@ -35,10 +35,11 @@ export class MetadataWidget extends Widget {
   /**
    * @param {{ onStateChange: (hasContent: boolean) => void, onEdit?: (key: string, rawValue: string) => void }} config
    */
-  constructor({ onStateChange, onEdit } = {}) {
+  constructor({ onStateChange, onEdit, onNavigate } = {}) {
     super({ id: 'metadata', title: 'Metadata', icon: 'ph-list-dashes' });
     this._onStateChange = onStateChange || (() => {});
     this._onEdit        = onEdit || null;
+    this._onNavigate    = onNavigate || null;
     this._hasContent    = false;
     this._countEl       = null;
     this._lastMetadata  = null;
@@ -98,14 +99,30 @@ export class MetadataWidget extends Widget {
       ? `<div class="flex flex-col gap-2 p-3">${entries.map(([k, v]) => this._renderEntry(k, v)).join('')}</div>`
       : this._emptyState();
 
-    // Wire up click-to-edit on value cells.
-    if (hasContent && this._onEdit) {
+    // Wire up click-to-edit and double-click-to-navigate on value cells.
+    if (hasContent) {
       for (const el of this._body.querySelectorAll('[data-meta-key]')) {
-        el.addEventListener('click', e => {
-          // Don't re-enter if already editing this key.
-          if (el.querySelector('input, select')) return;
-          this._startEdit(el.dataset.metaKey, el);
-        });
+        if (this._onEdit) {
+          el.addEventListener('click', e => {
+            if (el.querySelector('input, select')) return;
+            this._startEdit(el.dataset.metaKey, el);
+          });
+        }
+        if (this._onNavigate) {
+          el.addEventListener('dblclick', e => {
+            e.preventDefault();
+            this._onNavigate(el.dataset.metaKey, el.dataset.metaValue);
+          });
+        }
+      }
+      // Double-click on the key label → navigate to all values for that key.
+      if (this._onNavigate) {
+        for (const dt of this._body.querySelectorAll('[data-meta-key-label]')) {
+          dt.addEventListener('dblclick', e => {
+            e.preventDefault();
+            this._onNavigate(dt.dataset.metaKeyLabel, undefined);
+          });
+        }
       }
     }
 
@@ -181,12 +198,13 @@ export class MetadataWidget extends Widget {
   _renderEntry(key, val) {
     let valueHtml;
     const editable = this._onEdit ? 'cursor-pointer hover:bg-olive-700/50 rounded transition-colors' : '';
+    const rawValue = serializeValue(val);
 
     switch (val.type) {
       case 'date': {
         const human = formatDate(val.value);
         valueHtml = `
-          <div data-meta-key="${esc(key)}" class="flex items-center gap-1.5 mt-1 px-1 py-0.5 ${editable}">
+          <div data-meta-key="${esc(key)}" data-meta-value="${esc(rawValue)}" class="flex items-center gap-1.5 mt-1 px-1 py-0.5 ${editable}">
             <i class="ph ph-calendar-blank text-amber-500 text-xs leading-none shrink-0"></i>
             <span class="text-olive-200 text-sm leading-snug" title="${esc(val.value)}">${esc(human)}</span>
           </div>`;
@@ -197,7 +215,7 @@ export class MetadataWidget extends Widget {
         const color = val.value ? 'text-amber-400' : 'text-olive-500';
         const icon  = val.value ? 'ph-toggle-right' : 'ph-toggle-left';
         valueHtml = `
-          <div data-meta-key="${esc(key)}" class="flex items-center gap-1.5 mt-1 px-1 py-0.5 ${editable}">
+          <div data-meta-key="${esc(key)}" data-meta-value="${esc(rawValue)}" class="flex items-center gap-1.5 mt-1 px-1 py-0.5 ${editable}">
             <i class="ph ${icon} ${color} text-base leading-none shrink-0"></i>
             <span class="${color} text-sm leading-snug">${label}</span>
           </div>`;
@@ -205,22 +223,23 @@ export class MetadataWidget extends Widget {
       }
       case 'array': {
         if (val.value.length === 0) {
-          valueHtml = `<div data-meta-key="${esc(key)}" class="mt-1 px-1 py-0.5 ${editable}"><p class="text-olive-600 text-xs italic">empty</p></div>`;
+          valueHtml = `<div data-meta-key="${esc(key)}" data-meta-value="" class="mt-1 px-1 py-0.5 ${editable}"><p class="text-olive-600 text-xs italic">empty</p></div>`;
         } else {
           const chips = val.value.map(item =>
             `<span class="inline-flex px-1.5 py-px rounded bg-olive-700 border border-olive-600 text-olive-300 text-xs font-mono">${esc(item)}</span>`
           ).join('');
-          valueHtml = `<div data-meta-key="${esc(key)}" class="flex flex-wrap gap-1 mt-1 px-1 py-0.5 ${editable}">${chips}</div>`;
+          valueHtml = `<div data-meta-key="${esc(key)}" data-meta-value="${esc(rawValue)}" class="flex flex-wrap gap-1 mt-1 px-1 py-0.5 ${editable}">${chips}</div>`;
         }
         break;
       }
       default: {
-        valueHtml = `<div data-meta-key="${esc(key)}" class="mt-1 px-1 py-0.5 ${editable}"><p class="text-olive-200 text-sm wrap-break-word leading-snug">${esc(val.value)}</p></div>`;
+        valueHtml = `<div data-meta-key="${esc(key)}" data-meta-value="${esc(rawValue)}" class="mt-1 px-1 py-0.5 ${editable}"><p class="text-olive-200 text-sm wrap-break-word leading-snug">${esc(val.value)}</p></div>`;
       }
     }
+    const navCls = this._onNavigate ? 'cursor-pointer' : '';
     return `
       <div class="rounded-md px-3 py-2 bg-olive-800/60 border border-olive-700/50">
-        <dt class="text-xs font-mono text-olive-500 truncate">${esc(key)}</dt>
+        <dt data-meta-key-label="${esc(key)}" class="text-xs font-mono text-olive-500 truncate ${navCls}">${esc(key)}</dt>
         ${valueHtml}
       </div>`;
   }

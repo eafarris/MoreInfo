@@ -1105,6 +1105,44 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
   return new EditorView({ state, parent });
 }
 
+// ── Read-only pseudo-page editor ─────────────────────────────────────────────
+// A read-only CM6 instance for pseudo-pages that display formatted markdown
+// with clickable wiki links but no editing.
+
+export function createReadOnlyEditor({ parent, onPageClick }) {
+  const clickHandler = EditorView.domEventHandlers({
+    click(event, view) {
+      const pos = view.posAtCoords({ x: event.clientX, y: event.clientY });
+      if (pos == null) return false;
+      const title = wikiTitleAt(view, pos) || camelTitleAt(view, pos);
+      if (!title) return false;
+      onPageClick(title);
+      return true;
+    },
+  });
+
+  const state = EditorState.create({
+    doc: '',
+    extensions: [
+      EditorState.readOnly.of(true),
+      markdown({ base: { parser: markdownLanguage.parser.configure({ remove: ['SetextHeading'] }) } }),
+      syntaxHighlighting(miHighlightStyle),
+      wikilinkPlugin,
+      camelLinkPlugin,
+      hashtagPlugin,
+      EditorView.lineWrapping,
+      clickHandler,
+      miTheme,
+      EditorView.theme({
+        '&':            { height: '100%' },
+        '.cm-scroller': { overflow: 'auto', padding: '1.5rem 2rem' },
+      }),
+    ],
+  });
+
+  return new EditorView({ state, parent });
+}
+
 // ── Tasks pseudo-page editor ─────────────────────────────────────────────────
 // A read-write CM6 instance sharing all visual extensions with the main editor.
 // Enter is blocked (task lines only; no new-line creation from the view).

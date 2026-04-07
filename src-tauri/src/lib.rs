@@ -3,7 +3,7 @@ use front_matter;
 use chrono::Datelike;
 use pulldown_cmark::{html, Options, Parser};
 use rusqlite::Connection;
-use tauri::menu::{MenuBuilder, MenuItem, SubmenuBuilder};
+use tauri::menu::{AboutMetadata, MenuBuilder, MenuItem, SubmenuBuilder};
 use tauri::Emitter;
 
 // ── Preferences ─────────────────────────────────────────────────────────────
@@ -393,7 +393,7 @@ fn open_db() -> Result<Connection, String> {
 
 /// Bump this whenever the schema or indexing logic changes in a way that
 /// requires existing cached data to be discarded and rebuilt.
-const SCHEMA_VERSION: i64 = 15;
+const SCHEMA_VERSION: i64 = 16;
 
 fn init_schema(conn: &Connection) -> Result<(), String> {
     conn.execute_batch("
@@ -468,6 +468,14 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
             PRIMARY KEY (path, line_number, context)
         );
         CREATE INDEX IF NOT EXISTS idx_tc_context ON task_contexts(context);
+        CREATE TABLE IF NOT EXISTS file_metadata (
+            path  TEXT NOT NULL,
+            key   TEXT NOT NULL COLLATE NOCASE,
+            value TEXT NOT NULL DEFAULT '',
+            type  TEXT NOT NULL DEFAULT 'text',
+            PRIMARY KEY (path, key)
+        );
+        CREATE INDEX IF NOT EXISTS idx_fmeta_key ON file_metadata(key);
     ").map_err(|e| e.to_string())?;
 
     // Migrate columns added after initial release (silently ignored if present).
@@ -495,7 +503,7 @@ fn init_schema(conn: &Connection) -> Result<(), String> {
 
     if stored != Some(SCHEMA_VERSION) {
         conn.execute_batch(
-            "DELETE FROM wiki_links; DELETE FROM files; DELETE FROM fts; DELETE FROM file_tags; DELETE FROM file_aliases; DELETE FROM future_tasks; DELETE FROM tasks; DELETE FROM annotations; DELETE FROM task_contexts; DELETE FROM meta WHERE key != 'schema_version';"
+            "DELETE FROM wiki_links; DELETE FROM files; DELETE FROM fts; DELETE FROM file_tags; DELETE FROM file_aliases; DELETE FROM future_tasks; DELETE FROM tasks; DELETE FROM annotations; DELETE FROM task_contexts; DELETE FROM file_metadata; DELETE FROM meta WHERE key != 'schema_version';"
         ).map_err(|e| e.to_string())?;
         conn.execute(
             "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', ?1)",
@@ -527,6 +535,8 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
         conn.execute("DELETE FROM annotations WHERE path = ?1", [path_str])
             .map_err(|e| e.to_string())?;
         conn.execute("DELETE FROM task_contexts WHERE path = ?1", [path_str])
+            .map_err(|e| e.to_string())?;
+        conn.execute("DELETE FROM file_metadata WHERE path = ?1", [path_str])
             .map_err(|e| e.to_string())?;
         return Ok(());
     }
@@ -650,6 +660,22 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
                 rusqlite::params![path_str, alias, alias_slug],
             ).map_err(|e| e.to_string())?;
         }
+    }
+
+    // Index all metadata key/value pairs for the metadata pseudo-page.
+    conn.execute("DELETE FROM file_metadata WHERE path = ?1", [path_str])
+        .map_err(|e| e.to_string())?;
+    for (key, val) in &fm {
+        let (type_str, val_str) = match val {
+            front_matter::Value::Text(s)  => ("text",  s.clone()),
+            front_matter::Value::Date(s)  => ("date",  s.clone()),
+            front_matter::Value::Bool(b)  => ("bool",  if *b { "true".to_string() } else { "false".to_string() }),
+            front_matter::Value::Array(a) => ("array", a.join(", ")),
+        };
+        conn.execute(
+            "INSERT OR REPLACE INTO file_metadata (path, key, value, type) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params![path_str, key, val_str, type_str],
+        ).map_err(|e| e.to_string())?;
     }
 
     // Index tasks (with implicit heading), task contexts, and annotations in one pass.
@@ -1259,6 +1285,63 @@ fn list_tasks(checked: Option<bool>) -> Result<Vec<TaskEntry>, String> {
     Ok(entries)
 }
 
+// ── Metadata search ──────────────────────────────────────────────────────────
+
+#[derive(serde::Serialize)]
+struct MetadataHit {
+    path:   String,
+    title:  String,
+    value:  String,
+    #[serde(rename = "type")]
+    vtype:  String,
+}
+
+/// Find all pages that have a given metadata key (optionally matching a value).
+#[tauri::command]
+fn search_metadata(key: String, value: Option<String>) -> Result<Vec<MetadataHit>, String> {
+    let conn = open_db()?;
+    init_schema(&conn)?;
+
+    let (sql, params): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(ref val) = value {
+        ("SELECT fm.path, f.title, fm.value, fm.type \
+          FROM file_metadata fm JOIN files f ON f.path = fm.path \
+          WHERE fm.key = ?1 AND fm.value = ?2 COLLATE NOCASE \
+          ORDER BY f.title",
+         vec![Box::new(key.clone()), Box::new(val.clone())])
+    } else {
+        ("SELECT fm.path, f.title, fm.value, fm.type \
+          FROM file_metadata fm JOIN files f ON f.path = fm.path \
+          WHERE fm.key = ?1 \
+          ORDER BY f.title",
+         vec![Box::new(key.clone())])
+    };
+    let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
+    let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let mut hits: Vec<MetadataHit> = stmt.query_map(param_refs.as_slice(), |row| Ok(MetadataHit {
+        path:  row.get(0)?,
+        title: row.get(1)?,
+        value: row.get(2)?,
+        vtype: row.get(3)?,
+    })).map_err(|e| e.to_string())?
+      .filter_map(|r| r.ok())
+      .collect();
+
+    // For array metadata, filter: only include hits where the target value
+    // appears as an element in the comma-separated list.
+    if let Some(ref val) = value {
+        let lc = val.to_lowercase();
+        hits.retain(|h| {
+            if h.vtype == "array" {
+                h.value.split(',').any(|item| item.trim().eq_ignore_ascii_case(&lc))
+            } else {
+                true
+            }
+        });
+    }
+
+    Ok(hits)
+}
+
 /// Rewrite one task line in a source file.
 ///
 /// `original_text` is the task text as stored in the DB (the content after
@@ -1474,6 +1557,38 @@ fn save_prefs(prefs: Prefs) -> Result<(), String> {
 #[tauri::command]
 fn get_datastore_path() -> Result<String, String> {
     Ok(datastore_dir()?.to_string_lossy().to_string())
+}
+
+/// Ensure `path` is a valid MI datastore: create the standard subdirectories
+/// (journal, wiki, templates) and scratchpad.md if they don't already exist.
+/// Returns true if this was a fresh initialisation, false if it already existed.
+#[tauri::command]
+fn init_datastore(path: String) -> Result<bool, String> {
+    let root = std::path::PathBuf::from(&path);
+    std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+
+    let is_fresh = !root.join("moreinfo.sqlite").exists()
+        && !root.join("journal").exists()
+        && !root.join("wiki").exists();
+
+    for sub in ["journal", "wiki", "templates"] {
+        std::fs::create_dir_all(root.join(sub)).map_err(|e| e.to_string())?;
+    }
+    let scratch = root.join("scratchpad.md");
+    if !scratch.exists() {
+        std::fs::write(&scratch, "").map_err(|e| e.to_string())?;
+    }
+
+    Ok(is_fresh)
+}
+
+/// Persist a new datastore path to app preferences.  The change takes effect
+/// on next launch; the caller is responsible for prompting a restart.
+#[tauri::command]
+fn set_datastore_path(path: String) -> Result<(), String> {
+    let mut prefs = current_prefs();
+    prefs.datastore = if path.is_empty() { None } else { Some(path) };
+    persist_prefs(prefs)
 }
 
 /// Recursively collect all `.md` files under `dir` into `out`.
@@ -2030,6 +2145,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let handle = app.handle();
 
@@ -2047,12 +2163,22 @@ pub fn run() {
             let file_from_template    = MenuItem::with_id(handle, "file-from-template",    "New from Template\u{2026}", true, None::<&str>)?;
             let file_edit_template    = MenuItem::with_id(handle, "file-edit-template",    "Edit Template\u{2026}",     true, None::<&str>)?;
             let file_reindex          = MenuItem::with_id(handle, "file-reindex",          "Reindex Database",          true, None::<&str>)?;
+            let file_settings         = MenuItem::with_id(handle, "file-settings",         "Settings\u{2026}",          true, Some("CmdOrCtrl+,"))?;
 
             let menu = MenuBuilder::new(handle)
                 .items(&[
                     // ── App menu (macOS convention) ──────────────────
                     &SubmenuBuilder::new(handle, "MoreInfo")
-                        .about(None)
+                        .about(Some(AboutMetadata {
+                            name:      Some("MoreInfo".to_string()),
+                            version:   Some(env!("CARGO_PKG_VERSION").to_string()),
+                            copyright: Some("\u{00a9} 2026 Eric A. Farris".to_string()),
+                            license:   Some("MIT License".to_string()),
+                            comments:  Some("A markdown-based personal knowledge base.".to_string()),
+                            ..Default::default()
+                        }))
+                        .separator()
+                        .item(&file_settings)
                         .separator()
                         .services()
                         .separator()
@@ -2071,6 +2197,8 @@ pub fn run() {
                         .item(&file_edit_template)
                         .separator()
                         .item(&file_reindex)
+                        .separator()
+                        .item(&file_settings)
                         .build()?,
                     // ── Edit ────────────────────────────────────────
                     &SubmenuBuilder::new(handle, "Edit")
@@ -2102,6 +2230,17 @@ pub fn run() {
                         .separator()
                         .close_window()
                         .build()?,
+                    // ── Help (Windows convention; macOS uses app menu) ──
+                    &SubmenuBuilder::new(handle, "Help")
+                        .about(Some(AboutMetadata {
+                            name:      Some("MoreInfo".to_string()),
+                            version:   Some(env!("CARGO_PKG_VERSION").to_string()),
+                            copyright: Some("\u{00a9} 2026 Eric A. Farris".to_string()),
+                            license:   Some("MIT License".to_string()),
+                            comments:  Some("A markdown-based personal knowledge base.".to_string()),
+                            ..Default::default()
+                        }))
+                        .build()?,
                 ])
                 .build()?;
 
@@ -2120,6 +2259,8 @@ pub fn run() {
             get_prefs,
             save_prefs,
             get_datastore_path,
+            init_datastore,
+            set_datastore_path,
             read_file,
             write_file,
             list_journal_dates,
@@ -2140,6 +2281,7 @@ pub fn run() {
             list_favorites,
             list_annotations,
             list_tasks,
+            search_metadata,
             write_task_line,
             get_linked_tasks,
             save_window_size,

@@ -889,7 +889,7 @@ dependencies = [
 
 [[package]]
 name = "front-matter"
-version = "0.1.0"
+version = "0.8.0"
 dependencies = [
  "serde",
 ]
@@ -1984,7 +1984,7 @@ dependencies = [
 
 [[package]]
 name = "more-info"
-version = "0.1.0"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "front-matter",
@@ -1996,6 +1996,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
+ "tauri-plugin-process",
  "tauri-plugin-window-state",
 ]
 
@@ -3830,6 +3831,16 @@ dependencies = [
  "thiserror 2.0.18",
  "toml 0.9.12+spec-1.1.0",
  "url",
+]
+
+[[package]]
+name = "tauri-plugin-process"
+version = "2.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d55511a7bf6cd70c8767b02c97bf8134fa434daf3926cfc1be0a0f94132d165a"
+dependencies = [
+ "tauri",
+ "tauri-plugin",
 ]
 
 [[package]]

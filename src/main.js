@@ -740,10 +740,12 @@ function mountWidgets(sidebarName, widgets) {
     const isLast = i === toMount.length - 1;
     if (savedSize && !isLast) {
       wrapper.style.flex = `0 0 ${savedSize}px`;
-    } else if (isLast) {
+    } else {
+      // All unsized widgets (last or not) grow to share available space equally.
+      // wrapperClass is applied for border/colour styling only — any sizing
+      // classes it contains are superseded by the inline flex below.
       wrapper.style.flex = '1 1 0';
       wrapper.style[horiz ? 'minWidth' : 'minHeight'] = '0';
-    } else {
       widget.wrapperClass.split(/\s+/).filter(Boolean).forEach(cls => wrapper.classList.add(cls));
     }
     wrapper.dataset.widgetId = widget.id;

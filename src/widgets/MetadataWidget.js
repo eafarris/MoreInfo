@@ -116,7 +116,7 @@ export class MetadataWidget extends Widget {
         if (this._onNavigate) {
           el.addEventListener('dblclick', e => {
             e.preventDefault();
-            const chip = e.target.closest('[data-meta-chip-value]');
+            const chip  = e.target.closest('[data-meta-chip-value]');
             const value = chip ? chip.dataset.metaChipValue : el.dataset.metaValue;
             this._onNavigate(el.dataset.metaKey, value);
           });

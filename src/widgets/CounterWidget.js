@@ -71,7 +71,7 @@ export class CounterWidget extends Widget {
     this._hadMeta = false;
   }
 
-  get wrapperClass() { return 'flex flex-col shrink-0 border-l border-olive-700'; }
+  get wrapperClass() { return 'flex flex-col border-l border-olive-700'; }
 
   onMount() {
     this._render({ paragraphs: 0, sentences: 0, words: 0, chars: 0 }, false);

@@ -960,7 +960,11 @@ export const placeholderCompartment = new Compartment();
 function wikiLinkSource(context) {
   const match = context.matchBefore(/\[\[[^\]]*$/);
   if (!match) return null;
-  const query = match.text.slice(2).toLowerCase();
+  // Trim leading spaces so "[[ foo" matches pages starting with "foo".
+  // If nothing remains after trimming (e.g. "[[" or "[[ "), don't suggest —
+  // this prevents an immediate space from completing the first item.
+  const query = match.text.slice(2).trimStart().toLowerCase();
+  if (!query) return null;
   const options = _allPages
     .filter(p => p.title.toLowerCase().startsWith(query))
     .slice(0, 8)
@@ -968,12 +972,9 @@ function wikiLinkSource(context) {
       label:  p.title,
       detail: '[[link]]',
       apply(view, _completion, _from, to) {
-        // Read the actual typed text from the doc (not match.text, which may
-        // be stale if CM6 used client-side validFor filtering after the last
-        // source invocation). Append only the untyped suffix from the title.
-        const typed  = view.state.doc.sliceString(match.from + 2, to);
-        const rest   = p.title.slice(typed.length);
-        const insert = `[[${typed}${rest}]] `;
+        // Always insert the full title, trimming any spaces the user typed
+        // inside the brackets (e.g. "[[ like this" → "[[like this]]").
+        const insert = `[[${p.title}]] `;
         view.dispatch({
           changes: { from: match.from, to, insert },
           selection: { anchor: match.from + insert.length },

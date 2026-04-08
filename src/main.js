@@ -1,6 +1,7 @@
 import './input.css';
 import { preprocessCalcBlocks } from './calcBlock.js';
 import { invoke } from './tauri.js';
+import { EditorView } from '@codemirror/view';
 import { restoreStateCurrent, StateFlags } from '@tauri-apps/plugin-window-state';
 import { CalendarWidget }    from './widgets/CalendarWidget.js';
 import { MetadataWidget }    from './widgets/MetadataWidget.js';
@@ -12,6 +13,7 @@ import { TasksWidget }         from './widgets/TasksWidget.js';
 import { AnnotationsWidget }   from './widgets/AnnotationsWidget.js';
 import { BrowserWidget }     from './widgets/BrowserWidget.js';
 import { CounterWidget }     from './widgets/CounterWidget.js';
+import { OutlineWidget }     from './widgets/OutlineWidget.js';
 import { SearchWidget }      from './widgets/SearchWidget.js';
 import { createEditor, createTasksEditor, createTaskPriorityPlugin, createReadOnlyEditor, setEditorPages, placeholderCompartment } from './editor.js';
 import { initWidgetDrag } from './widgetDrag.js';
@@ -35,6 +37,7 @@ const METADATA_PSEUDO_PAGE = '::metadata::';
 let tasksEditorView  = null;
 let taskLineMap      = new Map(); // syntheticLineNo (1-based) → {path, sourceLineNo, originalText} | null
 const pendingWrites  = new Map(); // syntheticLineNo → setTimeout id
+const tasksContextFilter = new Set(); // active @context toggles; empty = show all
 
 // Metadata pseudo-page state.
 let metadataEditorView = null;
@@ -50,7 +53,9 @@ function extractTaskText(line) { return line.replace(TASK_TEXT_RE, ''); }
 const editorDiv           = document.getElementById('editor');
 const editorArea          = document.getElementById('editor-area');
 const editorPane          = document.getElementById('editor-pane');
-const tasksView       = document.getElementById('tasks-view');
+const tasksView           = document.getElementById('tasks-view');
+const tasksFilterBar      = document.getElementById('tasks-filter-bar');
+const tasksEditorContainer= document.getElementById('tasks-editor-container');
 const metadataView    = document.getElementById('metadata-view');
 const vDivider        = document.getElementById('v-divider');
 const markdownPane    = document.getElementById('markdown-pane');
@@ -724,11 +729,15 @@ function mountWidgets(sidebarName, widgets) {
   if (!stack) return;
   const orientation = (sidebarName === 'top' || sidebarName === 'bottom') ? 'horizontal' : 'vertical';
   const horiz = orientation === 'horizontal';
-  widgets.forEach((widget, i) => {
-    if (mountedWidgets.includes(widget)) return; // guard: each instance mounts at most once
+  // Pre-filter so isLast is correct even if some instances are already mounted.
+  const toMount = widgets.filter(w => !mountedWidgets.includes(w));
+  toMount.forEach((widget, i) => {
     const wrapper = document.createElement('div');
-    const savedSize = widgetSizes[widget.id];
-    const isLast = i === widgets.length - 1;
+    // Guard: a savedSize smaller than MIN_WIDGET_SIZE (e.g. a header-strip
+    // width saved from a rolled-up widget) is treated as absent so the widget
+    // can size itself freely rather than being locked to a tiny sliver.
+    const savedSize = (widgetSizes[widget.id] >= 48) ? widgetSizes[widget.id] : 0;
+    const isLast = i === toMount.length - 1;
     if (savedSize && !isLast) {
       wrapper.style.flex = `0 0 ${savedSize}px`;
     } else if (isLast) {
@@ -740,7 +749,7 @@ function mountWidgets(sidebarName, widgets) {
     wrapper.dataset.widgetId = widget.id;
     stack.appendChild(wrapper);
     widget.mount(wrapper, orientation);
-    if (!mountedWidgets.includes(widget)) mountedWidgets.push(widget);
+    mountedWidgets.push(widget);
     widgetRegistry.set(widget.id, widget);
     if (!widgetLayout[sidebarName].includes(widget.id)) {
       widgetLayout[sidebarName].push(widget.id);
@@ -749,15 +758,11 @@ function mountWidgets(sidebarName, widgets) {
   if (_widgetDrag) _widgetDrag.wireUp(sidebarName);
 }
 
-/**
- * Tear down and remount all widgets in a sidebar from the layout registry.
- */
-function remountSidebar(sidebarName) {
+/** Destroy all widgets in a sidebar's stack and remove them from mountedWidgets. */
+function teardownSidebar(sidebarName) {
   const { sidebar } = sbConfig[sidebarName];
   const stack = sidebar.querySelector('.widget-stack');
   if (!stack) return;
-
-  // Destroy existing widgets in this stack.
   for (const wrapper of [...stack.querySelectorAll('[data-widget-id]')]) {
     const w = widgetRegistry.get(wrapper.dataset.widgetId);
     if (w) {
@@ -767,14 +772,35 @@ function remountSidebar(sidebarName) {
     }
   }
   stack.innerHTML = '';
+}
 
-  // Rebuild from layout.
+/**
+ * Tear down and remount all widgets in a sidebar from the layout registry.
+ */
+function remountSidebar(sidebarName) {
+  teardownSidebar(sidebarName);
   const ids = widgetLayout[sidebarName] || [];
   const widgets = ids.map(id => widgetRegistry.get(id)).filter(Boolean);
-
-  // Clear layout for this sidebar so mountWidgets repopulates it cleanly.
   widgetLayout[sidebarName] = [];
   mountWidgets(sidebarName, widgets);
+  saveUiState();
+}
+
+/**
+ * Tear down ALL sidebars, then remount all from the current layout.
+ * Required when widgets move between sidebars: tearing down one sidebar at a
+ * time leaves moving widgets still in mountedWidgets when their target sidebar
+ * is processed, causing the dedup guard to skip them.
+ */
+function rebuildAllSidebars() {
+  const sbs = Object.keys(widgetLayout);
+  for (const sb of sbs) teardownSidebar(sb);
+  for (const sb of sbs) {
+    const ids = widgetLayout[sb] || [];
+    const widgets = ids.map(id => widgetRegistry.get(id)).filter(Boolean);
+    widgetLayout[sb] = [];
+    mountWidgets(sb, widgets);
+  }
   saveUiState();
 }
 
@@ -942,13 +968,17 @@ async function openJournalDate(dateStr) {
  * Show the Tasks view. When `pushHistory` is true (default), the current
  * page is pushed onto navHistory first.
  */
-async function loadTasksView(pushHistory = true) {
+async function loadTasksView(pushHistory = true, contextFilter = null) {
   if (pushHistory && currentFile && currentFile !== TASKS_PSEUDO_PAGE) {
     navHistory.push({
       path:  currentFile,
       title: currentTitle || basename(currentFile).replace(/\.[^.]+$/, ''),
     });
   }
+
+  // Seed the filter: replace current selection with the provided context, or clear.
+  tasksContextFilter.clear();
+  if (contextFilter) tasksContextFilter.add(contextFilter.toLowerCase());
 
   editorPane.style.display     = 'none';
   vDivider.style.display       = 'none';
@@ -966,7 +996,7 @@ async function loadTasksView(pushHistory = true) {
   if (!tasksEditorView) {
     const priPlugin = createTaskPriorityPlugin(lineNo => taskLineMap.get(lineNo)?.effectivePriority);
     tasksEditorView = createTasksEditor({
-      parent:         tasksView,
+      parent:         tasksEditorContainer,
       onUpdate:       onTasksDocChanged,
       onPageClick:    openWikiPage,
       priorityPlugin: priPlugin,
@@ -1034,10 +1064,61 @@ function buildSyntheticDoc(tasks) {
   return { doc: lines.join('\n'), lineMap };
 }
 
+/** Extract all unique @context tokens from a task list (excludes reserved params). */
+const RESERVED_AT_NAMES = new Set(['done', 'due', 'defer', 'priority', 'overdue', 'waiting', 'someday']);
+function extractContexts(tasks) {
+  const seen = new Set();
+  const atRe = /@([a-zA-Z][a-zA-Z0-9_-]*)/g;
+  for (const t of tasks) {
+    let m;
+    atRe.lastIndex = 0;
+    while ((m = atRe.exec(t.text)) !== null) {
+      const name = m[1].toLowerCase();
+      if (!RESERVED_AT_NAMES.has(name)) seen.add(name);
+    }
+  }
+  return [...seen].sort();
+}
+
+/** Render the filter chip bar above the tasks editor. */
+function renderTasksFilterBar(contexts) {
+  if (!contexts.length) { tasksFilterBar.innerHTML = ''; return; }
+
+  const label = `<span class="text-xs text-olive-600 font-semibold tracking-wider uppercase shrink-0">Contexts</span>`;
+  const chips = contexts.map(c => {
+    const isActive = tasksContextFilter.has(c);
+    return `<button data-ctx="${escapeHtml(c)}"
+      class="tasks-filter-chip shrink-0 px-2 py-0.5 rounded text-xs font-mono leading-5 transition-colors select-none whitespace-nowrap
+             ${isActive
+               ? 'bg-amber-700 text-white'
+               : 'bg-olive-800 text-olive-400 hover:bg-olive-700 hover:text-olive-200'}"
+    >@${escapeHtml(c)}</button>`;
+  }).join('');
+  tasksFilterBar.innerHTML = label + chips;
+}
+
 async function refreshTasksView() {
   const scrollTop = tasksEditorView ? tasksEditorView.scrollDOM.scrollTop : 0;
   try {
-    const tasks          = await invoke('list_tasks', { checked: false });
+    const allTasks = await invoke('list_tasks', { checked: false });
+
+    // Render filter bar from the full unfiltered set.
+    const contexts = extractContexts(allTasks);
+    renderTasksFilterBar(contexts);
+
+    // Apply context filter (OR: task must have at least one active context).
+    let tasks = allTasks;
+    if (tasksContextFilter.size > 0) {
+      tasks = allTasks.filter(t => {
+        const atRe = /@([a-zA-Z][a-zA-Z0-9_-]*)/g;
+        let m;
+        while ((m = atRe.exec(t.text)) !== null) {
+          if (tasksContextFilter.has(m[1].toLowerCase())) return true;
+        }
+        return false;
+      });
+    }
+
     const { doc, lineMap } = buildSyntheticDoc(tasks);
     taskLineMap = lineMap;
     tasksEditorView.dispatch({
@@ -1094,6 +1175,35 @@ function onTasksDocChanged(update) {
 }
 
 document.getElementById('btn-tasks').addEventListener('click', () => loadTasksView());
+
+// Double-clicking a @context tag in the main editor opens the Tasks view filtered to that context.
+editorDiv.addEventListener('dblclick', e => {
+  const span = e.target.closest('.cm-at-context');
+  if (!span) return;
+  const context = span.textContent.replace(/^@/, '').trim();
+  if (context) loadTasksView(true, context);
+});
+
+// Double-clicking a @context tag in the Tasks pseudo-page toggles that context filter.
+tasksEditorContainer.addEventListener('dblclick', e => {
+  const span = e.target.closest('.cm-at-context');
+  if (!span) return;
+  const context = span.textContent.replace(/^@/, '').trim().toLowerCase();
+  if (!context) return;
+  if (tasksContextFilter.has(context)) tasksContextFilter.delete(context);
+  else tasksContextFilter.add(context);
+  refreshTasksView();
+});
+
+// Clicking a filter chip toggles that context.
+tasksFilterBar.addEventListener('click', e => {
+  const chip = e.target.closest('.tasks-filter-chip');
+  if (!chip) return;
+  const ctx = chip.dataset.ctx;
+  if (tasksContextFilter.has(ctx)) tasksContextFilter.delete(ctx);
+  else tasksContextFilter.add(ctx);
+  refreshTasksView();
+});
 
 // ── Metadata pseudo-page ──────────────────────────
 
@@ -1373,18 +1483,10 @@ function popupMenu(coords, options) {
  * (moving from any other sidebar it currently occupies).
  */
 function showWidgetPicker(sidebarName, anchorEl) {
-  // Widget display labels — keyed by ID.
-  const WIDGET_LABELS = {
-    search:      'Search',
-    page:        'Page',
-    annotations: 'Annotations',
-    calendar:    'Calendar',
-    scratchPad:  'Scratch Pad',
-    tasks:       'Tasks',
-    favorites:   'Favorites',
-    references:  'References',
-    metadata:    'Metadata',
-  };
+  // Build labels from the live registry so no widget is ever missing.
+  const WIDGET_LABELS = Object.fromEntries(
+    [...widgetRegistry.entries()].map(([id, w]) => [id, w.title])
+  );
 
   const current = new Set(widgetLayout[sidebarName] || []);
 
@@ -1456,9 +1558,7 @@ function showWidgetPicker(sidebarName, anchorEl) {
       widgetLayout[sidebarName] = [...(widgetLayout[sidebarName] || []), id];
     }
 
-    // Remount all sidebars (a move may affect the source sidebar too).
-    for (const sb of Object.keys(widgetLayout)) remountSidebar(sb);
-    saveUiState();
+    rebuildAllSidebars();
   });
 
   overlay.addEventListener('keydown', e => { if (e.key === 'Escape') finish(); });
@@ -1726,6 +1826,11 @@ function updateBottomVisibility() {
 const allWidgetInstances = {
   search:      new SearchWidget({ onOpen: (path, title) => pageWidget.loadPath(path, title) }),
   page:        pageWidget,
+  outline:     new OutlineWidget({ onScrollTo: pos => {
+    if (cmView) cmView.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: 32 }) });
+  }}),
+  counter:     new CounterWidget(),
+  browser:     new BrowserWidget(),
   annotations: new AnnotationsWidget({ onOpen: openFilePath }),
   calendar:    new CalendarWidget({ onDateSelected: openJournalDate }),
   scratchPad:  new ScratchPadWidget(),
@@ -1790,6 +1895,20 @@ _widgetDrag = initWidgetDrag({
   getWidgetSizes: () => widgetSizes,
   setWidgetSizes: s  => { widgetSizes = s; saveUiState(); },
 });
+
+// Deduplicate: a widget ID may appear in multiple sidebars in stale localStorage
+// (e.g. from a move that was saved before the dedup fix). First-seen wins so
+// the dedup guard in mountWidgets doesn't silently skip the second occurrence.
+{
+  const seen = new Set();
+  for (const sb of ['left', 'right', 'top', 'bottom']) {
+    widgetLayout[sb] = (widgetLayout[sb] || []).filter(id => {
+      if (seen.has(id)) return false;
+      seen.add(id);
+      return true;
+    });
+  }
+}
 
 // Mount widgets per layout.
 for (const sidebarName of ['left', 'right', 'top', 'bottom']) {

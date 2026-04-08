@@ -334,7 +334,10 @@
           class="flex flex-col flex-1 min-h-0 overflow-hidden">
 
           <!-- Tasks pseudo-page CM container (shown instead of editor-pane) -->
-          <div id="tasks-view" class="flex-1 min-h-0 overflow-hidden" style="display:none"></div>
+          <div id="tasks-view" class="flex-1 min-h-0 overflow-hidden flex flex-col" style="display:none">
+            <div id="tasks-filter-bar" class="shrink-0 flex items-center gap-1.5 px-3 py-1.5 border-b border-olive-700 bg-olive-900/40 overflow-x-auto scrollbar-thin"></div>
+            <div id="tasks-editor-container" class="flex-1 min-h-0 overflow-hidden"></div>
+          </div>
 
           <!-- Metadata pseudo-page CM container -->
           <div id="metadata-view" class="flex-1 min-h-0 overflow-hidden" style="display:none"></div>

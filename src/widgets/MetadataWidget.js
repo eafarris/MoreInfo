@@ -105,13 +105,20 @@ export class MetadataWidget extends Widget {
         if (this._onEdit) {
           el.addEventListener('click', e => {
             if (el.querySelector('input, select')) return;
-            this._startEdit(el.dataset.metaKey, el);
+            const chip = e.target.closest('[data-meta-chip-index]');
+            if (chip) {
+              this._startChipEdit(el.dataset.metaKey, chip);
+            } else {
+              this._startEdit(el.dataset.metaKey, el);
+            }
           });
         }
         if (this._onNavigate) {
           el.addEventListener('dblclick', e => {
             e.preventDefault();
-            this._onNavigate(el.dataset.metaKey, el.dataset.metaValue);
+            const chip = e.target.closest('[data-meta-chip-value]');
+            const value = chip ? chip.dataset.metaChipValue : el.dataset.metaValue;
+            this._onNavigate(el.dataset.metaKey, value);
           });
         }
       }
@@ -139,17 +146,16 @@ export class MetadataWidget extends Widget {
     const meta = this._lastMetadata;
     if (!meta || !meta[key]) return;
     const val = meta[key];
-    this._editingKey = key;
 
     if (val.type === 'bool') {
-      // Toggle immediately.
-      const newVal = !val.value;
-      this._editingKey = null;
-      this._onEdit(key, newVal ? 'true' : 'false');
+      this._onEdit(key, val.value ? 'false' : 'true');
       return;
     }
+    // Arrays are edited chip-by-chip via _startChipEdit; clicking the container does nothing.
+    if (val.type === 'array') return;
 
-    const raw = val.type === 'array' ? val.value.join(', ') : String(val.value);
+    this._editingKey = key;
+    const raw = String(val.value);
 
     el.innerHTML = `<input type="text"
       class="w-full bg-olive-900 text-olive-200 text-sm border border-amber-600 rounded px-2 py-1 font-mono outline-none"
@@ -165,7 +171,6 @@ export class MetadataWidget extends Widget {
       if (newRaw !== raw) {
         this._onEdit(key, newRaw);
       } else {
-        // Re-render to restore display view.
         this._render(this._lastMetadata, this._lastContent);
       }
     };
@@ -173,6 +178,41 @@ export class MetadataWidget extends Widget {
     input.addEventListener('keydown', e => {
       if (e.key === 'Enter') { e.preventDefault(); commit(); }
       if (e.key === 'Escape') { e.preventDefault(); this._editingKey = null; this._render(this._lastMetadata, this._lastContent); }
+    });
+    input.addEventListener('blur', commit);
+  }
+
+  _startChipEdit(key, chipEl) {
+    const meta = this._lastMetadata;
+    if (!meta || !meta[key] || meta[key].type !== 'array') return;
+
+    const items = [...meta[key].value];
+    const idx   = parseInt(chipEl.dataset.metaChipIndex, 10);
+    const orig  = items[idx];
+
+    // Replace just this chip with an input.
+    chipEl.innerHTML = '';
+    chipEl.classList.add('p-0', 'bg-transparent', 'border-transparent');
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.value = orig;
+    input.className = 'bg-olive-900 text-olive-200 text-xs border border-amber-600 rounded px-1.5 font-mono outline-none w-24';
+    chipEl.appendChild(input);
+    input.focus();
+    input.select();
+
+    const cancel = () => this._render(this._lastMetadata, this._lastContent);
+
+    const commit = () => {
+      const newVal = input.value.trim();
+      if (!newVal || newVal === orig) { cancel(); return; }
+      items[idx] = newVal;
+      this._onEdit(key, items.join(', '));
+    };
+
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter')  { e.preventDefault(); commit(); }
+      if (e.key === 'Escape') { e.preventDefault(); cancel(); }
     });
     input.addEventListener('blur', commit);
   }
@@ -225,8 +265,8 @@ export class MetadataWidget extends Widget {
         if (val.value.length === 0) {
           valueHtml = `<div data-meta-key="${esc(key)}" data-meta-value="" class="mt-1 px-1 py-0.5 ${editable}"><p class="text-olive-600 text-xs italic">empty</p></div>`;
         } else {
-          const chips = val.value.map(item =>
-            `<span class="inline-flex px-1.5 py-px rounded bg-olive-700 border border-olive-600 text-olive-300 text-xs font-mono">${esc(item)}</span>`
+          const chips = val.value.map((item, i) =>
+            `<span data-meta-chip-value="${esc(item)}" data-meta-chip-index="${i}" class="inline-flex px-1.5 py-px rounded bg-olive-700 border border-olive-600 text-olive-300 text-xs font-mono hover:bg-olive-600 hover:text-olive-100 transition-colors cursor-pointer">${esc(item)}</span>`
           ).join('');
           valueHtml = `<div data-meta-key="${esc(key)}" data-meta-value="${esc(rawValue)}" class="flex flex-wrap gap-1 mt-1 px-1 py-0.5 ${editable}">${chips}</div>`;
         }

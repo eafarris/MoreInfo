@@ -80,9 +80,13 @@ export function initWidgetDrag({
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
 
-      // Persist the sizes.
+      // Persist the sizes, skipping rolled-up widgets whose reported size is
+      // just the header strip — saving that would lock them to header-width
+      // on the next mount and break roll-down.
       const sizes = getWidgetSizes();
       wrappers.forEach(w => {
+        const widget = getRegistry().get(w.dataset.widgetId);
+        if (widget?._rolled) return;
         sizes[w.dataset.widgetId] = w[sizeProp];
       });
       setWidgetSizes(sizes);

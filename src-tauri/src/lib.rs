@@ -1302,19 +1302,13 @@ fn search_metadata(key: String, value: Option<String>) -> Result<Vec<MetadataHit
     let conn = open_db()?;
     init_schema(&conn)?;
 
-    let (sql, params): (&str, Vec<Box<dyn rusqlite::types::ToSql>>) = if let Some(ref val) = value {
-        ("SELECT fm.path, f.title, fm.value, fm.type \
-          FROM file_metadata fm JOIN files f ON f.path = fm.path \
-          WHERE fm.key = ?1 AND fm.value = ?2 COLLATE NOCASE \
-          ORDER BY f.title",
-         vec![Box::new(key.clone()), Box::new(val.clone())])
-    } else {
-        ("SELECT fm.path, f.title, fm.value, fm.type \
-          FROM file_metadata fm JOIN files f ON f.path = fm.path \
-          WHERE fm.key = ?1 \
-          ORDER BY f.title",
-         vec![Box::new(key.clone())])
-    };
+    // Always fetch all rows for this key; value filtering (including array element
+    // matching) is done in Rust below, where we can split comma-separated arrays.
+    let sql = "SELECT fm.path, f.title, fm.value, fm.type \
+               FROM file_metadata fm JOIN files f ON f.path = fm.path \
+               WHERE fm.key = ?1 \
+               ORDER BY f.title";
+    let params: Vec<Box<dyn rusqlite::types::ToSql>> = vec![Box::new(key.clone())];
     let mut stmt = conn.prepare(sql).map_err(|e| e.to_string())?;
     let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
     let mut hits: Vec<MetadataHit> = stmt.query_map(param_refs.as_slice(), |row| Ok(MetadataHit {
@@ -1326,15 +1320,14 @@ fn search_metadata(key: String, value: Option<String>) -> Result<Vec<MetadataHit
       .filter_map(|r| r.ok())
       .collect();
 
-    // For array metadata, filter: only include hits where the target value
-    // appears as an element in the comma-separated list.
+    // Filter by value: for arrays, check each comma-separated element;
+    // for other types, require an exact case-insensitive match.
     if let Some(ref val) = value {
-        let lc = val.to_lowercase();
         hits.retain(|h| {
             if h.vtype == "array" {
-                h.value.split(',').any(|item| item.trim().eq_ignore_ascii_case(&lc))
+                h.value.split(',').any(|item| item.trim().eq_ignore_ascii_case(val))
             } else {
-                true
+                h.value.eq_ignore_ascii_case(val)
             }
         });
     }
@@ -2067,11 +2060,14 @@ fn search_pages(query: String) -> Result<Vec<SearchResult>, String> {
         return Ok(vec![]);
     }
 
-    // Strip FTS5 operator characters to avoid syntax errors, then build a
-    // prefix-search query: every word becomes "word*" (implicit AND).
+    // Normalise the query to match how unicode61 tokenises the indexed body:
+    // every non-alphanumeric character becomes a space so hyphens, slashes,
+    // dots, colons, etc. all act as word delimiters.
+    // e.g. "install-updates" → "install updates" → "install* updates*"
+    //      "foo/bar.baz"     → "foo bar baz"     → "foo* bar* baz*"
     let safe: String = query
         .chars()
-        .filter(|c| c.is_alphanumeric() || c.is_whitespace() || *c == '\'' || *c == '-')
+        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
         .collect();
     let fts_query: String = safe
         .split_whitespace()

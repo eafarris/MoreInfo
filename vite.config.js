@@ -3,6 +3,10 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   plugins: [tailwindcss()],
+  test: {
+    environment: 'jsdom',
+    globals: true,
+  },
   clearScreen: false,
   server: {
     port: 5173,

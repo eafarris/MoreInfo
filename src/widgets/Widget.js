@@ -73,6 +73,9 @@ export class Widget {
     this._orientation = orientation;
     const savedState  = this.loadState();
     this._rolled      = savedState?._rolled ?? false;
+    // Restore the pre-roll natural size so roll-down works correctly even when
+    // the wrapper was mounted with a stale (too-small) saved flex size.
+    this._naturalSize = (savedState?._naturalSize > 0) ? savedState._naturalSize : null;
 
     const horiz = orientation === 'horizontal';
 
@@ -157,7 +160,8 @@ export class Widget {
     const sizeProp = horiz ? 'offsetWidth' : 'offsetHeight';
 
     if (this._rolled) {
-      // Save the current full size so we can restore it later.
+      // Capture the natural (pre-roll) size so roll-down can restore it even
+      // if the wrapper is later remounted with a stale small flex size.
       this._naturalSize = this._container[sizeProp];
       // Set an explicit value first (so the browser has a concrete "from" value),
       // force a reflow, then animate to the header size.
@@ -167,15 +171,22 @@ export class Widget {
       this._body.style.opacity          = '0';
       this._body.style.pointerEvents    = 'none';
     } else {
-      const target = this._naturalSize ?? this._container[sizeProp];
-      this._container.style[prop]     = target + 'px';
       this._body.style.opacity        = '1';
       this._body.style.pointerEvents  = '';
-      // After the animation completes, clear the explicit constraint so the
-      // widget can resize freely (e.g. when the sidebar is resized).
-      this._container.addEventListener('transitionend', () => {
-        if (!this._rolled) this._container.style[prop] = '';
-      }, { once: true });
+      // Only animate if we have a reliable pre-roll size larger than the header.
+      // If naturalSize is unknown or equals the header (e.g. mounted with a
+      // stale tiny flex size), skip the animation and remove all constraints so
+      // flex layout can size the widget freely.
+      const validTarget = this._naturalSize && this._naturalSize > this._headerSize * 1.5;
+      if (validTarget) {
+        this._container.style[prop] = this._naturalSize + 'px';
+        this._container.addEventListener('transitionend', () => {
+          if (!this._rolled) this._container.style[prop] = '';
+        }, { once: true });
+      } else {
+        this._container.style[prop] = '';        // clear maxHeight/maxWidth
+        this._container.style.flex  = '1 1 0';  // let flex layout size it
+      }
     }
 
     const icon = this._rollBtn.querySelector('i');
@@ -186,7 +197,7 @@ export class Widget {
     }
 
     const existing = this.loadState() ?? {};
-    this.saveState({ ...existing, _rolled: this._rolled });
+    this.saveState({ ...existing, _rolled: this._rolled, _naturalSize: this._naturalSize });
   }
 
   /**

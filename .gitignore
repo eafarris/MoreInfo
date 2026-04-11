@@ -1,3 +1,4 @@
+nimbalyst-local/
 node_modules/
 dist/
 /target/debug/

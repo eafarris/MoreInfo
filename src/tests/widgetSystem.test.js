@@ -94,22 +94,25 @@ describe('mountWidgets', () => {
     expect(wrappers.length).toBe(2);
     expect(wrappers[0].dataset.widgetId).toBe('a');
     expect(wrappers[1].dataset.widgetId).toBe('b');
-    // wrapperClass is still applied (for border/colour styling).
+    // wrapperClass is always applied (for border/colour styling).
     expect(wrappers[0].classList.contains('my-border')).toBe(true);
     // minHeight is set on both (vertical sidebar) — JSDOM normalises '0' → '0px'.
     expect(wrappers[0].style.minHeight).toBe('0px');
     expect(wrappers[1].style.minHeight).toBe('0px');
   });
 
-  it('non-last widget without savedSize gets wrapperClass applied', () => {
+  it('wrapperClass is applied to every widget regardless of savedSize', () => {
     const w1 = makeWidget('a', 'my-class extra-class');
-    const w2 = makeWidget('b');
+    const w2 = makeWidget('b', 'border-x');
+    ctx.widgetSizes['a'] = 120; // w1 has a savedSize (non-last)
     mountWidgets(ctx, 'left', [w1, w2]);
 
     const stack    = ctx.sbConfig.left.sidebar.querySelector('.widget-stack');
     const wrapper1 = stack.querySelector('[data-widget-id="a"]');
+    const wrapper2 = stack.querySelector('[data-widget-id="b"]');
     expect(wrapper1.classList.contains('my-class')).toBe(true);
     expect(wrapper1.classList.contains('extra-class')).toBe(true);
+    expect(wrapper2.classList.contains('border-x')).toBe(true);
   });
 
   it('does not mount a widget already in mountedWidgets', () => {
@@ -152,6 +155,35 @@ describe('mountWidgets', () => {
     const stack   = ctx.sbConfig.left.sidebar.querySelector('.widget-stack');
     const wrapper = stack.querySelector('[data-widget-id="a"]');
     expect(wrapper.style.flex).toBe('0 0 120px');
+  });
+
+  it('last widget with savedSize uses it as flex-basis (flex: 1 1 Npx)', () => {
+    // Ensures proportions are restored after restart when the sidebar height
+    // is the same as when sizes were saved.
+    const w1 = makeWidget('a');
+    const w2 = makeWidget('b');
+    ctx.widgetSizes['a'] = 120;
+    ctx.widgetSizes['b'] = 200; // b is last
+
+    mountWidgets(ctx, 'left', [w1, w2]);
+
+    const stack    = ctx.sbConfig.left.sidebar.querySelector('.widget-stack');
+    const wrapperB = stack.querySelector('[data-widget-id="b"]');
+    // Last widget should use saved size as basis but remain flexible.
+    expect(wrapperB.style.flex).toBe('1 1 200px');
+  });
+
+  it('last widget without savedSize gets flex: 1 1 0 (no savedSize path)', () => {
+    // JSDOM silently drops the unitless-0 flex shorthand, so we verify via
+    // minHeight which is only set when the unsized path is taken.
+    const w = makeWidget('only');
+    mountWidgets(ctx, 'left', [w]);
+    const stack   = ctx.sbConfig.left.sidebar.querySelector('.widget-stack');
+    const wrapper = stack.querySelector('[data-widget-id="only"]');
+    // minHeight is set to 0px in the unsized (no savedSize) path.
+    expect(wrapper.style.minHeight).toBe('0px');
+    // And the savedSize path (flex: 1 1 Npx) was NOT taken.
+    expect(wrapper.style.flex).not.toMatch(/1 1 \d+px/);
   });
 
   it('uses minHeight for vertical, minWidth for horizontal sidebars', () => {

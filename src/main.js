@@ -25,6 +25,17 @@ import { formatJournalDate, isDeferred, todayIso, computeEffectivePriority } fro
 let currentFile   = null;
 let currentTitle  = '';
 let datastorePath = null;  // set during init via get_datastore_path
+
+// ── User preferences ──────────────────────────────
+const PREFS_KEY = 'mi-prefs';
+function loadPrefs() {
+  try { return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}'); } catch { return {}; }
+}
+function savePrefs(prefs) {
+  try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* storage unavailable */ }
+}
+// 'page' = open in Page Widget (default), 'editor' = open in main editor
+let searchOpenIn = loadPrefs().searchOpenIn ?? 'page';
 let changeTimer   = null;
 let saveTimer     = null;
 let mdTimer       = null;
@@ -585,6 +596,16 @@ function setSbState(name, state) {
   sbState[name] = state;
   applySbState(name);
   saveUiState();
+  // When a sidebar becomes pinned, ensure its widgets are mounted.
+  // This handles the case where the sidebar was hidden at startup
+  // (widgets were never mounted) and the user pins it.
+  if (state === 'pinned') {
+    const { sidebar } = sbConfig[name];
+    const stack = sidebar?.querySelector('.widget-stack');
+    const hasWidgets = stack?.querySelector('[data-widget-id]');
+    const hasLayout  = (widgetLayout[name] || []).length > 0;
+    if (!hasWidgets && hasLayout) remountSidebar(name);
+  }
 }
 
 function togglePin(name) {
@@ -738,15 +759,24 @@ function mountWidgets(sidebarName, widgets) {
     // can size itself freely rather than being locked to a tiny sliver.
     const savedSize = (widgetSizes[widget.id] >= 48) ? widgetSizes[widget.id] : 0;
     const isLast = i === toMount.length - 1;
+
+    // wrapperClass (borders, colours, etc.) always applied; the inline flex
+    // below overrides any sizing classes it contains.
+    widget.wrapperClass.split(/\s+/).filter(Boolean).forEach(cls => wrapper.classList.add(cls));
+    // min-size 0 prevents flex items from refusing to shrink below content size.
+    wrapper.style[horiz ? 'minWidth' : 'minHeight'] = '0';
+
     if (savedSize && !isLast) {
+      // Non-last with a saved size: lock to that size so proportions are exact.
       wrapper.style.flex = `0 0 ${savedSize}px`;
+    } else if (savedSize && isLast) {
+      // Last widget with a saved size: use saved size as flex-basis so the
+      // proportion is restored on restart, but still allow it to grow/shrink
+      // to fill any remaining sidebar space (e.g. after window resize).
+      wrapper.style.flex = `1 1 ${savedSize}px`;
     } else {
-      // All unsized widgets (last or not) grow to share available space equally.
-      // wrapperClass is applied for border/colour styling only — any sizing
-      // classes it contains are superseded by the inline flex below.
+      // No saved size: fill available space freely.
       wrapper.style.flex = '1 1 0';
-      wrapper.style[horiz ? 'minWidth' : 'minHeight'] = '0';
-      widget.wrapperClass.split(/\s+/).filter(Boolean).forEach(cls => wrapper.classList.add(cls));
     }
     wrapper.dataset.widgetId = widget.id;
     stack.appendChild(wrapper);
@@ -1578,6 +1608,8 @@ async function showSettingsDialog() {
     overlay.className = 'fixed inset-0 z-[9999] flex items-center justify-center bg-black/60';
 
     const currentPath = datastorePath || '(not set)';
+    const soiPage   = searchOpenIn === 'page';
+    const soiEditor = searchOpenIn === 'editor';
     overlay.innerHTML = `
       <div class="bg-olive-900 border border-olive-700 rounded-lg shadow-xl p-5 w-[480px] flex flex-col gap-4">
         <h2 class="text-sm font-semibold text-olive-100">Settings</h2>
@@ -1594,6 +1626,23 @@ async function showSettingsDialog() {
             </button>
           </div>
           <p class="text-xs text-olive-600">The folder where MoreInfo stores all your pages, journals, and templates.</p>
+        </div>
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs text-olive-500 font-mono">Search results open in</label>
+          <div class="flex items-center gap-4">
+            <label class="flex items-center gap-1.5 cursor-pointer text-xs text-olive-200">
+              <input type="radio" name="mi-search-open-in" value="page"
+                ${soiPage ? 'checked' : ''}
+                class="accent-amber-500 cursor-pointer" />
+              Page Widget
+            </label>
+            <label class="flex items-center gap-1.5 cursor-pointer text-xs text-olive-200">
+              <input type="radio" name="mi-search-open-in" value="editor"
+                ${soiEditor ? 'checked' : ''}
+                class="accent-amber-500 cursor-pointer" />
+              Main editor
+            </label>
+          </div>
         </div>
         <div class="flex justify-end gap-2 pt-1">
           <button id="mi-settings-cancel"
@@ -1626,6 +1675,13 @@ async function showSettingsDialog() {
 
     const finish = async (save) => {
       overlay.remove();
+      if (save) {
+        const picked = overlay.querySelector('input[name="mi-search-open-in"]:checked')?.value ?? 'page';
+        if (picked !== searchOpenIn) {
+          searchOpenIn = picked;
+          savePrefs({ ...loadPrefs(), searchOpenIn });
+        }
+      }
       if (!save || !pendingPath || pendingPath === datastorePath) { resolve(); return; }
 
       try {
@@ -1779,34 +1835,6 @@ restoreStateCurrent(StateFlags.MAXIMIZED | StateFlags.FULLSCREEN)
 
 invoke('get_datastore_path').then(p => { datastorePath = p; }).catch(console.error);
 
-// Index the datastore on startup (runs in background; does not block the UI).
-// Status is permanently visible in the status bar.
-(async function () {
-  function setIndexStatus(html) {
-    indexStatusEl.innerHTML = html;
-  }
-
-  setIndexStatus('<i class="ph ph-circle-notch animate-spin leading-none"></i><span>Indexing…</span>');
-
-  const unlisten = await window.__TAURI__.event.listen('index-progress', e => {
-    setIndexStatus(`<i class="ph ph-circle-notch animate-spin leading-none"></i><span>Indexing… ${e.payload}</span>`);
-  });
-
-  invoke('index_datastore')
-    .then(n => {
-      unlisten();
-      if (n > 0) {
-        setIndexStatus(`<i class="ph ph-check leading-none"></i><span>Indexed ${n} file${n !== 1 ? 's' : ''}</span>`);
-      } else {
-        setIndexStatus('<i class="ph ph-check leading-none"></i><span>Index up to date</span>');
-      }
-    })
-    .catch(e => {
-      unlisten();
-      console.warn('[MI] index_datastore failed:', e);
-      setIndexStatus('<i class="ph ph-warning leading-none text-yellow-300"></i><span class="text-yellow-300">Index failed</span>');
-    });
-}());
 
 // ── Widget instantiation ──────────────────────────
 // Create all widgets up front and register them.  The layout (which sidebar
@@ -1826,7 +1854,9 @@ function updateBottomVisibility() {
 }
 
 const allWidgetInstances = {
-  search:      new SearchWidget({ onOpen: (path, title) => pageWidget.loadPath(path, title) }),
+  search:      new SearchWidget({ onOpen: (path, title) => {
+    if (searchOpenIn === 'editor') { openFilePath(path); } else { pageWidget.loadPath(path, title); }
+  }}),
   page:        pageWidget,
   outline:     new OutlineWidget({ onScrollTo: pos => {
     if (cmView) cmView.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: 32 }) });
@@ -1925,4 +1955,44 @@ updateCursor(1, 1);
 
 const _d = new Date();
 const _todayStr = `${_d.getFullYear()}-${String(_d.getMonth() + 1).padStart(2, '0')}-${String(_d.getDate()).padStart(2, '0')}`;
-openJournalDate(_todayStr);
+
+// Open today's journal first so the editor is populated before indexing starts.
+// Indexing runs on a Rust thread but holds an SQLite write lock while processing
+// files; deferring it until after the initial file load prevents widget queries
+// (get_backlinks, etc.) from waiting behind that lock.
+openJournalDate(_todayStr).then(() => {
+  // Index after the initial paint — journal content is visible to the user.
+  (async function () {
+    function setIndexStatus(html) { indexStatusEl.innerHTML = html; }
+
+    setIndexStatus('<i class="ph ph-circle-notch animate-spin leading-none"></i><span>Indexing…</span>');
+
+    // Count files as they come in, but throttle DOM updates to ≤ 1 per 150 ms
+    // to avoid excessive repaints on large datastores.
+    let indexed = 0;
+    let lastPaint = 0;
+    const unlisten = await window.__TAURI__.event.listen('index-progress', () => {
+      indexed++;
+      const now = Date.now();
+      if (now - lastPaint > 150) {
+        lastPaint = now;
+        setIndexStatus(`<i class="ph ph-circle-notch animate-spin leading-none"></i><span>Indexing… ${indexed}</span>`);
+      }
+    });
+
+    invoke('index_datastore')
+      .then(n => {
+        unlisten();
+        if (n > 0) {
+          setIndexStatus(`<i class="ph ph-check leading-none"></i><span>Indexed ${n} file${n !== 1 ? 's' : ''}</span>`);
+        } else {
+          setIndexStatus('<i class="ph ph-check leading-none"></i><span>Index up to date</span>');
+        }
+      })
+      .catch(err => {
+        unlisten();
+        console.warn('[MI] index_datastore failed:', err);
+        setIndexStatus('<i class="ph ph-warning leading-none text-yellow-300"></i><span class="text-yellow-300">Index failed</span>');
+      });
+  }());
+});

@@ -2050,54 +2050,301 @@ struct SearchResult {
     snippet: String,
 }
 
+// ── Search helpers ─────────────────────────────────────────────────────────
+
+/// Tokenise a search query, collecting quoted strings as single tokens.
+fn tokenize_search_query(input: &str) -> Vec<String> {
+    let mut tokens  = Vec::new();
+    let mut cur     = String::new();
+    let mut in_q    = false;
+    for ch in input.chars() {
+        match ch {
+            '"' => {
+                cur.push(ch);
+                if in_q { tokens.push(std::mem::take(&mut cur)); }
+                in_q = !in_q;
+            }
+            c if c.is_whitespace() && !in_q => {
+                if !cur.is_empty() { tokens.push(std::mem::take(&mut cur)); }
+            }
+            c => { cur.push(c); }
+        }
+    }
+    if !cur.is_empty() { tokens.push(cur); }
+    tokens
+}
+
+/// If `s` looks like `key:value` or `key: value` where the key is all
+/// lowercase ASCII letters/digits/hyphens/underscores, return (key, value).
+fn parse_filter_token(s: &str) -> Option<(String, String)> {
+    let pos = s.find(':')?;
+    let key = s[..pos].trim();
+    let val = s[pos + 1..].trim();
+    if key.is_empty() || val.is_empty() { return None; }
+    if !key.chars().all(|c| c.is_ascii_lowercase() || c == '_' || c == '-') { return None; }
+    Some((key.to_string(), val.to_string()))
+}
+
+/// Sanitise a bare string into space-separated prefix-wildcard FTS5 tokens.
+fn fts_prefix_tokens(s: &str) -> String {
+    let safe: String = s.chars()
+        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
+        .collect();
+    safe.split_whitespace()
+        .map(|w| format!("{}*", w))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Active filters extracted from the query string.
+struct SearchFilters {
+    /// Each inner Vec is an OR group; multiple groups are AND'd together.
+    tag_groups: Vec<Vec<String>>,
+    category:   Option<String>,
+    in_journal: bool,
+    in_wiki:    bool,
+    after:      Option<String>,  // YYYY-MM-DD; implies in_journal
+    before:     Option<String>,  // YYYY-MM-DD; implies in_journal
+}
+
+impl SearchFilters {
+    fn new() -> Self {
+        Self { tag_groups: Vec::new(), category: None,
+               in_journal: false, in_wiki: false,
+               after: None, before: None }
+    }
+    fn is_empty(&self) -> bool {
+        self.tag_groups.is_empty() && self.category.is_none()
+            && !self.in_journal && !self.in_wiki
+            && self.after.is_none() && self.before.is_none()
+    }
+}
+
+/// Apply a recognised filter key/value. Returns true if the key was handled.
+/// `pending_tags` accumulates the current OR-group of tag values; it is
+/// committed into `filters.tag_groups` when AND or another filter is seen.
+fn apply_known_filter(
+    key: &str, val: &str,
+    filters: &mut SearchFilters,
+    pending_tags: &mut Vec<String>,
+) -> bool {
+    match key {
+        "tag" | "tags" => {
+            if !pending_tags.is_empty() {
+                filters.tag_groups.push(std::mem::take(pending_tags));
+            }
+            let vals: Vec<String> = val.split(',')
+                .map(|v| v.trim().to_lowercase())
+                .filter(|v| !v.is_empty())
+                .collect();
+            if !vals.is_empty() { *pending_tags = vals; }
+            true
+        }
+        "cat" | "category" => {
+            filters.category = Some(val.to_string());
+            true
+        }
+        "in" => {
+            match val.to_lowercase().as_str() {
+                "journal"       => filters.in_journal = true,
+                "wiki" | "pages"=> filters.in_wiki    = true,
+                _               => {}
+            }
+            true
+        }
+        "after" => {
+            filters.after      = Some(val.to_string());
+            filters.in_journal = true;
+            true
+        }
+        "before" => {
+            filters.before     = Some(val.to_string());
+            filters.in_journal = true;
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Build an FTS5 query string from the non-filter tokens.
+/// Handles: quoted phrases, NEAR, bare prefix words, and mixes thereof.
+fn build_fts_query(parts: &[String]) -> Option<String> {
+    if parts.is_empty() { return None; }
+
+    // NEAR: any token is the literal string "NEAR"
+    if parts.iter().any(|t| t == "NEAR") {
+        let terms: Vec<String> = parts.iter()
+            .filter(|t| t.as_str() != "NEAR")
+            .map(|t| {
+                if t.starts_with('"') && t.ends_with('"') && t.len() > 2 {
+                    let inner = t[1..t.len() - 1].replace('"', "");
+                    format!("\"{}\"", inner)
+                } else {
+                    fts_prefix_tokens(t)
+                }
+            })
+            .filter(|s| !s.is_empty())
+            .collect();
+        if terms.is_empty() { return None; }
+        return Some(format!("NEAR({}, 10)", terms.join(" ")));
+    }
+
+    // Build token-by-token (handles single phrase, mixed, bare words)
+    let tokens: Vec<String> = parts.iter()
+        .map(|t| {
+            if t.starts_with('"') && t.ends_with('"') && t.len() > 2 {
+                let inner = t[1..t.len() - 1].replace('"', "");
+                if inner.trim().is_empty() { return String::new(); }
+                format!("\"{}\"", inner)
+            } else {
+                fts_prefix_tokens(t)
+            }
+        })
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    if tokens.is_empty() { None } else { Some(tokens.join(" ")) }
+}
+
 #[tauri::command]
 fn search_pages(query: String) -> Result<Vec<SearchResult>, String> {
     let db_path = datastore_dir()?.join("moreinfo.sqlite");
     let conn    = Connection::open(&db_path).map_err(|e| e.to_string())?;
 
     let query = query.trim();
-    if query.is_empty() {
-        return Ok(vec![]);
+    if query.is_empty() { return Ok(vec![]); }
+
+    // ── Step 1: tokenise, classify, extract filters ────────────────────────
+    let mut filters      = SearchFilters::new();
+    let mut pending_tags: Vec<String> = Vec::new();
+    let mut fts_parts:    Vec<String> = Vec::new();
+
+    for token in tokenize_search_query(query) {
+        // Quoted token — may be "key: multi word value" filter or a phrase search.
+        if token.starts_with('"') && token.ends_with('"') && token.len() > 2 {
+            let inner = &token[1..token.len() - 1];
+            if let Some((key, val)) = parse_filter_token(inner) {
+                if apply_known_filter(&key, &val, &mut filters, &mut pending_tags) {
+                    continue;
+                }
+            }
+            fts_parts.push(token);
+            continue;
+        }
+
+        // Explicit AND between tag filters — commit pending tag group.
+        if token == "AND" {
+            if !pending_tags.is_empty() {
+                filters.tag_groups.push(std::mem::take(&mut pending_tags));
+            }
+            continue;
+        }
+
+        // Bare key:value — try as a known filter first; fall through to FTS.
+        if let Some((key, val)) = parse_filter_token(&token) {
+            if apply_known_filter(&key, &val, &mut filters, &mut pending_tags) {
+                continue;
+            }
+        }
+
+        fts_parts.push(token);
     }
 
-    // Normalise the query to match how unicode61 tokenises the indexed body:
-    // every non-alphanumeric character becomes a space so hyphens, slashes,
-    // dots, colons, etc. all act as word delimiters.
-    // e.g. "install-updates" → "install updates" → "install* updates*"
-    //      "foo/bar.baz"     → "foo bar baz"     → "foo* bar* baz*"
-    let safe: String = query
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { ' ' })
-        .collect();
-    let fts_query: String = safe
-        .split_whitespace()
-        .map(|w| format!("{}*", w))
-        .collect::<Vec<_>>()
-        .join(" ");
-    if fts_query.is_empty() {
-        return Ok(vec![]);
+    // Commit any trailing tag group.
+    if !pending_tags.is_empty() {
+        filters.tag_groups.push(pending_tags);
     }
 
-    let mut stmt = conn
-        .prepare(
-            "SELECT fts.path,
-                    COALESCE(f.title, fts.title, ''),
+    // ── Step 2: build FTS query from remaining tokens ──────────────────────
+    let fts_query = build_fts_query(&fts_parts);
+
+    if fts_query.is_none() && filters.is_empty() { return Ok(vec![]); }
+
+    // ── Step 3: build SQL dynamically ─────────────────────────────────────
+    let use_fts  = fts_query.is_some();
+    let path_col = if use_fts { "fts.path" } else { "f.path" };
+
+    let mut conditions: Vec<String> = Vec::new();
+    let mut bind_vals:  Vec<String> = Vec::new();
+
+    if let Some(ref fq) = fts_query {
+        conditions.push("fts MATCH ?".to_string());
+        bind_vals.push(fq.clone());
+    }
+
+    // Source filter (in_journal takes precedence over in_wiki).
+    if filters.in_journal {
+        conditions.push("f.path LIKE ?".to_string());
+        bind_vals.push("%/journal/%".to_string());
+    } else if filters.in_wiki {
+        conditions.push("(f.path LIKE ? OR f.path LIKE ?)".to_string());
+        bind_vals.push("%/wiki/%".to_string());
+        bind_vals.push("%/pages/%".to_string());
+    }
+
+    // Date filters — extract YYYY-MM-DD from journal filename.
+    // Journal filenames are always YYYY-MM-DD.md (13 chars), so the date
+    // starts 13 chars from the end and is 10 chars long.
+    if let Some(ref after) = filters.after {
+        conditions.push("substr(f.path, length(f.path) - 12, 10) > ?".to_string());
+        bind_vals.push(after.clone());
+    }
+    if let Some(ref before) = filters.before {
+        conditions.push("substr(f.path, length(f.path) - 12, 10) < ?".to_string());
+        bind_vals.push(before.clone());
+    }
+
+    // Tag filters — one EXISTS per AND-group; within a group, OR across tags.
+    for group in &filters.tag_groups {
+        let phs = group.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        conditions.push(format!(
+            "EXISTS (SELECT 1 FROM file_tags ft \
+             WHERE ft.path = {path_col} AND lower(ft.tag) IN ({phs}))"
+        ));
+        bind_vals.extend(group.iter().cloned());
+    }
+
+    // Category filter.
+    if let Some(ref cat) = filters.category {
+        conditions.push(format!(
+            "EXISTS (SELECT 1 FROM file_metadata fm \
+             WHERE fm.path = {path_col} \
+             AND lower(fm.key) = 'category' AND lower(fm.value) = lower(?))"
+        ));
+        bind_vals.push(cat.clone());
+    }
+
+    let where_clause = if conditions.is_empty() {
+        String::new()
+    } else {
+        format!("WHERE {}", conditions.join(" AND "))
+    };
+
+    let sql = if use_fts {
+        format!(
+            "SELECT fts.path, COALESCE(f.title, fts.title, ''), \
                     snippet(fts, 2, '', '', '…', 16)
-             FROM fts
-             JOIN files f ON f.path = fts.path
-             WHERE fts MATCH ?1
-             ORDER BY rank
-             LIMIT 20",
+             FROM fts JOIN files f ON f.path = fts.path
+             {where_clause}
+             ORDER BY rank LIMIT 20"
         )
-        .map_err(|e| e.to_string())?;
+    } else {
+        format!(
+            "SELECT f.path, f.title, ''
+             FROM files f
+             {where_clause}
+             LIMIT 20"
+        )
+    };
+
+    let mut stmt = conn.prepare(&sql).map_err(|e| e.to_string())?;
+    let params: Vec<&dyn rusqlite::types::ToSql> = bind_vals.iter()
+        .map(|s| s as &dyn rusqlite::types::ToSql)
+        .collect();
 
     let results: Vec<SearchResult> = stmt
-        .query_map(rusqlite::params![fts_query], |row| {
-            Ok(SearchResult {
-                path:    row.get(0)?,
-                title:   row.get(1)?,
-                snippet: row.get(2)?,
-            })
+        .query_map(params.as_slice(), |row| {
+            Ok(SearchResult { path: row.get(0)?, title: row.get(1)?, snippet: row.get(2)? })
         })
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())

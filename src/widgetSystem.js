@@ -42,15 +42,24 @@ export function mountWidgets(ctx, sidebarName, widgets) {
     const savedSize = (ctx.widgetSizes[widget.id] >= 48) ? ctx.widgetSizes[widget.id] : 0;
     const isLast    = i === toMount.length - 1;
 
+    // wrapperClass (borders, colours) always applied; inline flex overrides
+    // any sizing classes it contains.
+    widget.wrapperClass.split(/\s+/).filter(Boolean)
+      .forEach(cls => wrapper.classList.add(cls));
+    // min-size 0 prevents flex items from refusing to shrink below content size.
+    wrapper.style[horiz ? 'minWidth' : 'minHeight'] = '0';
+
     if (savedSize && !isLast) {
+      // Non-last with a saved size: lock to that size so proportions are exact.
       wrapper.style.flex = `0 0 ${savedSize}px`;
+    } else if (savedSize && isLast) {
+      // Last widget with a saved size: use saved size as flex-basis so the
+      // proportion is restored on restart, but still allow it to grow/shrink
+      // to fill any remaining sidebar space (e.g. after window resize).
+      wrapper.style.flex = `1 1 ${savedSize}px`;
     } else {
-      // All unsized widgets (last or not) grow to share available space equally.
-      // wrapperClass is applied for border/colour styling only.
+      // No saved size: fill available space freely.
       wrapper.style.flex = '1 1 0';
-      wrapper.style[horiz ? 'minWidth' : 'minHeight'] = '0';
-      widget.wrapperClass.split(/\s+/).filter(Boolean)
-        .forEach(cls => wrapper.classList.add(cls));
     }
 
     wrapper.dataset.widgetId = widget.id;

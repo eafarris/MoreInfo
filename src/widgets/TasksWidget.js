@@ -98,25 +98,20 @@ export class TasksWidget extends Widget {
           const dueToday = !overdue && isDueToday(t.due_date, t.first_seen);
           const rowCls  = overdue
             ? 'flex items-start gap-2 px-3 py-1 rounded-sm bg-red-800/70 hover:bg-red-700/70 transition-colors'
-            : dueToday
-            ? 'flex items-start gap-2 px-3 py-1 rounded-sm bg-amber-800/60 hover:bg-amber-700/60 transition-colors'
             : 'flex items-start gap-2 px-3 py-1 hover:bg-olive-800/50 transition-colors';
           const textCls = overdue ? 'text-xs text-white leading-snug'
-            : dueToday ? 'text-xs text-amber-200 leading-snug'
             : 'text-xs text-olive-300 leading-snug';
           const cbCls   = overdue ? 'shrink-0 mt-px text-white'
-            : dueToday ? 'shrink-0 mt-px text-amber-300'
             : 'cm-task-checkbox shrink-0 mt-px';
           const ep = t._effectivePriority;
-          const badgeBase = 'shrink-0 size-5 rounded-full text-xs font-bold leading-none inline-flex items-center justify-center';
           const priBadge = ep <= 5
-            ? `<span class="${badgeBase} ${
-                ep <= 1 ? 'bg-red-700 text-white' :
-                ep <= 2 ? 'bg-amber-700 text-white' :
-                ep <= 3 ? 'bg-amber-800 text-amber-200' :
-                          'bg-olive-700 text-olive-300'
+            ? `<span class="shrink-0 size-5 text-xs font-bold leading-none inline-flex items-center justify-center ${
+                ep <= 1 ? 'text-red-400' :
+                ep <= 2 ? 'text-amber-400' :
+                ep <= 3 ? 'text-amber-600' :
+                          'text-olive-500'
               }">${ep}</span>`
-            : `<span class="${badgeBase} bg-olive-800/50"></span>`;
+            : `<span class="shrink-0 size-5"></span>`;
           return `
           <div class="${rowCls}">
             <span class="${cbCls}" style="pointer-events:none"></span>
@@ -136,7 +131,7 @@ export class TasksWidget extends Widget {
         <div class="border-b border-olive-800 last:border-0">
           <div data-path="${esc(path)}"
             class="flex items-center gap-1.5 px-3 py-1.5 cursor-pointer hover:bg-olive-800
-                   transition-colors sticky top-0 z-10 bg-olive-900">
+                   transition-colors sticky top-0 z-10 bg-transparent">
             <i class="ph ph-file-text text-[10px] text-olive-600 shrink-0 leading-none"></i>
             <span class="text-[10px] font-semibold text-olive-500 truncate uppercase tracking-wide">
               ${label}

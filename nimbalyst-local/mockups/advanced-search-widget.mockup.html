@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #1a1c12;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: #d4d8b8;
+    padding: 32px;
+    display: flex;
+    gap: 40px;
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  /* ── shared palette ── */
+  :root {
+    --ol-900: #1e2114;
+    --ol-800: #252a18;
+    --ol-750: #2c3020;
+    --ol-700: #343b25;
+    --ol-600: #4a5433;
+    --ol-400: #7a8c54;
+    --ol-300: #a8b87a;
+    --ol-200: #d4d8b8;
+    --ol-100: #eef0e0;
+    --am-700: #92400e;
+    --am-600: #b45309;
+    --am-500: #d97706;
+    --am-400: #fbbf24;
+    --am-100: #fef3c7;
+    --border: #343b25;
+    --radius: 6px;
+  }
+
+  /* ── column labels ── */
+  .col { display: flex; flex-direction: column; gap: 12px; }
+  .label {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: .1em;
+    text-transform: uppercase;
+    color: var(--ol-400);
+    text-align: center;
+  }
+
+  /* ── widget shell ── */
+  .widget {
+    width: 236px;
+    background: var(--ol-900);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    font-size: 11px;
+  }
+  .widget-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 5px 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--ol-800);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+    color: var(--ol-400);
+  }
+  .widget-header svg { opacity: .6; }
+
+  /* ── search bar ── */
+  .search-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--ol-800);
+  }
+  .search-bar svg { flex-shrink: 0; color: var(--ol-500); }
+  .search-input {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    color: var(--ol-200);
+    font-size: 11px;
+    caret-color: var(--am-400);
+  }
+  .search-input::placeholder { color: var(--ol-600); }
+
+  /* icon button */
+  .icon-btn {
+    flex-shrink: 0;
+    width: 18px; height: 18px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 3px;
+    cursor: pointer;
+    color: var(--ol-400);
+    background: transparent;
+    border: none;
+    transition: background .12s;
+  }
+  .icon-btn:hover { background: var(--ol-700); color: var(--ol-200); }
+  .icon-btn.active { color: var(--am-400); }
+
+  /* ── results stub ── */
+  .results { flex: 1; overflow-y: auto; }
+  .result-item {
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--border);
+    cursor: pointer;
+  }
+  .result-item:hover { background: var(--ol-800); }
+  .result-title { font-size: 11px; color: var(--ol-100); font-weight: 500; }
+  .result-snippet { font-size: 10px; color: var(--ol-400); margin-top: 2px; line-height: 1.4; }
+  .result-snippet em { color: var(--am-400); font-style: normal; }
+  .empty-results {
+    display: flex; flex-direction: column; align-items: center; gap: 5px;
+    padding: 20px 0; color: var(--ol-600);
+    font-size: 10px;
+  }
+  .empty-results svg { opacity: .4; }
+
+  /* ══════════════════════════════════════
+     APPROACH 1 — Expand Chevron
+  ══════════════════════════════════════ */
+
+  .filter-tray {
+    overflow: hidden;
+    border-bottom: 1px solid var(--border);
+    background: var(--ol-800);
+  }
+  .filter-tray-inner { padding: 8px 10px; display: flex; flex-direction: column; gap: 7px; }
+  .tray-row { display: flex; align-items: center; gap: 6px; }
+  .tray-label { font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: var(--ol-400); width: 34px; flex-shrink: 0; }
+
+  /* toggle */
+  .toggle-group { display: flex; border: 1px solid var(--border); border-radius: 3px; overflow: hidden; }
+  .toggle-opt {
+    padding: 2px 7px;
+    font-size: 10px;
+    cursor: pointer;
+    color: var(--ol-400);
+    background: var(--ol-900);
+    border: none;
+    transition: background .1s, color .1s;
+  }
+  .toggle-opt.on { background: var(--am-700); color: #fff; }
+
+  /* near spinner */
+  .near-ctrl { display: flex; align-items: center; gap: 4px; font-size: 10px; color: var(--ol-300); }
+  .near-ctrl input[type=number] {
+    width: 36px;
+    background: var(--ol-750);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--ol-200);
+    font-size: 10px;
+    padding: 2px 4px;
+    text-align: center;
+    outline: none;
+  }
+  .near-ctrl input[type=number]::-webkit-inner-spin-button { opacity: 1; }
+
+  /* tag chips */
+  .chip-row { display: flex; flex-wrap: wrap; gap: 3px; }
+  .chip {
+    padding: 2px 6px;
+    border-radius: 20px;
+    font-size: 9px;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    background: var(--ol-900);
+    color: var(--ol-300);
+    cursor: pointer;
+    transition: background .1s, border-color .1s, color .1s;
+  }
+  .chip.on { background: var(--am-700); border-color: var(--am-600); color: #fff; }
+  .chip.add { background: none; border-style: dashed; color: var(--ol-500); }
+
+  /* tray collapsed = height 0 */
+  .filter-tray.closed { border-bottom-color: transparent; }
+  .filter-tray.closed .filter-tray-inner { display: none; }
+
+  /* ══════════════════════════════════════
+     APPROACH 2 — Query Grammar
+  ══════════════════════════════════════ */
+
+  .query-input-wrap {
+    display: flex;
+    align-items: flex-start;
+    gap: 6px;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--ol-800);
+  }
+  .query-field {
+    flex: 1;
+    background: transparent;
+    border: none;
+    outline: none;
+    font-size: 11px;
+    color: var(--ol-200);
+    font-family: 'SF Mono', ui-monospace, monospace;
+    line-height: 1.4;
+    min-height: 16px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  /* syntax colouring via spans in the display field */
+  .q-op   { color: var(--am-400); }
+  .q-str  { color: #86efac; }   /* green-ish for quoted */
+  .q-meta { color: #93c5fd; }   /* blue-ish for meta keys */
+  .q-val  { color: var(--ol-200); }
+
+  .hint-strip {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 5px 8px 6px;
+    border-bottom: 1px solid var(--border);
+    background: var(--ol-900);
+  }
+  .hint-label { font-size: 9px; color: var(--ol-500); width: 100%; margin-bottom: 1px; }
+  .hint-token {
+    font-family: 'SF Mono', ui-monospace, monospace;
+    font-size: 9px;
+    padding: 2px 5px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+    background: var(--ol-800);
+    color: var(--am-400);
+    cursor: pointer;
+    transition: background .1s;
+  }
+  .hint-token:hover { background: var(--ol-700); }
+  .hint-token.meta { color: #93c5fd; }
+  .hint-token.str  { color: #86efac; }
+
+  /* ══════════════════════════════════════
+     APPROACH 3 — Filter Shelf
+  ══════════════════════════════════════ */
+
+  .filter-shelf {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 8px;
+    border-bottom: 1px solid var(--border);
+    background: var(--ol-850, #232716);
+    min-height: 30px;
+    flex-shrink: 0;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .filter-shelf::-webkit-scrollbar { display: none; }
+
+  .shelf-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    padding: 2px 6px 2px 7px;
+    border-radius: 20px;
+    font-size: 9px;
+    font-weight: 600;
+    white-space: nowrap;
+    border: 1px solid transparent;
+    cursor: default;
+    flex-shrink: 0;
+  }
+  .shelf-pill.amber {
+    background: var(--am-700);
+    border-color: var(--am-600);
+    color: #fff;
+  }
+  .shelf-pill.blue {
+    background: #1e3a5f;
+    border-color: #2563eb44;
+    color: #93c5fd;
+  }
+  .shelf-pill.green {
+    background: #2e2040;
+    border-color: #7c3aed44;
+    color: #c4b5fd;
+  }
+  .shelf-pill .pill-x {
+    font-size: 9px;
+    opacity: .7;
+    cursor: pointer;
+    line-height: 1;
+    margin-left: 1px;
+  }
+  .shelf-pill .pill-x:hover { opacity: 1; }
+
+  .shelf-add {
+    flex-shrink: 0;
+    width: 18px; height: 18px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 50%;
+    border: 1px dashed var(--ol-600);
+    color: var(--ol-500);
+    font-size: 12px;
+    cursor: pointer;
+    transition: border-color .1s, color .1s;
+    line-height: 1;
+  }
+  .shelf-add:hover { border-color: var(--am-400); color: var(--am-400); }
+
+  /* popover */
+  .popover-wrap { position: relative; }
+  .popover {
+    position: absolute;
+    top: 26px;
+    left: 0;
+    width: 190px;
+    background: var(--ol-800);
+    border: 1px solid var(--ol-600);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.5);
+    z-index: 10;
+    overflow: hidden;
+  }
+  .popover-section { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  .popover-section:last-child { border-bottom: none; }
+  .popover-heading { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; color: var(--ol-400); margin-bottom: 5px; }
+  .pop-row { display: flex; align-items: center; gap: 5px; padding: 3px 0; cursor: pointer; }
+  .pop-row:hover .pop-label { color: var(--ol-100); }
+  .pop-dot { width: 6px; height: 6px; border-radius: 50%; flex-shrink: 0; }
+  .pop-label { font-size: 10px; color: var(--ol-300); }
+
+  /* ── dividers between columns ── */
+  .divider {
+    width: 1px;
+    background: var(--border);
+    align-self: stretch;
+    margin: 0 4px;
+  }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════════════════════
+     APPROACH 1 — Expand Chevron
+     Show collapsed + expanded states side by side
+══════════════════════════════════════════════════ -->
+<div class="col">
+  <div class="label">① Expand Chevron</div>
+
+  <!-- Collapsed state -->
+  <div class="label" style="font-size:9px;letter-spacing:0;text-transform:none;color:#4a5433;">Collapsed</div>
+  <div class="widget">
+    <div class="widget-header">
+      <svg width="11" height="11" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,218.34l-50.07-50.07a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.31ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></svg>
+      Search
+    </div>
+    <div class="search-bar">
+      <svg width="12" height="12" viewBox="0 0 256 256" fill="currentColor" style="color:#4a5433"><path d="M229.66,218.34l-50.07-50.07a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.31ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></svg>
+      <div class="search-input" style="color:#7a8c54">install-updates</div>
+      <!-- chevron button — closed -->
+      <button class="icon-btn" title="Advanced filters">
+        <svg width="11" height="11" viewBox="0 0 256 256" fill="currentColor"><path d="M213.66,101.66l-80,80a8,8,0,0,1-11.32,0l-80-80A8,8,0,0,1,53.66,90.34L128,164.69l74.34-74.35a8,8,0,0,1,11.32,11.32Z"/></svg>
+      </button>
+    </div>
+    <!-- tray: closed -->
+    <div class="filter-tray closed"><div class="filter-tray-inner"></div></div>
+    <div class="results">
+      <div class="result-item">
+        <div class="result-title">Cluster deployment notes</div>
+        <div class="result-snippet">…ansible-playbook -l cluster_acc deployment/<em>install-updates</em>.yml…</div>
+      </div>
+      <div class="result-item">
+        <div class="result-title">Weekly ops checklist</div>
+        <div class="result-snippet">…run <em>install-updates</em> before any maintenance window…</div>
+      </div>
+      <div class="result-item">
+        <div class="result-title">Homelab runbook</div>
+        <div class="result-snippet">…<em>install updates</em> on all nodes before rebooting…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Expanded state -->
+  <div class="label" style="font-size:9px;letter-spacing:0;text-transform:none;color:#4a5433;">Expanded</div>
+  <div class="widget">
+    <div class="widget-header">
+      <svg width="11" height="11" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,218.34l-50.07-50.07a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.31ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></svg>
+      Search
+    </div>
+    <div class="search-bar">
+      <svg width="12" height="12" viewBox="0 0 256 256" fill="currentColor" style="color:#4a5433"><path d="M229.66,218.34l-50.07-50.07a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.31ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></svg>
+      <div class="search-input" style="color:#d4d8b8">install-updates</div>
+      <!-- chevron: open -->
+      <button class="icon-btn active" title="Hide filters">
+        <svg width="11" height="11" viewBox="0 0 256 256" fill="currentColor"><path d="M213.66,154.34a8,8,0,0,1-11.32,0L128,80,53.66,154.34a8,8,0,0,1-11.32-11.31l80-80a8,8,0,0,1,11.32,0l80,80A8,8,0,0,1,213.66,154.34Z"/></svg>
+      </button>
+    </div>
+    <!-- tray: open -->
+    <div class="filter-tray">
+      <div class="filter-tray-inner">
+        <!-- Match type -->
+        <div class="tray-row">
+          <span class="tray-label">Match</span>
+          <div class="toggle-group">
+            <button class="toggle-opt">Fuzzy</button>
+            <button class="toggle-opt on">Exact</button>
+          </div>
+        </div>
+        <!-- NEAR distance -->
+        <div class="tray-row">
+          <span class="tray-label">Near</span>
+          <div class="near-ctrl">
+            <input type="number" value="5" min="1" max="20" />
+            <span>words apart</span>
+          </div>
+        </div>
+        <!-- Tags -->
+        <div class="tray-row" style="align-items:flex-start;">
+          <span class="tray-label" style="padding-top:3px">Tags</span>
+          <div class="chip-row">
+            <span class="chip on">ops</span>
+            <span class="chip">ansible</span>
+            <span class="chip">linux</span>
+            <span class="chip">homelab</span>
+            <span class="chip add">+ tag</span>
+          </div>
+        </div>
+        <!-- Category -->
+        <div class="tray-row">
+          <span class="tray-label">Type</span>
+          <div class="chip-row">
+            <span class="chip">Journal</span>
+            <span class="chip on">Wiki</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="results">
+      <div class="result-item">
+        <div class="result-title">Cluster deployment notes</div>
+        <div class="result-snippet">…ansible-playbook -l cluster_acc deployment/<em>install-updates</em>.yml…</div>
+      </div>
+      <div class="result-item">
+        <div class="result-title">Weekly ops checklist</div>
+        <div class="result-snippet">…run <em>install-updates</em> before any maintenance window…</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ══════════════════════════════════════════════════
+     APPROACH 2 — Query Grammar Hints
+══════════════════════════════════════════════════ -->
+<div class="col">
+  <div class="label">② Query Grammar</div>
+
+  <!-- Empty / hint visible -->
+  <div class="label" style="font-size:9px;letter-spacing:0;text-transform:none;color:#4a5433;">Idle — hints visible</div>
+  <div class="widget">
+    <div class="widget-header">
+      <svg width="11" height="11" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,218.34l-50.07-50.07a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.31ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></svg>
+      Search
+    </div>
+    <div class="query-input-wrap">
+      <svg width="12" height="12" viewBox="0 0 256 256" fill="currentColor" style="color:#4a5433;margin-top:2px;flex-shrink:0"><path d="M229.66,218.34l-50.07-50.07a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.31ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></svg>
+      <div class="query-field" style="color:#4a5433">Search or use operators…</div>
+    </div>
+    <div class="hint-strip">
+      <div class="hint-label">Operators</div>
+      <span class="hint-token"><span class="q-str">"phrase"</span></span>
+      <span class="hint-token"><span class="q-op">near:</span>5</span>
+      <span class="hint-token"><span class="q-meta">tag:</span></span>
+      <span class="hint-token"><span class="q-meta">cat:</span></span>
+      <span class="hint-token"><span class="q-meta">after:</span></span>
+      <span class="hint-token"><span class="q-meta">before:</span></span>
+      <span class="hint-token"><span class="q-meta">in:</span>journal</span>
+      <span class="hint-token"><span class="q-op">~</span>fuzzy</span>
+    </div>
+    <div class="results">
+      <div class="empty-results">
+        <svg width="22" height="22" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,218.34l-50.07-50.07a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.31ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></svg>
+        <span>Search across all pages</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Active query -->
+  <div class="label" style="font-size:9px;letter-spacing:0;text-transform:none;color:#4a5433;">Query with operators</div>
+  <div class="widget">
+    <div class="widget-header">
+      <svg width="11" height="11" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,218.34l-50.07-50.07a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.31ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></svg>
+      Search
+    </div>
+    <div class="query-input-wrap">
+      <svg width="12" height="12" viewBox="0 0 256 256" fill="currentColor" style="color:#4a5433;margin-top:2px;flex-shrink:0"><path d="M229.66,218.34l-50.07-50.07a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.31ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></svg>
+      <!-- Rendered query with syntax colouring -->
+      <div class="query-field"><span class="q-op">near:</span><span class="q-val">3</span> <span class="q-str">"install updates"</span> <span class="q-meta">tag:</span><span class="q-val">ops</span></div>
+    </div>
+    <div class="hint-strip">
+      <div class="hint-label">Add operator</div>
+      <span class="hint-token"><span class="q-meta">tag:</span></span>
+      <span class="hint-token"><span class="q-meta">after:</span></span>
+      <span class="hint-token"><span class="q-meta">before:</span></span>
+      <span class="hint-token"><span class="q-meta">in:</span>journal</span>
+      <span class="hint-token"><span class="q-op">~</span>fuzzy</span>
+    </div>
+    <div class="results">
+      <div class="result-item">
+        <div class="result-title">Cluster deployment notes</div>
+        <div class="result-snippet">…run deployment/<em>install updates</em>.yml every sprint…</div>
+      </div>
+      <div class="result-item">
+        <div class="result-title">Weekly ops checklist</div>
+        <div class="result-snippet">…schedule <em>install updates</em> before window…</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ══════════════════════════════════════════════════
+     APPROACH 3 — Filter Shelf
+══════════════════════════════════════════════════ -->
+<div class="col">
+  <div class="label">③ Filter Shelf</div>
+
+  <!-- No filters active -->
+  <div class="label" style="font-size:9px;letter-spacing:0;text-transform:none;color:#4a5433;">No filters</div>
+  <div class="widget">
+    <div class="widget-header">
+      <svg width="11" height="11" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,218.34l-50.07-50.07a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.31ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></svg>
+      Search
+    </div>
+    <div class="search-bar">
+      <svg width="12" height="12" viewBox="0 0 256 256" fill="currentColor" style="color:#4a5433"><path d="M229.66,218.34l-50.07-50.07a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.31ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></svg>
+      <div class="search-input">install-updates</div>
+    </div>
+    <!-- shelf: no pills -->
+    <div class="filter-shelf">
+      <div class="shelf-add" title="Add filter">+</div>
+      <span style="font-size:9px;color:#4a5433;margin-left:4px;">No filters active</span>
+    </div>
+    <div class="results">
+      <div class="result-item">
+        <div class="result-title">Cluster deployment notes</div>
+        <div class="result-snippet">…ansible-playbook -l cluster_acc deployment/<em>install-updates</em>.yml…</div>
+      </div>
+      <div class="result-item">
+        <div class="result-title">Weekly ops checklist</div>
+        <div class="result-snippet">…run <em>install-updates</em> before any maintenance window…</div>
+      </div>
+      <div class="result-item">
+        <div class="result-title">Homelab runbook</div>
+        <div class="result-snippet">…<em>install updates</em> on all nodes before rebooting…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Filters active -->
+  <div class="label" style="font-size:9px;letter-spacing:0;text-transform:none;color:#4a5433;">Filters active</div>
+  <div class="widget" style="position:relative">
+    <div class="widget-header">
+      <svg width="11" height="11" viewBox="0 0 256 256" fill="currentColor"><path d="M229.66,218.34l-50.07-50.07a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.31ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></svg>
+      Search
+    </div>
+    <div class="search-bar">
+      <svg width="12" height="12" viewBox="0 0 256 256" fill="currentColor" style="color:#4a5433"><path d="M229.66,218.34l-50.07-50.07a88.11,88.11,0,1,0-11.31,11.31l50.06,50.07a8,8,0,0,0,11.32-11.31ZM40,112a72,72,0,1,1,72,72A72.08,72.08,0,0,1,40,112Z"/></svg>
+      <div class="search-input">install-updates</div>
+    </div>
+    <!-- shelf: pills active -->
+    <div class="filter-shelf">
+      <div class="popover-wrap">
+        <div class="shelf-add" title="Add filter">+</div>
+        <!-- popover shown -->
+        <div class="popover">
+          <div class="popover-section">
+            <div class="popover-heading">Match type</div>
+            <div class="pop-row"><div class="pop-dot" style="background:#fbbf24"></div><span class="pop-label">Exact phrase</span></div>
+            <div class="pop-row"><div class="pop-dot" style="background:#7a8c54"></div><span class="pop-label">Fuzzy (~)</span></div>
+            <div class="pop-row"><div class="pop-dot" style="background:#93c5fd"></div><span class="pop-label">NEAR (within N words)</span></div>
+          </div>
+          <div class="popover-section">
+            <div class="popover-heading">Metadata</div>
+            <div class="pop-row"><div class="pop-dot" style="background:#93c5fd"></div><span class="pop-label">Tag…</span></div>
+            <div class="pop-row"><div class="pop-dot" style="background:#93c5fd"></div><span class="pop-label">Category…</span></div>
+            <div class="pop-row"><div class="pop-dot" style="background:#93c5fd"></div><span class="pop-label">Date range…</span></div>
+          </div>
+          <div class="popover-section">
+            <div class="popover-heading">Source</div>
+            <div class="pop-row"><div class="pop-dot" style="background:#c4b5fd"></div><span class="pop-label">Journals only</span></div>
+            <div class="pop-row"><div class="pop-dot" style="background:#c4b5fd"></div><span class="pop-label">Wiki only</span></div>
+          </div>
+        </div>
+      </div>
+      <span class="shelf-pill amber">exact <span class="pill-x">×</span></span>
+      <span class="shelf-pill blue">tag: ops <span class="pill-x">×</span></span>
+      <span class="shelf-pill green">wiki <span class="pill-x">×</span></span>
+    </div>
+    <div class="results">
+      <div class="result-item">
+        <div class="result-title">Cluster deployment notes</div>
+        <div class="result-snippet">…ansible-playbook -l cluster_acc deployment/<em>install-updates</em>.yml…</div>
+      </div>
+      <div class="result-item">
+        <div class="result-title">Weekly ops checklist</div>
+        <div class="result-snippet">…run <em>install-updates</em> before any maintenance window…</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -162,7 +162,7 @@ export class CalendarWidget extends Widget {
       </div>
       <div class="px-2 pb-2 flex gap-1.5">
         <button class="cal-picker-today flex-1 text-xs py-1 rounded bg-amber-700 hover:bg-amber-600 text-white transition-colors">Today</button>
-        <button class="cal-picker-cancel flex-1 text-xs py-1 rounded bg-olive-800 hover:bg-olive-700 text-olive-400 hover:text-white transition-colors">Cancel</button>
+        <button class="cal-picker-cancel flex-1 text-xs py-1 rounded bg-transparent hover:bg-olive-700 text-olive-400 hover:text-white transition-colors">Cancel</button>
       </div>`;
   }
 

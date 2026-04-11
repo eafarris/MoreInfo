@@ -43,6 +43,8 @@ export class Widget {
     this._headerSize  = 0;
     /** @type {number|null} Full container size before rolling; null until first roll */
     this._naturalSize = null;
+    /** @type {ResizeObserver|null} Defers rolled-state application until container is visible */
+    this._rollObserver = null;
   }
 
   /**
@@ -93,7 +95,7 @@ export class Widget {
       // horizontal layout.
       // Padding is the horizontal header's px↔py swapped for the axis change.
       container.innerHTML = `
-        <div class="widget-header flex flex-col items-center px-1.5 py-3 shrink-0 border-r border-olive-700 bg-olive-800 cursor-default select-none" style="width:28px">
+        <div class="widget-header flex flex-col items-center px-1.5 py-3 shrink-0 border-r border-olive-700 bg-transparent cursor-default select-none" style="width:28px">
           <button class="widget-roll-btn text-olive-500 hover:text-olive-300 p-0.5 leading-none bg-transparent border-none cursor-pointer" title="Roll">
             <i class="ph ${this._rolled ? 'ph-caret-line-right' : 'ph-caret-line-left'} text-sm leading-none"></i>
           </button>
@@ -104,7 +106,7 @@ export class Widget {
     } else {
       // ── Vertical orientation (left / right sidebars) ─────────────────────
       container.innerHTML = `
-        <div class="widget-header flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700 bg-olive-800 cursor-default select-none">
+        <div class="widget-header flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700 bg-transparent cursor-default select-none">
           <span class="widget-title flex items-center gap-1.5 text-xs font-semibold text-olive-500 tracking-wide uppercase">
             <i class="ph ${this.icon} text-sm leading-none"></i>
             ${this.title}
@@ -131,17 +133,43 @@ export class Widget {
     this.onMount();
 
     // Measure sizes with full content rendered.
+    // Only update _headerSize / _naturalSize when the container is visible
+    // (offsetHeight > 0); if the sidebar is hidden the measurements are 0
+    // and we must not clobber any restored values.
     const header = container.querySelector('.widget-header');
-    this._headerSize  = horiz ? header.offsetWidth  : header.offsetHeight;
-    this._naturalSize = horiz ? container.offsetWidth : container.offsetHeight;
+    const measuredHeader  = horiz ? header.offsetWidth  : header.offsetHeight;
+    const measuredNatural = horiz ? container.offsetWidth : container.offsetHeight;
+    if (measuredHeader  > 0) this._headerSize  = measuredHeader;
+    if (measuredNatural > 0) this._naturalSize = measuredNatural;
 
-    // Apply the initial rolled state synchronously (no transition yet, so it's
-    // part of the first paint with no visible flash).
+    // Apply the initial rolled state.
+    // If the container is hidden (measurements are 0) we can't compute the
+    // correct maxHeight/maxWidth yet.  Install a ResizeObserver that fires once
+    // the container becomes visible and applies the constraint then (without any
+    // transition animation, so there's no visible flash).
     if (this._rolled) {
       const prop = horiz ? 'maxWidth' : 'maxHeight';
-      container.style[prop]        = this._headerSize + 'px';
-      this._body.style.opacity     = '0';
-      this._body.style.pointerEvents = 'none';
+      if (this._headerSize > 0) {
+        container.style[prop]          = this._headerSize + 'px';
+        this._body.style.opacity       = '0';
+        this._body.style.pointerEvents = 'none';
+      } else {
+        // Sidebar is hidden — defer until we can measure.
+        this._body.style.opacity       = '0';
+        this._body.style.pointerEvents = 'none';
+        this._rollObserver = new ResizeObserver(() => {
+          const hNow = horiz ? header.offsetWidth  : header.offsetHeight;
+          if (hNow <= 0) return;           // still not visible
+          this._rollObserver.disconnect();
+          this._rollObserver = null;
+          this._headerSize  = hNow;
+          const natNow = horiz ? container.offsetWidth : container.offsetHeight;
+          if (natNow > 0) this._naturalSize = natNow;
+          container.style[prop] = this._headerSize + 'px';
+          // Don't enable transitions here — this fires during the reveal paint.
+        });
+        this._rollObserver.observe(container);
+      }
     }
 
     // Enable transitions only after the initial layout has been painted,
@@ -206,6 +234,7 @@ export class Widget {
    */
   destroy() {
     this.onDestroy();
+    if (this._rollObserver) { this._rollObserver.disconnect(); this._rollObserver = null; }
     if (this._container) this._container.innerHTML = '';
     this._container = null;
     this._body      = null;

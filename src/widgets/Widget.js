@@ -45,6 +45,8 @@ export class Widget {
     this._naturalSize = null;
     /** @type {ResizeObserver|null} Defers rolled-state application until container is visible */
     this._rollObserver = null;
+    /** @type {boolean} True when this is the last (bottom/right) widget in its sidebar */
+    this._isLast = false;
   }
 
   /**
@@ -53,6 +55,13 @@ export class Widget {
    * @returns {string}
    */
   get wrapperClass() { return ''; }
+
+  /**
+   * When true, the mounting system and drag-resize system leave the widget's
+   * flex value alone — the widget sizes itself based on its content.
+   * @returns {boolean}
+   */
+  get fixedSize() { return false; }
 
   /**
    * Optional HTML rendered at the trailing edge of the widget header (vertical only).
@@ -70,9 +79,10 @@ export class Widget {
    *   'vertical'   — left/right sidebars: horizontal title bar, rolls up/down
    *   'horizontal' — top/bottom sidebars: vertical title strip, rolls left/right
    */
-  mount(container, orientation = 'vertical') {
+  mount(container, orientation = 'vertical', { isLast = false } = {}) {
     this._container   = container;
     this._orientation = orientation;
+    this._isLast      = isLast;
     const savedState  = this.loadState();
     this._rolled      = savedState?._rolled ?? false;
     // Restore the pre-roll natural size so roll-down works correctly even when
@@ -97,7 +107,7 @@ export class Widget {
       container.innerHTML = `
         <div class="widget-header flex flex-col items-center px-1.5 py-3 shrink-0 border-r border-olive-700 bg-transparent cursor-default select-none" style="width:28px">
           <button class="widget-roll-btn text-olive-500 hover:text-olive-300 p-0.5 leading-none bg-transparent border-none cursor-pointer" title="Roll">
-            <i class="ph ${this._rolled ? 'ph-caret-line-right' : 'ph-caret-line-left'} text-sm leading-none"></i>
+            <i class="ph ${this._rollIconClass()} text-sm leading-none"></i>
           </button>
           <span class="widget-title mt-auto text-xs font-semibold text-olive-500 tracking-wide uppercase" style="writing-mode:vertical-rl;transform:rotate(180deg)"><i class="ph ${this.icon} text-sm leading-none"></i>${this.title}</span>
         </div>
@@ -106,15 +116,15 @@ export class Widget {
     } else {
       // ── Vertical orientation (left / right sidebars) ─────────────────────
       container.innerHTML = `
-        <div class="widget-header flex items-center justify-between px-3 py-1.5 shrink-0 border-b border-olive-700 bg-transparent cursor-default select-none">
+        <div class="widget-header flex items-center justify-between px-3 py-1 shrink-0 border-b border-olive-700 bg-transparent cursor-default select-none">
           <span class="widget-title flex items-center gap-1.5 text-xs font-semibold text-olive-500 tracking-wide uppercase">
             <i class="ph ${this.icon} text-sm leading-none"></i>
             ${this.title}
           </span>
           <span class="flex items-center gap-1">
             ${this.headerAction}
-            <button class="widget-roll-btn text-olive-500 hover:text-olive-300 p-0.5 leading-none bg-transparent border-none cursor-pointer" title="Roll up">
-              <i class="ph ${this._rolled ? 'ph-caret-line-down' : 'ph-caret-line-up'} text-sm leading-none"></i>
+            <button class="widget-roll-btn text-olive-500 hover:text-olive-300 p-0.5 leading-none bg-transparent border-none cursor-pointer" title="Roll">
+              <i class="ph ${this._rollIconClass()} text-sm leading-none"></i>
             </button>
           </span>
         </div>
@@ -148,9 +158,11 @@ export class Widget {
     // the container becomes visible and applies the constraint then (without any
     // transition animation, so there's no visible flash).
     if (this._rolled) {
-      const prop = horiz ? 'maxWidth' : 'maxHeight';
+      const prop       = horiz ? 'maxWidth'   : 'maxHeight';
+      const marginProp = horiz ? 'marginLeft' : 'marginTop';
       if (this._headerSize > 0) {
         container.style[prop]          = this._headerSize + 'px';
+        if (this._isLast) container.style[marginProp] = 'auto';
         this._body.style.opacity       = '0';
         this._body.style.pointerEvents = 'none';
       } else {
@@ -166,6 +178,7 @@ export class Widget {
           const natNow = horiz ? container.offsetWidth : container.offsetHeight;
           if (natNow > 0) this._naturalSize = natNow;
           container.style[prop] = this._headerSize + 'px';
+          if (this._isLast) container.style[marginProp] = 'auto';
           // Don't enable transitions here — this fires during the reveal paint.
         });
         this._rollObserver.observe(container);
@@ -181,11 +194,34 @@ export class Widget {
     }));
   }
 
+  /**
+   * Returns the Phosphor icon class for the roll button given the current
+   * rolled state and position.  For the last widget the caret direction is
+   * flipped so it always points toward the sidebar edge the widget rolls to.
+   */
+  _rollIconClass() {
+    const horiz = this._orientation === 'horizontal';
+    if (horiz) {
+      // Normal (non-last): rolls left → right caret when unrolled, left when rolled.
+      // Last: rolls right → left caret when unrolled (slides right), right when rolled.
+      return this._rolled
+        ? (this._isLast ? 'ph-caret-line-left'  : 'ph-caret-line-right')
+        : (this._isLast ? 'ph-caret-line-right' : 'ph-caret-line-left');
+    } else {
+      // Normal (non-last): rolls up → up caret when unrolled, down when rolled.
+      // Last: rolls down → down caret when unrolled (slides down), up when rolled.
+      return this._rolled
+        ? (this._isLast ? 'ph-caret-line-up'   : 'ph-caret-line-down')
+        : (this._isLast ? 'ph-caret-line-down' : 'ph-caret-line-up');
+    }
+  }
+
   _toggleRoll() {
     this._rolled = !this._rolled;
-    const horiz  = this._orientation === 'horizontal';
-    const prop   = horiz ? 'maxWidth' : 'maxHeight';
-    const sizeProp = horiz ? 'offsetWidth' : 'offsetHeight';
+    const horiz      = this._orientation === 'horizontal';
+    const prop       = horiz ? 'maxWidth'   : 'maxHeight';
+    const sizeProp   = horiz ? 'offsetWidth' : 'offsetHeight';
+    const marginProp = horiz ? 'marginLeft' : 'marginTop';
 
     if (this._rolled) {
       // Capture the natural (pre-roll) size so roll-down can restore it even
@@ -195,6 +231,11 @@ export class Widget {
       // force a reflow, then animate to the header size.
       this._container.style[prop] = this._naturalSize + 'px';
       this._container.offsetHeight; // eslint-disable-line no-unused-expressions
+      // For the last widget: apply the auto-margin before animating.  As
+      // maxHeight/maxWidth decreases, the auto-margin grows automatically to
+      // absorb the freed space, keeping the title bar pinned to the sidebar's
+      // trailing edge throughout the animation (slides down / slides right).
+      if (this._isLast) this._container.style[marginProp] = 'auto';
       this._container.style[prop]       = this._headerSize + 'px';
       this._body.style.opacity          = '0';
       this._body.style.pointerEvents    = 'none';
@@ -209,20 +250,20 @@ export class Widget {
       if (validTarget) {
         this._container.style[prop] = this._naturalSize + 'px';
         this._container.addEventListener('transitionend', () => {
-          if (!this._rolled) this._container.style[prop] = '';
+          if (!this._rolled) {
+            this._container.style[prop]        = '';
+            this._container.style[marginProp]  = ''; // clear after widget fully expands
+          }
         }, { once: true });
       } else {
-        this._container.style[prop] = '';        // clear maxHeight/maxWidth
-        this._container.style.flex  = '1 1 0';  // let flex layout size it
+        this._container.style[prop]       = '';       // clear maxHeight/maxWidth
+        this._container.style[marginProp] = '';       // clear auto-margin
+        this._container.style.flex        = '1 1 0'; // let flex layout size it
       }
     }
 
-    const icon = this._rollBtn.querySelector('i');
-    if (horiz) {
-      icon.className = `ph ${this._rolled ? 'ph-caret-line-right' : 'ph-caret-line-left'} text-sm leading-none`;
-    } else {
-      icon.className = `ph ${this._rolled ? 'ph-caret-line-down' : 'ph-caret-line-up'} text-sm leading-none`;
-    }
+    this._rollBtn.querySelector('i').className =
+      `ph ${this._rollIconClass()} text-sm leading-none`;
 
     const existing = this.loadState() ?? {};
     this.saveState({ ...existing, _rolled: this._rolled, _naturalSize: this._naturalSize });

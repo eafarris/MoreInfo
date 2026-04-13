@@ -752,7 +752,8 @@ function mountWidgets(sidebarName, widgets) {
   const horiz = orientation === 'horizontal';
   // Pre-filter so isLast is correct even if some instances are already mounted.
   const toMount = widgets.filter(w => !mountedWidgets.includes(w));
-  toMount.forEach((widget, i) => {
+  for (let i = 0; i < toMount.length; i++) {
+    const widget  = toMount[i];
     const wrapper = document.createElement('div');
     // Guard: a savedSize smaller than MIN_WIDGET_SIZE (e.g. a header-strip
     // width saved from a rolled-up widget) is treated as absent so the widget
@@ -766,27 +767,33 @@ function mountWidgets(sidebarName, widgets) {
     // min-size 0 prevents flex items from refusing to shrink below content size.
     wrapper.style[horiz ? 'minWidth' : 'minHeight'] = '0';
 
-    if (savedSize && !isLast) {
-      // Non-last with a saved size: lock to that size so proportions are exact.
-      wrapper.style.flex = `0 0 ${savedSize}px`;
-    } else if (savedSize && isLast) {
-      // Last widget with a saved size: use saved size as flex-basis so the
-      // proportion is restored on restart, but still allow it to grow/shrink
-      // to fill any remaining sidebar space (e.g. after window resize).
+    // Use 1 1 (grow + shrink) for all widgets so that when total saved sizes
+    // exceed the container, they shrink proportionally rather than crowding out
+    // any widget that has no saved size yet (e.g. a freshly added widget).
+    // The last widget gets a 150px default basis so it's always visible even
+    // when all other widgets have large saved sizes.
+    if (savedSize) {
       wrapper.style.flex = `1 1 ${savedSize}px`;
     } else {
-      // No saved size: fill available space freely.
-      wrapper.style.flex = '1 1 0';
+      wrapper.style.flex = isLast ? '1 1 150px' : '1 1 0';
     }
     wrapper.dataset.widgetId = widget.id;
     stack.appendChild(wrapper);
-    widget.mount(wrapper, orientation);
-    mountedWidgets.push(widget);
-    widgetRegistry.set(widget.id, widget);
-    if (!widgetLayout[sidebarName].includes(widget.id)) {
-      widgetLayout[sidebarName].push(widget.id);
+
+    // Isolate each widget's mount so an exception in one never silently
+    // prevents the remaining widgets from mounting.
+    try {
+      widget.mount(wrapper, orientation, { isLast });
+      mountedWidgets.push(widget);
+      widgetRegistry.set(widget.id, widget);
+      if (!widgetLayout[sidebarName].includes(widget.id)) {
+        widgetLayout[sidebarName].push(widget.id);
+      }
+    } catch (err) {
+      console.error(`[mountWidgets] widget "${widget.id}" mount() threw:`, err);
+      stack.removeChild(wrapper);
     }
-  });
+  }
   if (_widgetDrag) _widgetDrag.wireUp(sidebarName);
 }
 

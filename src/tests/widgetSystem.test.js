@@ -135,17 +135,17 @@ describe('mountWidgets', () => {
     mountWidgets(ctx, 'left', [wAlreadyMounted, wNew]);
 
     // wNew is the only one actually mounted; it should be treated as last.
-    // We verify the isLast flag via minHeight (set on vertical-sidebar last
-    // wrappers) rather than style.flex — JSDOM rejects `flex:'1 1 0'` because
-    // a unitless 0 flex-basis is technically invalid CSS.
+    // Last widget with no savedSize gets flex: 1 1 150px (always-visible default).
     const stack   = ctx.sbConfig.left.sidebar.querySelector('.widget-stack');
     const wrapper = stack.querySelector('[data-widget-id="new"]');
     expect(wrapper).not.toBeNull();           // was mounted at all
     expect(stack.children.length).toBe(1);    // only wNew, not wAlreadyMounted
-    expect(wrapper.style.minHeight).toBe('0px'); // isLast path taken (JSDOM normalises '0' → '0px')
+    expect(wrapper.style.flex).toBe('1 1 150px'); // isLast path taken
   });
 
-  it('uses savedSize for non-last widgets when available', () => {
+  it('uses savedSize for non-last widgets as flex: 1 1 Npx (grow+shrink)', () => {
+    // Non-last widgets use flex-shrink:1 so they can give up space when total
+    // saved sizes exceed the container (prevents crowding out the last widget).
     const w1 = makeWidget('a');
     const w2 = makeWidget('b');
     ctx.widgetSizes['a'] = 120;
@@ -154,7 +154,7 @@ describe('mountWidgets', () => {
 
     const stack   = ctx.sbConfig.left.sidebar.querySelector('.widget-stack');
     const wrapper = stack.querySelector('[data-widget-id="a"]');
-    expect(wrapper.style.flex).toBe('0 0 120px');
+    expect(wrapper.style.flex).toBe('1 1 120px');
   });
 
   it('last widget with savedSize uses it as flex-basis (flex: 1 1 Npx)', () => {
@@ -173,17 +173,123 @@ describe('mountWidgets', () => {
     expect(wrapperB.style.flex).toBe('1 1 200px');
   });
 
-  it('last widget without savedSize gets flex: 1 1 0 (no savedSize path)', () => {
-    // JSDOM silently drops the unitless-0 flex shorthand, so we verify via
-    // minHeight which is only set when the unsized path is taken.
+  it('last widget without savedSize gets flex: 1 1 150px (always-visible default)', () => {
+    // The last widget in a sidebar gets a non-zero flex-basis so it remains
+    // visible even when all other widgets have large saved sizes.
+    // JSDOM represents '150px' faithfully so we can check style.flex directly.
     const w = makeWidget('only');
     mountWidgets(ctx, 'left', [w]);
     const stack   = ctx.sbConfig.left.sidebar.querySelector('.widget-stack');
     const wrapper = stack.querySelector('[data-widget-id="only"]');
-    // minHeight is set to 0px in the unsized (no savedSize) path.
-    expect(wrapper.style.minHeight).toBe('0px');
-    // And the savedSize path (flex: 1 1 Npx) was NOT taken.
-    expect(wrapper.style.flex).not.toMatch(/1 1 \d+px/);
+    expect(wrapper.style.flex).toBe('1 1 150px');
+  });
+
+  it('non-last widget without savedSize gets flex: 1 1 0', () => {
+    // Non-last unsized widgets share space freely with flex-basis 0.
+    // JSDOM silently drops the unitless-0 shorthand so we verify via the
+    // savedSize path NOT being taken (no Npx pattern).
+    const w1 = makeWidget('a');
+    const w2 = makeWidget('b');
+    mountWidgets(ctx, 'left', [w1, w2]);
+    const stack   = ctx.sbConfig.left.sidebar.querySelector('.widget-stack');
+    const wrapper = stack.querySelector('[data-widget-id="a"]');
+    // w1 is non-last with no savedSize: should NOT use the 150px default.
+    expect(wrapper.style.flex).not.toBe('1 1 150px');
+    // And it should NOT have the savedSize path value.
+    expect(wrapper.style.flex).not.toMatch(/1 1 \d{3,}px/);
+  });
+
+  it('newly-added last widget gets 150px default even when prior widgets have large saved sizes', () => {
+    // Regression: if search+page have large saved sizes (e.g. together = sidebar
+    // height), the freshly-added annotations widget (no savedSize, last) was
+    // getting flex-basis:0 and collapsing to 0px — invisible with no title bar.
+    const search = makeWidget('search');
+    const page   = makeWidget('page');
+    const annot  = makeWidget('annotations');
+    ctx.widgetSizes['search'] = 300;
+    ctx.widgetSizes['page']   = 400;
+    // annotations has no saved size — simulates it being newly added to the sidebar
+
+    mountWidgets(ctx, 'left', [search, page, annot]);
+
+    const stack = ctx.sbConfig.left.sidebar.querySelector('.widget-stack');
+    const wS    = stack.querySelector('[data-widget-id="search"]');
+    const wP    = stack.querySelector('[data-widget-id="page"]');
+    const wA    = stack.querySelector('[data-widget-id="annotations"]');
+
+    // Search and page use their saved sizes with flex-shrink:1 so they can yield space.
+    expect(wS.style.flex).toBe('1 1 300px');
+    expect(wP.style.flex).toBe('1 1 400px');
+    // Annotations (last, no saved size) must get a non-zero basis so it is always visible.
+    expect(wA.style.flex).toBe('1 1 150px');
+  });
+
+  it('mounts all three widgets when three are provided', () => {
+    const [w1, w2, w3] = ['a', 'b', 'c'].map(id => makeWidget(id));
+    mountWidgets(ctx, 'left', [w1, w2, w3]);
+
+    const stack = ctx.sbConfig.left.sidebar.querySelector('.widget-stack');
+    expect(stack.querySelectorAll('[data-widget-id]').length).toBe(3);
+    expect(ctx.mountedWidgets).toContain(w1);
+    expect(ctx.mountedWidgets).toContain(w2);
+    expect(ctx.mountedWidgets).toContain(w3);
+    expect(w1._mounted).toBe(true);
+    expect(w2._mounted).toBe(true);
+    expect(w3._mounted).toBe(true);
+  });
+
+  it('mount() exception on a middle widget does not prevent subsequent widgets from mounting', () => {
+    const wBefore = makeWidget('before');
+    const wBad    = makeWidget('bad');
+    const wAfter  = makeWidget('after');
+    // Make the middle widget's mount() throw.
+    wBad.mount = () => { throw new Error('simulated mount failure'); };
+
+    expect(() => mountWidgets(ctx, 'left', [wBefore, wBad, wAfter])).not.toThrow();
+
+    const stack = ctx.sbConfig.left.sidebar.querySelector('.widget-stack');
+    // wBefore and wAfter should be mounted; wBad's orphaned wrapper removed.
+    expect(wBefore._mounted).toBe(true);
+    expect(wAfter._mounted).toBe(true);
+    expect(ctx.mountedWidgets).toContain(wBefore);
+    expect(ctx.mountedWidgets).toContain(wAfter);
+    expect(ctx.mountedWidgets).not.toContain(wBad);
+    // DOM should have exactly two wrappers (bad widget's wrapper was removed).
+    expect(stack.querySelectorAll('[data-widget-id]').length).toBe(2);
+    expect(stack.querySelector('[data-widget-id="before"]')).not.toBeNull();
+    expect(stack.querySelector('[data-widget-id="after"]')).not.toBeNull();
+    expect(stack.querySelector('[data-widget-id="bad"]')).toBeNull();
+  });
+
+  it('mount() exception on the first widget still mounts the rest', () => {
+    const wBad  = makeWidget('bad');
+    const wGood = makeWidget('good');
+    wBad.mount = () => { throw new Error('oops'); };
+
+    mountWidgets(ctx, 'left', [wBad, wGood]);
+
+    expect(wGood._mounted).toBe(true);
+    expect(ctx.mountedWidgets).toContain(wGood);
+    expect(ctx.mountedWidgets).not.toContain(wBad);
+  });
+
+  it('widget not in registry is skipped without preventing others from mounting', () => {
+    const w = makeWidget('real');
+    ctx.widgetRegistry.set('real', w);
+    ctx.widgetLayout.left = ['ghost', 'real']; // 'ghost' not in registry → filter(Boolean) drops it
+    remountSidebar(ctx, 'left', () => {});
+
+    expect(w._mounted).toBe(true);
+    const stack = ctx.sbConfig.left.sidebar.querySelector('.widget-stack');
+    expect(stack.querySelectorAll('[data-widget-id]').length).toBe(1);
+  });
+
+  it('mountedWidgets length matches DOM wrapper count after mounting', () => {
+    const widgets = ['a', 'b', 'c'].map(id => { ctx.widgetRegistry.set(id, makeWidget(id)); return ctx.widgetRegistry.get(id); });
+    mountWidgets(ctx, 'left', widgets);
+
+    const stack = ctx.sbConfig.left.sidebar.querySelector('.widget-stack');
+    expect(ctx.mountedWidgets.length).toBe(stack.querySelectorAll('[data-widget-id]').length);
   });
 
   it('uses minHeight for vertical, minWidth for horizontal sidebars', () => {
@@ -385,6 +491,44 @@ describe('rebuildAllSidebars', () => {
       const stack = ctx.sbConfig[sbName].sidebar.querySelector('.widget-stack');
       expect(stack.querySelector('[data-widget-id="gone"]')).toBeNull();
     }
+  });
+
+  it('three widgets across two sidebars all mount correctly', () => {
+    const wL1 = makeWidget('l1');
+    const wL2 = makeWidget('l2');
+    const wR  = makeWidget('r');
+    ctx.widgetRegistry.set('l1', wL1);
+    ctx.widgetRegistry.set('l2', wL2);
+    ctx.widgetRegistry.set('r',  wR);
+    ctx.widgetLayout.left  = ['l1', 'l2'];
+    ctx.widgetLayout.right = ['r'];
+
+    rebuildAllSidebars(ctx, save);
+
+    expect(ctx.mountedWidgets.length).toBe(3);
+    const stackL = ctx.sbConfig.left.sidebar.querySelector('.widget-stack');
+    const stackR = ctx.sbConfig.right.sidebar.querySelector('.widget-stack');
+    expect(stackL.querySelectorAll('[data-widget-id]').length).toBe(2);
+    expect(stackR.querySelectorAll('[data-widget-id]').length).toBe(1);
+    expect([wL1, wL2, wR].every(w => w._mounted)).toBe(true);
+  });
+
+  it('mountedWidgets count stays accurate after multiple rebuilds', () => {
+    const [wA, wB, wC] = ['a', 'b', 'c'].map(id => {
+      const w = makeWidget(id);
+      ctx.widgetRegistry.set(id, w);
+      return w;
+    });
+    ctx.widgetLayout.left = ['a', 'b', 'c'];
+    rebuildAllSidebars(ctx, save);
+    expect(ctx.mountedWidgets.length).toBe(3);
+
+    // Move one widget to right, rebuild again.
+    ctx.widgetLayout.left  = ['a', 'b'];
+    ctx.widgetLayout.right = ['c'];
+    rebuildAllSidebars(ctx, save);
+    expect(ctx.mountedWidgets.length).toBe(3);
+    expect(ctx.mountedWidgets.filter(w => w === wC).length).toBe(1); // exactly once
   });
 
   it('adding a new widget to a sidebar mounts it', () => {

@@ -1,6 +1,7 @@
 import {
   EditorState,
   Compartment,
+  Prec,
 } from '@codemirror/state';
 import {
   EditorView,
@@ -988,11 +989,14 @@ function wikiLinkSource(context) {
 // ── Editor factory ─────────────────────────────────────────────────────────
 
 export function createEditor({ parent, onDocChange, onCursorChange, onPageClick, onCmdClick }) {
-  const enterKeymap = {
+  // @calc Enter guard — must be Prec.high because @codemirror/lang-markdown
+  // registers insertNewlineContinueMarkup at Prec.high, so a default-priority
+  // keymap entry is never reached for lines that look like list items (- / + / *).
+  // Being placed *after* markdown() in the extension array means this Prec.high
+  // entry wins when both are at the same precedence level.
+  const calcEnterGuard = {
     key: 'Enter',
     run(view) {
-      // Inside a @calc block, suppress list-continuation so that lines
-      // starting with operators (- + *) don't spawn a new list item.
       const lineNo = view.state.doc.lineAt(view.state.selection.main.head).number;
       for (let n = lineNo - 1; n >= 1; n--) {
         const text = view.state.doc.line(n).text.trim();
@@ -1087,8 +1091,8 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
       surroundHandler,
       wikiLinkPunctHandler,
       checkboxClickHandler,
+      Prec.high(keymap.of([calcEnterGuard])),
       keymap.of([
-        enterKeymap,
         tabKeymap,
         shiftTabKeymap,
         spaceKeymap,

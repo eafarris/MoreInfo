@@ -53,13 +53,20 @@ export function initWidgetDrag({
     if (idx < 0 || idx >= wrappers.length - 1) return null; // nothing below to steal from
 
     const above = wrappers[idx];
+    // Fixed-size widgets (e.g. Calendar) are not resizable — their size is set
+    // by their content, not by user drag.
+    const aboveWidget = getRegistry().get(above.dataset.widgetId);
+    if (aboveWidget?.fixedSize) return null;
+
     const below = wrappers[idx + 1];
     const startPos   = e[axis];
     const startAbove = above[sizeProp];
     const startBelow = below[sizeProp];
 
-    // Lock all wrappers to their current size so flex doesn't fight us.
+    // Lock all non-fixed wrappers to their current size so flex doesn't fight us.
+    // Fixed-size wrappers keep their '0 0 auto' flex untouched.
     wrappers.forEach(w => {
+      if (getRegistry().get(w.dataset.widgetId)?.fixedSize) return;
       w.style.flex = `0 0 ${w[sizeProp]}px`;
     });
 
@@ -80,21 +87,57 @@ export function initWidgetDrag({
       document.body.style.cursor = '';
       document.body.style.userSelect = '';
 
-      // Persist the sizes, skipping rolled-up widgets whose reported size is
-      // just the header strip — saving that would lock them to header-width
-      // on the next mount and break roll-down.
+      // Persist the sizes, skipping rolled-up widgets and fixed-size widgets.
       const sizes = getWidgetSizes();
       wrappers.forEach(w => {
         const widget = getRegistry().get(w.dataset.widgetId);
-        if (widget?._rolled) return;
+        if (widget?._rolled || widget?.fixedSize) return;
         sizes[w.dataset.widgetId] = w[sizeProp];
       });
       setWidgetSizes(sizes);
 
-      // Let one widget remain flexible (the last in the stack) so the sidebar
-      // can still respond to overall resize.  Others keep their explicit size.
-      const last = wrappers[wrappers.length - 1];
-      last.style.flex = '1 1 0';
+      // Let one non-fixed widget remain flexible (the last in the stack) so
+      // the sidebar can still respond to overall resize.  Others keep their
+      // explicit size.  Fixed-size widgets always stay at '0 0 auto'.
+      const flexibleWrappers = wrappers.filter(
+        w => !getRegistry().get(w.dataset.widgetId)?.fixedSize
+      );
+      if (flexibleWrappers.length > 0) {
+        const lastFlex = flexibleWrappers[flexibleWrappers.length - 1];
+
+        // Guard: if the locked siblings (and any fixed-size widgets) together
+        // fill more than stackSize - MIN_WIDGET_SIZE, the last widget would
+        // receive 0 px — making it invisible and breaking the roll animation.
+        // Scale down the flexible non-last widgets proportionally so the last
+        // widget always has at least MIN_WIDGET_SIZE px of space.
+        const usedByOthers = wrappers
+          .filter(w => w !== lastFlex)
+          .reduce((sum, w) => sum + w[sizeProp], 0);
+        const stackSize = stack[sizeProp];
+
+        if (usedByOthers > stackSize - MIN_WIDGET_SIZE) {
+          const nonLastFlex = flexibleWrappers.slice(0, -1); // scalable widgets
+          const nonLastFlexTotal = nonLastFlex.reduce((sum, w) => sum + w[sizeProp], 0);
+          // Space for the scalable group: total available minus fixed widgets and
+          // the MIN_WIDGET_SIZE reserved for the last flexible widget.
+          const fixedTotal     = usedByOthers - nonLastFlexTotal;
+          const scalableTarget = Math.max(0, stackSize - MIN_WIDGET_SIZE - fixedTotal);
+
+          if (nonLastFlexTotal > 0) {
+            nonLastFlex.forEach(w => {
+              const scaled = Math.max(
+                MIN_WIDGET_SIZE,
+                Math.round(w[sizeProp] * scalableTarget / nonLastFlexTotal)
+              );
+              w.style.flex = `0 0 ${scaled}px`;
+              sizes[w.dataset.widgetId] = scaled;
+            });
+            setWidgetSizes(sizes); // re-persist the corrected sizes
+          }
+        }
+
+        lastFlex.style.flex = '1 1 0';
+      }
     }
 
     document.addEventListener('mousemove', onMove);
@@ -242,8 +285,10 @@ export function initWidgetDrag({
       const wrapper = wrappers[wi];
 
       // ── Bottom-edge resize handle ──────────────────────────────────
-      // Add a thin resize strip at the trailing edge of every non-last widget.
-      if (wi < wrappers.length - 1 && !wrapper._resizeHandleWired) {
+      // Add a thin resize strip at the trailing edge of every non-last,
+      // non-fixed-size widget.
+      const isFixed = getRegistry().get(wrapper.dataset.widgetId)?.fixedSize ?? false;
+      if (wi < wrappers.length - 1 && !wrapper._resizeHandleWired && !isFixed) {
         wrapper._resizeHandleWired = true;
 
         const handle = document.createElement('div');

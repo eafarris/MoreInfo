@@ -76,10 +76,14 @@ export class PageWidget extends Widget {
 
     // ── Input events ────────────────────────────────────────────────────────
 
+    this._searchInput.addEventListener('focus', () => {
+      if (!this._searchInput.value.trim()) this._showAllPages();
+    });
+
     this._searchInput.addEventListener('input', () => {
       const q = this._searchInput.value.trim();
       this._clearBtn.style.display = q ? '' : 'none';
-      if (!q) { this._hideAc(); return; }
+      if (!q) { this._showAllPages(); return; }
       const items = this._buildItems(q);
       this._acItems = items;
       this._acIndex = 0;
@@ -186,6 +190,7 @@ export class PageWidget extends Widget {
     }
 
     // Match against title, filename slug, or any alias.
+    // Score: 0 = title starts with query, 1 = title contains it, 2 = slug/alias match only.
     this._allPages
       .filter(p => {
         const titleMatch = p.title.toLowerCase().includes(lq);
@@ -193,8 +198,14 @@ export class PageWidget extends Widget {
         const aliasMatch = (p.aliases || []).some(a => a.includes(lq));
         return titleMatch || slugMatch || aliasMatch;
       })
+      .map(p => {
+        const tl = p.title.toLowerCase();
+        const score = tl.startsWith(lq) ? 0 : tl.includes(lq) ? 1 : 2;
+        return { p, score };
+      })
+      .sort((a, b) => a.score - b.score || a.p.title.localeCompare(b.p.title))
       .slice(0, 10)
-      .forEach(p => items.push(p));
+      .forEach(({ p }) => items.push(p));
 
     // "New page" if no exact title or slug match and not a date-like query
     const exactMatch = this._allPages.some(
@@ -239,6 +250,16 @@ export class PageWidget extends Widget {
         ${slugHint}${starIcon}
       </li>`;
     }).join('');
+  }
+
+  _showAllPages() {
+    if (!this._allPages.length) return;
+    this._acItems = this._allPages
+      .filter(p => !p.path.replace(/\\/g, '/').includes('/journal/'))
+      .sort((a, b) => a.title.localeCompare(b.title));
+    this._acIndex = -1; // no pre-selection when browsing the full list
+    this._renderAcItems();
+    this._showAc();
   }
 
   _showAc() { this._acVisible = true;  this._acList.style.display = ''; }

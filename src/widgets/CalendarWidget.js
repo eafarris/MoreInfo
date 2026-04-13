@@ -26,10 +26,17 @@ export class CalendarWidget extends Widget {
     };
   }
 
-  // Calendar takes its natural height; the last widget (Metadata) gets the rest.
+  // Calendar always sizes to its content; mountWidgets' inline flex is overridden.
   get wrapperClass() { return 'shrink-0'; }
+  get fixedSize()    { return true; }
 
   onMount() {
+    // Override the flex value mountWidgets set so the calendar always takes its
+    // natural size — it never grows to fill leftover sidebar space.
+    this._container.style.flex = '0 0 auto';
+    // In top/bottom panels the panel height constrains the calendar from the
+    // outside; overflow clips rather than scrolls.
+    this._body.style.overflowY = 'hidden';
     this._render();
     this._fetchJournalDates();
   }

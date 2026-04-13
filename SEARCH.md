@@ -17,7 +17,7 @@ is indexed as the tokens: `ansible`, `playbook`, `l`, `cluster`, `acc`, `deploym
 Typing bare words searches for all terms anywhere in the document (implicit AND). Each word is matched as a prefix, so partial words also match.
 
 | Query | Matches |
-|---|---|
+| --- | --- |
 | `install` | "install", "installation", "installer", … |
 | `install updates` | pages containing both "install…" and "update…" anywhere |
 | `install-updates` | same as `install updates` (hyphen becomes a delimiter) |
@@ -58,7 +58,7 @@ Three or more terms can be chained. All listed terms must appear within 10 token
 **Important:** `NEAR` must be in all uppercase. Lowercase `near` is treated as an ordinary search term.
 
 | Query | Behavior |
-|---|---|
+| --- | --- |
 | `install NEAR updates` | proximity search, within 10 tokens |
 | `install near updates` | searches for all three words: "install", "near", "updates" |
 

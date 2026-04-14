@@ -107,6 +107,26 @@ export const miTheme = EditorView.theme({
     color:     'oklch(39.4% 0.023 107.4)',   // olive-700 — dimmed like header
     fontStyle: 'italic',
   },
+  // Thematic break (---): hide the raw dashes; draw a rule across the text
+  // column via ::before.  left/right 0 aligns to .cm-line edges, which sit
+  // inside .cm-content's padding — the full width of the text area.
+  '.cm-hr': {
+    position: 'relative',
+  },
+  // Hide all child spans (the dashes coloured by the syntax highlighter).
+  '.cm-hr span': {
+    color: 'transparent',
+  },
+  '.cm-hr::before': {
+    content:        '""',
+    display:        'block',
+    position:       'absolute',
+    top:            '50%',
+    left:           '0',
+    right:          '0',
+    borderTop:      '1px solid oklch(39.4% 0.023 107.4)',  // olive-700
+    pointerEvents:  'none',
+  },
   // Task checkboxes — plain-text [ ] / [X] made clickable
   '.cm-task-checkbox': {
     cursor:    'pointer',
@@ -353,6 +373,33 @@ const delimiterPlugin = ViewPlugin.fromClass(class {
           if (DELIMITER_NODES.has(node.name)) {
             deco.push(Decoration.mark({ class: 'cm-meta' }).range(node.from, node.to));
           }
+        },
+      });
+    }
+    return Decoration.set(deco, true);
+  }
+}, { decorations: v => v.decorations });
+
+// ── Thematic-break (---) decoration ───────────────────────────────────────
+// Finds HorizontalRule nodes in the syntax tree and:
+//   • gives the whole line class cm-hr so ::before can draw the visible rule
+//   • marks the raw dash characters with color:transparent so they disappear
+
+const hrPlugin = ViewPlugin.fromClass(class {
+  constructor(view) { this.decorations = this._build(view); }
+  update(u) {
+    if (u.docChanged || u.viewportChanged) this.decorations = this._build(u.view);
+  }
+  _build(view) {
+    const deco = [];
+    const tree = syntaxTree(view.state);
+    for (const { from, to } of view.visibleRanges) {
+      tree.iterate({
+        from, to,
+        enter(node) {
+          if (node.name !== 'HorizontalRule') return;
+          const line = view.state.doc.lineAt(node.from);
+          deco.push(Decoration.line({ class: 'cm-hr' }).range(line.from));
         },
       });
     }
@@ -1079,6 +1126,7 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
       hashtagPlugin,
       listMarkerPlugin,
       delimiterPlugin,
+      hrPlugin,
       linkPlugin,
       urlPlugin,
       fencedCodePlugin,

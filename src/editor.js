@@ -942,12 +942,18 @@ const wikiLinkPunctHandler = EditorView.domEventHandlers({
 // ── Wiki-link autocomplete source ──────────────────────────────────────────
 // Activated by typing [[ and filters pages by prefix.
 
-let _allPages    = [];
+let _allPages     = [];
 let _pageTitleSet = new Set();
+let _journalDates = [];   // YYYY-MM-DD strings from list_journal_dates
 
 export function setEditorPages(pages) {
   _allPages     = pages;
   _pageTitleSet = new Set(pages.map(p => p.title));
+}
+
+export function setEditorJournalDates(dates) {
+  // Keep sorted descending (most-recent first) so autocomplete shows newest dates at top.
+  _journalDates = [...dates].sort().reverse();
 }
 
 // CamelCase → "Title Case" by splitting on uppercase boundaries.
@@ -1013,15 +1019,12 @@ function wikiLinkSource(context) {
   // this prevents an immediate space from completing the first item.
   const query = match.text.slice(2).trimStart().toLowerCase();
   if (!query) return null;
-  const options = _allPages
+  const pageOptions = _allPages
     .filter(p => p.title.toLowerCase().startsWith(query))
-    .slice(0, 8)
     .map(p => ({
       label:  p.title,
       detail: '[[link]]',
       apply(view, _completion, _from, to) {
-        // Always insert the full title, trimming any spaces the user typed
-        // inside the brackets (e.g. "[[ like this" → "[[like this]]").
         const insert = `[[${p.title}]] `;
         view.dispatch({
           changes: { from: match.from, to, insert },
@@ -1030,6 +1033,23 @@ function wikiLinkSource(context) {
         });
       },
     }));
+
+  const journalOptions = _journalDates
+    .filter(d => d.startsWith(query))
+    .map(d => ({
+      label:  d,
+      detail: 'journal',
+      apply(view, _completion, _from, to) {
+        const insert = `[[${d}]] `;
+        view.dispatch({
+          changes: { from: match.from, to, insert },
+          selection: { anchor: match.from + insert.length },
+          userEvent: 'input.complete',
+        });
+      },
+    }));
+
+  const options = [...pageOptions, ...journalOptions].slice(0, 12);
   return { from: match.from + 2, options, validFor: /^[^\]]*$/ };
 }
 
@@ -1083,7 +1103,23 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
 
   const spaceKeymap = {
     key: 'Space',
-    run: acceptCompletion,
+    run(view) {
+      // Expand a lone '[' at the start of a line into '[ ] ' so the user can
+      // immediately start typing a task description.
+      const { from, to } = view.state.selection.main;
+      if (from === to) {
+        const line = view.state.doc.lineAt(from);
+        if (from - line.from === 1 && line.text[0] === '[') {
+          view.dispatch({
+            changes:   { from: line.from, to: from, insert: '[ ] ' },
+            selection: { anchor: line.from + 4 },
+            userEvent: 'input',
+          });
+          return true;
+        }
+      }
+      return acceptCompletion(view);
+    },
   };
 
   const clickHandler = EditorView.domEventHandlers({

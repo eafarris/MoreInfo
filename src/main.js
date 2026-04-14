@@ -15,7 +15,7 @@ import { BrowserWidget }     from './widgets/BrowserWidget.js';
 import { CounterWidget }     from './widgets/CounterWidget.js';
 import { OutlineWidget }     from './widgets/OutlineWidget.js';
 import { SearchWidget }      from './widgets/SearchWidget.js';
-import { createEditor, createTasksEditor, createTaskPriorityPlugin, createReadOnlyEditor, setEditorPages, placeholderCompartment } from './editor.js';
+import { createEditor, createTasksEditor, createTaskPriorityPlugin, createReadOnlyEditor, setEditorPages, setEditorJournalDates, placeholderCompartment } from './editor.js';
 import { initWidgetDrag } from './widgetDrag.js';
 import { placeholder } from '@codemirror/view';
 import { formatJournalDate, isDeferred, todayIso, computeEffectivePriority } from './dateUtils.js';
@@ -318,6 +318,7 @@ function refreshPages() {
     allPages = pages;
     setEditorPages(pages);
   }).catch(console.error);
+  invoke('list_journal_dates').then(setEditorJournalDates).catch(console.error);
 }
 refreshPages();
 

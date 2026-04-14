@@ -111,7 +111,25 @@ function formatDateDiff(from, to) {
  * Operators must be surrounded by spaces (" + " / " - ") so that hyphens
  * inside ISO dates ("2026-06-01") are never mistaken for subtraction.
  */
+// Duration-to-number conversion: "in days", "to weeks", etc. after a date diff.
+const DURATION_CONV_RE = /^(?:in|to)\s+(days?|weeks?|months?|years?|hours?|minutes?|seconds?)$/i;
+
 function tryDateExpr(e, scope) {
+  // Duration unit conversion: if the previous result was a date diff (lastDuration is set)
+  // and the expression is "in <unit>" or "to <unit>", convert the duration to that unit.
+  const durConvM = DURATION_CONV_RE.exec(e);
+  if (durConvM && scope._lastDuration) {
+    const rawUnit = durConvM[1].toLowerCase();
+    const unit    = rawUnit.endsWith('s') ? rawUnit : rawUnit + 's'; // normalize to plural
+    const { from, to } = scope._lastDuration;
+    const val = from.diff(to, unit)[unit];
+    scope._last         = val;
+    scope._lastDate     = null;
+    scope._lastCurrency = null;
+    // Keep _lastDuration so the user can do multiple successive conversions.
+    return { formatted: formatResult(val, 'number') };
+  }
+
   // Carry-forward: if the previous result was a date and this line opens with
   // + or -, apply the duration to that date.
   if (scope._lastDate && LEADING_BINOP.test(e)) {
@@ -120,8 +138,9 @@ function tryDateExpr(e, scope) {
     const dur  = parseDuration(rest);
     if (dur) {
       const result = op === '+' ? scope._lastDate.plus(dur) : scope._lastDate.minus(dur);
-      scope._lastDate = result;
-      scope._last = 0;
+      scope._lastDate     = result;
+      scope._last         = 0;
+      scope._lastDuration = null;
       return { formatted: formatDateResult(result) };
     }
   }
@@ -143,8 +162,9 @@ function tryDateExpr(e, scope) {
     const dur = parseDuration(rhs);
     if (dur) {
       const result = op === '+' ? leftDate.plus(dur) : leftDate.minus(dur);
-      scope._lastDate = result;
-      scope._last = 0;
+      scope._lastDate     = result;
+      scope._last         = 0;
+      scope._lastDuration = null;
       return { formatted: formatDateResult(result) };
     }
 
@@ -152,8 +172,9 @@ function tryDateExpr(e, scope) {
     if (op === '-') {
       const rightDate = tryParseDate(rhs);
       if (rightDate) {
-        scope._lastDate = null;
-        scope._last = 0;
+        scope._lastDate     = null;
+        scope._last         = 0;
+        scope._lastDuration = { from: leftDate, to: rightDate };
         return { formatted: formatDateDiff(leftDate, rightDate) };
       }
     }
@@ -218,8 +239,9 @@ export function evalCalcExpr(expr, scope) {
     const result = mathEval(e, scope);
     const t = typeOf(result);
     if (t !== 'number' && t !== 'Unit') return { error: 'Error' };
-    scope._last = result;
-    scope._lastDate = null;   // clear date context when switching to a number result
+    scope._last         = result;
+    scope._lastDate     = null;   // clear date context when switching to a number result
+    scope._lastDuration = null;
     if (!currencyMatch) scope._lastCurrency = null;
     const fmt = formatResult(result, t);
     return { formatted: currency && t === 'number' ? `${currency}${fmt}` : fmt };
@@ -271,7 +293,7 @@ export function scanCalcBlocks(text) {
     if (!inBlock) {
       if (trimmed === '@calc') {
         inBlock = true;
-        scope   = { _last: 0, _lastDate: null, _lastCurrency: null };
+        scope   = { _last: 0, _lastDate: null, _lastCurrency: null, _lastDuration: null };
         headerLines.add(lineNo);
       }
     } else {
@@ -332,7 +354,7 @@ export function preprocessCalcBlocks(markdown) {
     if (!block) {
       if (trimmed === '@calc') {
         block = [];
-        scope = { _last: 0, _lastDate: null, _lastCurrency: null };
+        scope = { _last: 0, _lastDate: null, _lastCurrency: null, _lastDuration: null };
       } else {
         out.push(raw);
       }

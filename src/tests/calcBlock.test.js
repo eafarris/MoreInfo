@@ -4,8 +4,66 @@ import { evalCalcExpr, scanCalcBlocks } from '../calcBlock.js';
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function freshScope() {
-  return { _last: 0, _lastDate: null, _lastCurrency: null };
+  return { _last: 0, _lastDate: null, _lastCurrency: null, _lastDuration: null };
 }
+
+// ── evalCalcExpr — date diff "in <unit>" conversion ───────────────────────
+// After DATE - DATE produces a duration, "in days" / "in weeks" / etc. should
+// convert that duration to a plain number rather than erroring.
+
+describe('evalCalcExpr – date diff unit conversions', () => {
+  it('"in days" after a date diff gives total days', () => {
+    const scope = freshScope();
+    evalCalcExpr('2026-06-08 - 2026-06-01', scope);   // 7-day diff
+    const r = evalCalcExpr('in days', scope);
+    expect(r.error).toBeUndefined();
+    expect(Number(r.formatted?.replace(/,/g, ''))).toBe(7);
+    expect(scope._last).toBe(7);
+  });
+
+  it('"to days" is an alias for "in days"', () => {
+    const scope = freshScope();
+    evalCalcExpr('2026-06-08 - 2026-06-01', scope);
+    const r = evalCalcExpr('to days', scope);
+    expect(r.error).toBeUndefined();
+    expect(Number(r.formatted?.replace(/,/g, ''))).toBe(7);
+  });
+
+  it('"in weeks" after a 7-day diff gives 1', () => {
+    const scope = freshScope();
+    evalCalcExpr('2026-06-08 - 2026-06-01', scope);
+    const r = evalCalcExpr('in weeks', scope);
+    expect(r.error).toBeUndefined();
+    expect(Number(r.formatted?.replace(/,/g, ''))).toBe(1);
+  });
+
+  it('multiple successive conversions all work from the same duration', () => {
+    const scope = freshScope();
+    evalCalcExpr('2026-06-15 - 2026-06-01', scope);  // 14-day diff
+    const days  = evalCalcExpr('in days',  scope);
+    const weeks = evalCalcExpr('in weeks', scope);
+    expect(Number(days.formatted?.replace(/,/g, ''))).toBe(14);
+    expect(Number(weeks.formatted?.replace(/,/g, ''))).toBe(2);
+  });
+
+  it('_lastDuration is cleared after a plain arithmetic result', () => {
+    const scope = freshScope();
+    evalCalcExpr('2026-06-08 - 2026-06-01', scope);   // sets _lastDuration
+    evalCalcExpr('in days', scope);                    // _last = 7, _lastDuration still set
+    evalCalcExpr('+ 7', scope);                        // math: _last = 14, clears _lastDuration
+    expect(scope._lastDuration).toBeNull();
+    const r = evalCalcExpr('in weeks', scope);         // now fails — no duration, _last=14 dimensionless
+    expect(r.error).toBeTruthy();
+  });
+
+  it('"in days" on a date diff of 86 days', () => {
+    const scope = freshScope();
+    evalCalcExpr('2026-08-26 - 2026-06-01', scope);
+    const r = evalCalcExpr('in days', scope);
+    expect(r.error).toBeUndefined();
+    expect(Number(r.formatted?.replace(/,/g, ''))).toBe(86);
+  });
+});
 
 // ── evalCalcExpr — list-delimiter operators ────────────────────────────────
 // Regression: lines starting with -, +, or * are valid binary operators in

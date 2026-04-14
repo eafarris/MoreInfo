@@ -1,6 +1,14 @@
 import { Widget } from './Widget.js';
 import { invoke } from '../tauri.js';
-import { isDeferred, isOverdue, isDueToday, computeEffectivePriority } from '../dateUtils.js';
+import { isDeferred, isOverdue, isDueToday, computeEffectivePriority, todayIso } from '../dateUtils.js';
+
+let _deferFutureTasks = false;
+export function setDeferFutureTasks(val) { _deferFutureTasks = val; }
+
+function isFutureJournalTask(t) {
+  const m = t.path.match(/(\d{4}-\d{2}-\d{2})\.md$/);
+  return m ? m[1] > todayIso() : false;
+}
 
 function esc(s) {
   return String(s)
@@ -61,6 +69,8 @@ export class TasksWidget extends Widget {
       );
       if (isDeferred(task.defer_until)) {
         entry.deferred.push(task);
+      } else if (_deferFutureTasks && isFutureJournalTask(task)) {
+        // hidden — future journal task deferred by preference
       } else {
         const h = task.implicit_heading || '';
         if (!entry.byHeading.has(h)) entry.byHeading.set(h, []);

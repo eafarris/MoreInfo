@@ -9,7 +9,7 @@ import { ReferencesWidget }  from './widgets/ReferencesWidget.js';
 import { PageWidget }        from './widgets/PageWidget.js';
 import { ScratchPadWidget }  from './widgets/ScratchPadWidget.js';
 import { FavoritesWidget }  from './widgets/FavoritesWidget.js';
-import { TasksWidget }         from './widgets/TasksWidget.js';
+import { TasksWidget, setDeferFutureTasks } from './widgets/TasksWidget.js';
 import { AnnotationsWidget }   from './widgets/AnnotationsWidget.js';
 import { BrowserWidget }     from './widgets/BrowserWidget.js';
 import { CounterWidget }     from './widgets/CounterWidget.js';
@@ -35,7 +35,9 @@ function savePrefs(prefs) {
   try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* storage unavailable */ }
 }
 // 'page' = open in Page Widget (default), 'editor' = open in main editor
-let searchOpenIn = loadPrefs().searchOpenIn ?? 'page';
+let searchOpenIn     = loadPrefs().searchOpenIn     ?? 'page';
+// When true, tasks on future-dated journal pages are hidden from task lists.
+let deferFutureTasks = loadPrefs().deferFutureTasks ?? false;
 let changeTimer   = null;
 let saveTimer     = null;
 let mdTimer       = null;
@@ -1050,6 +1052,11 @@ async function loadTasksView(pushHistory = true, contextFilter = null) {
   await refreshTasksView();
 }
 
+function isFutureJournalTask(t) {
+  const m = t.path.match(/(\d{4}-\d{2}-\d{2})\.md$/);
+  return m ? m[1] > todayIso() : false;
+}
+
 // Build a synthetic markdown document from the task list and return it along
 // with a line map.  The map keys are 1-based line numbers in the synthetic doc;
 // values are {path, sourceLineNo, originalText} for task lines, null otherwise.
@@ -1058,6 +1065,7 @@ function buildSyntheticDoc(tasks) {
   const pathIdx = new Map();
   for (const t of tasks) {
     if (isDeferred(t.defer_until)) continue;
+    if (deferFutureTasks && isFutureJournalTask(t)) continue;
     if (!pathIdx.has(t.path)) {
       pathIdx.set(t.path, groups.length);
       groups.push({ path: t.path, title: t.title, byHeading: new Map() });
@@ -1652,6 +1660,24 @@ async function showSettingsDialog() {
             </label>
           </div>
         </div>
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs text-olive-500 font-mono">Defer future tasks by default</label>
+          <div class="flex items-center gap-4">
+            <label class="flex items-center gap-1.5 cursor-pointer text-xs text-olive-200">
+              <input type="radio" name="mi-defer-future" value="yes"
+                ${deferFutureTasks ? 'checked' : ''}
+                class="accent-amber-500 cursor-pointer" />
+              Yes
+            </label>
+            <label class="flex items-center gap-1.5 cursor-pointer text-xs text-olive-200">
+              <input type="radio" name="mi-defer-future" value="no"
+                ${!deferFutureTasks ? 'checked' : ''}
+                class="accent-amber-500 cursor-pointer" />
+              No
+            </label>
+          </div>
+          <p class="text-xs text-olive-600">When Yes, tasks on future-dated journal pages are hidden from the Tasks Widget and Tasks page.</p>
+        </div>
         <div class="flex justify-end gap-2 pt-1">
           <button id="mi-settings-cancel"
             class="px-3 py-1.5 text-xs rounded bg-olive-700 text-olive-200 hover:bg-olive-600">
@@ -1688,6 +1714,14 @@ async function showSettingsDialog() {
         if (picked !== searchOpenIn) {
           searchOpenIn = picked;
           savePrefs({ ...loadPrefs(), searchOpenIn });
+        }
+        const newDefer = overlay.querySelector('input[name="mi-defer-future"]:checked')?.value === 'yes';
+        if (newDefer !== deferFutureTasks) {
+          deferFutureTasks = newDefer;
+          setDeferFutureTasks(deferFutureTasks);
+          savePrefs({ ...loadPrefs(), deferFutureTasks });
+          allWidgetInstances.tasks?.refresh();
+          refreshTasksView();
         }
       }
       if (!save || !pendingPath || pendingPath === datastorePath) { resolve(); return; }
@@ -1900,6 +1934,8 @@ const allWidgetInstances = {
 for (const [id, inst] of Object.entries(allWidgetInstances)) {
   widgetRegistry.set(id, inst);
 }
+
+setDeferFutureTasks(deferFutureTasks);
 
 const defaultLayout = {
   left:   ['search', 'page', 'annotations'],

@@ -68,9 +68,9 @@ describe('evalCalcExpr – date diff unit conversions', () => {
 // ── evalCalcExpr — list-delimiter operators ────────────────────────────────
 // Regression: lines starting with -, +, or * are valid binary operators in
 // @calc blocks (implicit-prepend rule: they are prepended with _last).
-// The CodeMirror markdown extension treats these as list-item markers and, at
-// Prec.high, would copy the marker to the next line on Enter.  The fix is to
-// register the @calc Enter guard at Prec.high so it wins.  These unit tests
+// The CodeMirror markdown extension treats these as list-item markers and would
+// copy the marker to the next line on Enter.  The fix is addKeymap:false on
+// markdown() plus a calc-aware Enter command.  These unit tests
 // verify that the *evaluation* side correctly handles all three operators so
 // the same regression cannot silently reappear in calcBlock.js.
 

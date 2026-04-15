@@ -16,7 +16,6 @@ import {
   history,
   defaultKeymap,
   historyKeymap,
-  insertNewline,
 } from '@codemirror/commands';
 import {
   syntaxHighlighting,
@@ -25,7 +24,10 @@ import {
   bracketMatching,
   syntaxTree,
 } from '@codemirror/language';
-import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
+import {
+  markdown,
+  markdownLanguage,
+} from '@codemirror/lang-markdown';
 import { autocompletion, acceptCompletion } from '@codemirror/autocomplete';
 import { tags } from '@lezer/highlight';
 import { scanCalcBlocks } from './calcBlock.js';
@@ -1053,26 +1055,70 @@ function wikiLinkSource(context) {
   return { from: match.from + 2, options, validFor: /^[^\]]*$/ };
 }
 
+// ── Special-block registry ─────────────────────────────────────────────────
+//
+// Maps a block header line (exact trimmed text) to a block-type name.
+// Any block type listed here suppresses markdown key continuation (Enter,
+// Backspace) for lines inside that block, and can be used by other subsystems
+// (syntax highlighting, language plugins, etc.) as an extension point.
+//
+// To add a new block type — e.g. Mermaid diagrams — add an entry here:
+//   '```mermaid': 'mermaid',
+// and handle 'mermaid' wherever getSpecialBlockType() is consumed.
+const SPECIAL_BLOCKS = {
+  '@calc': 'calc',
+};
+
+/**
+ * Return the special-block type name if the cursor is currently inside a
+ * registered special block, or null if it is not.
+ *
+ * Detection walks backward from the cursor line.  A blank line terminates the
+ * search (blank lines close MI special blocks).  The first matching header wins.
+ *
+ * @param {import('@codemirror/state').EditorState} state
+ * @returns {string|null}
+ */
+export function getSpecialBlockType(state) {
+  const lineNo = state.doc.lineAt(state.selection.main.head).number;
+  for (let n = lineNo; n >= 1; n--) {
+    const t = state.doc.line(n).text.trim();
+    if (t in SPECIAL_BLOCKS) return SPECIAL_BLOCKS[t];
+    if (t === '') return null;
+  }
+  return null;
+}
+
+// ── Special-block Enter guard ──────────────────────────────────────────────
+// Inside a special block (e.g. @calc), Enter must insert a plain newline
+// rather than triggering markdown continuation (list markers, blockquotes,
+// indentation).  Registered at Prec.highest so it runs before markdown()'s
+// insertNewlineContinueMarkup (which is Prec.high).
+//
+// Include this in any editor that uses markdown() and may contain @calc blocks.
+// In editors that also have autocompletion(), place this AFTER autocompletion()
+// in the extensions array so acceptCompletion gets priority when a popup is open.
+
+export const specialBlockEnterKey = Prec.highest(keymap.of([
+  {
+    key: 'Enter',
+    run(view) {
+      if (!getSpecialBlockType(view.state)) return false;
+      const { from, to } = view.state.selection.main;
+      view.dispatch({
+        changes: { from, to, insert: '\n' },
+        selection: { anchor: from + 1 },
+        scrollIntoView: true,
+        userEvent: 'input',
+      });
+      return true;
+    },
+  },
+]));
+
 // ── Editor factory ─────────────────────────────────────────────────────────
 
 export function createEditor({ parent, onDocChange, onCursorChange, onPageClick, onCmdClick }) {
-  // @calc Enter guard — must be Prec.high because @codemirror/lang-markdown
-  // registers insertNewlineContinueMarkup at Prec.high, so a default-priority
-  // keymap entry is never reached for lines that look like list items (- / + / *).
-  // Being placed *after* markdown() in the extension array means this Prec.high
-  // entry wins when both are at the same precedence level.
-  const calcEnterGuard = {
-    key: 'Enter',
-    run(view) {
-      const lineNo = view.state.doc.lineAt(view.state.selection.main.head).number;
-      for (let n = lineNo - 1; n >= 1; n--) {
-        const text = view.state.doc.line(n).text.trim();
-        if (text === '@calc') return insertNewline(view);
-        if (text === '') break;
-      }
-      return false;
-    },
-  };
 
   const tabKeymap = {
     key: 'Tab',
@@ -1171,11 +1217,11 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
       taskAtPlugin,
       taskCheckboxPlugin,
       calcBlockPlugin,
+      specialBlockEnterKey,
       EditorView.lineWrapping,
       surroundHandler,
       wikiLinkPunctHandler,
       checkboxClickHandler,
-      Prec.high(keymap.of([calcEnterGuard])),
       keymap.of([
         tabKeymap,
         shiftTabKeymap,

@@ -11,7 +11,6 @@ import { ScratchPadWidget }  from './widgets/ScratchPadWidget.js';
 import { FavoritesWidget }  from './widgets/FavoritesWidget.js';
 import { TasksWidget, setDeferFutureTasks } from './widgets/TasksWidget.js';
 import { AnnotationsWidget }   from './widgets/AnnotationsWidget.js';
-import { BrowserWidget }     from './widgets/BrowserWidget.js';
 import { CounterWidget }     from './widgets/CounterWidget.js';
 import { OutlineWidget }     from './widgets/OutlineWidget.js';
 import { SearchWidget }      from './widgets/SearchWidget.js';
@@ -1904,7 +1903,6 @@ const allWidgetInstances = {
     if (cmView) cmView.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: 32 }) });
   }}),
   counter:     new CounterWidget(),
-  browser:     new BrowserWidget(),
   annotations: new AnnotationsWidget({ onOpen: openFilePath }),
   calendar:    new CalendarWidget({ onDateSelected: openJournalDate }),
   scratchPad:  new ScratchPadWidget(),

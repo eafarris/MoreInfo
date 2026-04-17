@@ -26,7 +26,7 @@ const OPERATORS = [
   { label: 'before:',        insert: 'before:',    color: 'date' },
   { label: 'tag:',           insert: 'tag:',       color: 'taxon' },
   { label: 'cat:',           insert: 'cat:',       color: 'taxon' },
-  { label: 'key:value',      insert: '',           color: 'meta' },
+  { label: 'field:value',    insert: '',           color: 'meta' },
 ];
 
 const COLOR = {
@@ -44,7 +44,7 @@ function buildHintStrip() {
     if (!op.insert) {
       return `
         <span
-          title="Any metadata field can be searched — e.g. author:eric or status:done"
+          title="Any metadata field: author:jane, status:done, author:* (any value)"
           class="shrink-0 px-1.5 py-px rounded font-mono text-[10px] leading-4
                  border border-dashed border-olive-700
                  cursor-default select-none ${COLOR[op.color]}">

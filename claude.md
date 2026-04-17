@@ -45,7 +45,7 @@ Sig block
 : Metadata variables are weakly typed, with four recognized types: string, date (or datetime), boolean, and array.
 
 Metadata string
-: A variable is defined as a string based on the data after the delimiter (regex '\s*:\\s*'). If strings are surrounded by single or double quotes, the quotes themselves are not considered part of the string (so `string` would match `'string'` or `"string"`). If the string can be successfully parsed by "chrono_node," a pulled-in JS library, it is considered a metadata _date_ rather than a string. If the string can be successfully parsed as an array delimited by commas, it is considered a metadata _array_ rather than a string, _unless_ the string is surrounded in quotes. If the string matches one of the metadata boolean values (defined below), it is considered a metadata _boolean_ rather than a string. String values are _case sensitive_.
+: A variable is defined as a string based on the data after the delimiter (regex '\s*:\\s*'). If strings are surrounded by single or double quotes, the quotes themselves are not considered part of the string (so `string` would match `'string'` or `"string"`). If the string can be successfully parsed by "chrono_node," a pulled-in JS library, it is considered a metadata *date* rather than a string. If the string can be successfully parsed as an array delimited by commas, it is considered a metadata *array* rather than a string, *unless* the string is surrounded in quotes. If the string matches one of the metadata boolean values (defined below), it is considered a metadata *boolean* rather than a string. String values are *case sensitive*.
 
 Metadata date
 : A variable is defined as a date based on the data after the delimiter (regex: '\s*:\\s*'). If the data can be successfully parsed by the JS library "chromo-node," it is considered a Metadata date. This allows not only for date patterns (eg., "YYYY-MM-DD") but also human-parsable relative dates like "tomorrow," "last may," or "1st Tuesday each month."
@@ -154,10 +154,16 @@ Tasks
 : A widget containing all uncompleted tasks across the datastore, grouped by source page and heading. Tasks are displayed with their implicit heading context and wiki links are clickable. A filter UI at the top is planned. The Task widget is resizable on both axes. See the task management spec document "TASK MANAGEMENT.md" for more information. Status: PARTIALLY IMPLEMENTED.
 
 Browser
-: A *simple* display of any URI-reachable content. The UI would consist entirely of the title bar and forward/back pages. We will not be building a full browser UI. Clicked links will open in the same widget, while Cmd+Click will open in a new Browser widget, smartly positioned based on the location and position of the current widget. The Browser widget is resizable on both axes. Status: PARTIALLY IMPLEMENTED.
+: A *simple* display of any URI-reachable content. The UI would consist entirely of the title bar and forward/back pages. We will not be building a full browser UI. Clicked links will open in the same widget, while Cmd+Click will open in a new Browser widget, smartly positioned based on the location and position of the current widget. The Browser widget is resizable on both axes. Status: DEFERRED — code exists in `src/widgets/BrowserWidget.js` but the widget is not registered or available in the UI. Revisit when Tauri's WebView embedding capabilities improve.
 
 Search
 : A widget containing the results of a full-text search of the datastore. Has a top-bar UI for search terms which can be expanded to allow for operators and filters. The Search widget is resizable on both axes. Status: PARTIALLY IMPLEMENTED.
+
+Annotations
+: A widget listing all annotation markers (TODO, FIXME, NOTE, IDEA) found across the datastore. When more than one keyword type is present, a filter pill bar appears at the top allowing the user to narrow the list by type. Clicking any annotation opens the source file. Refreshes automatically after each file save. Status: FULLY IMPLEMENTED.
+
+Favorites
+: A widget listing all pages that have `favorite: true` in their metadata. Clicking an entry opens the page. Refreshes automatically after each file save. Status: FULLY IMPLEMENTED.
 
 ## Current Feature Implementation Status
 
@@ -172,7 +178,7 @@ Search
 - [x] Full-text search
 - [x] @calc blocks (math.js, unit math, `_last`, `in`/`to` conversion, selectable results)
 - [x] @calc date math (chrono-node + Luxon: natural-language dates, date arithmetic, date differences, date carry-forward)
-- [ ] Operators, filters for full-text search
+- [x] Operators, filters for full-text search (`"phrase"`, NEAR, `in:`, `after:`, `before:`, `tag:`, `cat:`, arbitrary `key:value` / `key:*`) — 35 Rust unit tests covering tokenizer, filter parser, FTS query builder, and filter extraction
 - [x] SQLite database as cache for linked references
 - [x] SQLite database as cache for full-text search
 - [x] SQLite database as cache for unlinked references
@@ -182,8 +188,10 @@ Search
 - [x] Counter widget
 - [x] Outline widget
 - [x] Page widget
-- [x] Browser widget
+- [ ] Browser widget (deferred — see Browser entry in Shipping Widgets)
 - [x] Search widget
+- [x] Annotations widget (keyword filter pills, opens file on click)
+- [x] Favorites widget
 - [x] Wiki links
 - [x] Page aliases
 - [x] Page References widget

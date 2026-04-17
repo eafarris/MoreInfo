@@ -2099,24 +2099,28 @@ fn fts_prefix_tokens(s: &str) -> String {
 /// Active filters extracted from the query string.
 struct SearchFilters {
     /// Each inner Vec is an OR group; multiple groups are AND'd together.
-    tag_groups: Vec<Vec<String>>,
-    category:   Option<String>,
-    in_journal: bool,
-    in_wiki:    bool,
-    after:      Option<String>,  // YYYY-MM-DD; implies in_journal
-    before:     Option<String>,  // YYYY-MM-DD; implies in_journal
+    tag_groups:   Vec<Vec<String>>,
+    category:     Option<String>,
+    in_journal:   bool,
+    in_wiki:      bool,
+    after:        Option<String>,  // YYYY-MM-DD; implies in_journal
+    before:       Option<String>,  // YYYY-MM-DD; implies in_journal
+    /// Arbitrary metadata key/value filters.  Value "*" means "key exists".
+    meta_filters: Vec<(String, String)>,
 }
 
 impl SearchFilters {
     fn new() -> Self {
         Self { tag_groups: Vec::new(), category: None,
                in_journal: false, in_wiki: false,
-               after: None, before: None }
+               after: None, before: None,
+               meta_filters: Vec::new() }
     }
     fn is_empty(&self) -> bool {
         self.tag_groups.is_empty() && self.category.is_none()
             && !self.in_journal && !self.in_wiki
             && self.after.is_none() && self.before.is_none()
+            && self.meta_filters.is_empty()
     }
 }
 
@@ -2206,15 +2210,9 @@ fn build_fts_query(parts: &[String]) -> Option<String> {
     if tokens.is_empty() { None } else { Some(tokens.join(" ")) }
 }
 
-#[tauri::command]
-fn search_pages(query: String) -> Result<Vec<SearchResult>, String> {
-    let db_path = datastore_dir()?.join("moreinfo.sqlite");
-    let conn    = Connection::open(&db_path).map_err(|e| e.to_string())?;
-
-    let query = query.trim();
-    if query.is_empty() { return Ok(vec![]); }
-
-    // ── Step 1: tokenise, classify, extract filters ────────────────────────
+/// Tokenise `query` and split into FTS terms and structured filters.
+/// Extracted so the logic can be unit-tested without a database.
+fn extract_search_filters(query: &str) -> (Vec<String>, SearchFilters) {
     let mut filters      = SearchFilters::new();
     let mut pending_tags: Vec<String> = Vec::new();
     let mut fts_parts:    Vec<String> = Vec::new();
@@ -2227,6 +2225,9 @@ fn search_pages(query: String) -> Result<Vec<SearchResult>, String> {
                 if apply_known_filter(&key, &val, &mut filters, &mut pending_tags) {
                     continue;
                 }
+                // Unknown quoted key:value → metadata filter.
+                filters.meta_filters.push((key, val));
+                continue;
             }
             fts_parts.push(token);
             continue;
@@ -2240,11 +2241,15 @@ fn search_pages(query: String) -> Result<Vec<SearchResult>, String> {
             continue;
         }
 
-        // Bare key:value — try as a known filter first; fall through to FTS.
+        // Bare key:value — try known filters first, then metadata JOIN.
         if let Some((key, val)) = parse_filter_token(&token) {
             if apply_known_filter(&key, &val, &mut filters, &mut pending_tags) {
                 continue;
             }
+            // Unknown key → arbitrary metadata filter.
+            // value "*" means "key exists with any value".
+            filters.meta_filters.push((key, val));
+            continue;
         }
 
         fts_parts.push(token);
@@ -2254,6 +2259,20 @@ fn search_pages(query: String) -> Result<Vec<SearchResult>, String> {
     if !pending_tags.is_empty() {
         filters.tag_groups.push(pending_tags);
     }
+
+    (fts_parts, filters)
+}
+
+#[tauri::command]
+fn search_pages(query: String) -> Result<Vec<SearchResult>, String> {
+    let db_path = datastore_dir()?.join("moreinfo.sqlite");
+    let conn    = Connection::open(&db_path).map_err(|e| e.to_string())?;
+
+    let query = query.trim();
+    if query.is_empty() { return Ok(vec![]); }
+
+    // ── Step 1: tokenise, classify, extract filters ────────────────────────
+    let (fts_parts, filters) = extract_search_filters(query);
 
     // ── Step 2: build FTS query from remaining tokens ──────────────────────
     let fts_query = build_fts_query(&fts_parts);
@@ -2312,6 +2331,25 @@ fn search_pages(query: String) -> Result<Vec<SearchResult>, String> {
              AND lower(fm.key) = 'category' AND lower(fm.value) = lower(?))"
         ));
         bind_vals.push(cat.clone());
+    }
+
+    // Arbitrary metadata filters.  value "*" = key exists with any value.
+    for (key, val) in &filters.meta_filters {
+        if val == "*" {
+            conditions.push(format!(
+                "EXISTS (SELECT 1 FROM file_metadata fm \
+                 WHERE fm.path = {path_col} AND lower(fm.key) = lower(?))"
+            ));
+            bind_vals.push(key.clone());
+        } else {
+            conditions.push(format!(
+                "EXISTS (SELECT 1 FROM file_metadata fm \
+                 WHERE fm.path = {path_col} \
+                 AND lower(fm.key) = lower(?) AND lower(fm.value) = lower(?))"
+            ));
+            bind_vals.push(key.clone());
+            bind_vals.push(val.clone());
+        }
     }
 
     let where_clause = if conditions.is_empty() {
@@ -2532,4 +2570,248 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+// ── Search helper tests ───────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod search_tests {
+    use super::*;
+
+    // ── tokenize_search_query ────────────────────────────────────────────────
+
+    #[test]
+    fn tokenize_single_word() {
+        assert_eq!(tokenize_search_query("hello"), vec!["hello"]);
+    }
+
+    #[test]
+    fn tokenize_two_words() {
+        assert_eq!(tokenize_search_query("hello world"), vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn tokenize_extra_whitespace() {
+        assert_eq!(tokenize_search_query("  hello   world  "), vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn tokenize_quoted_phrase_is_single_token() {
+        assert_eq!(tokenize_search_query(r#""exact phrase""#), vec![r#""exact phrase""#]);
+    }
+
+    #[test]
+    fn tokenize_mixed_bare_and_quoted() {
+        let got = tokenize_search_query(r#"hello "exact phrase" world"#);
+        assert_eq!(got, vec!["hello", r#""exact phrase""#, "world"]);
+    }
+
+    #[test]
+    fn tokenize_filter_token_kept_intact() {
+        assert_eq!(tokenize_search_query("in:journal"), vec!["in:journal"]);
+    }
+
+    #[test]
+    fn tokenize_near_keyword() {
+        let got = tokenize_search_query("hello NEAR world");
+        assert_eq!(got, vec!["hello", "NEAR", "world"]);
+    }
+
+    #[test]
+    fn tokenize_empty_string() {
+        let got = tokenize_search_query("");
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn tokenize_whitespace_only() {
+        let got = tokenize_search_query("   ");
+        assert!(got.is_empty());
+    }
+
+    #[test]
+    fn tokenize_unclosed_quote_yields_one_token() {
+        // An unclosed quote absorbs the rest of the input as a single token.
+        let got = tokenize_search_query(r#"hello "unclosed"#);
+        assert_eq!(got, vec!["hello", "\"unclosed"]);
+    }
+
+    // ── parse_filter_token ───────────────────────────────────────────────────
+
+    #[test]
+    fn filter_token_basic() {
+        assert_eq!(parse_filter_token("in:journal"), Some(("in".into(), "journal".into())));
+    }
+
+    #[test]
+    fn filter_token_tag() {
+        assert_eq!(parse_filter_token("tag:rust"), Some(("tag".into(), "rust".into())));
+    }
+
+    #[test]
+    fn filter_token_date() {
+        assert_eq!(
+            parse_filter_token("after:2024-01-01"),
+            Some(("after".into(), "2024-01-01".into())),
+        );
+    }
+
+    #[test]
+    fn filter_token_value_preserves_case() {
+        // Keys are lowercased by the caller; values must be preserved as-is.
+        assert_eq!(
+            parse_filter_token("author:Jane Doe"),
+            Some(("author".into(), "Jane Doe".into())),
+        );
+    }
+
+    #[test]
+    fn filter_token_no_colon_returns_none() {
+        assert_eq!(parse_filter_token("hello"), None);
+    }
+
+    #[test]
+    fn filter_token_empty_key_returns_none() {
+        assert_eq!(parse_filter_token(":value"), None);
+    }
+
+    #[test]
+    fn filter_token_empty_value_returns_none() {
+        assert_eq!(parse_filter_token("key:"), None);
+    }
+
+    #[test]
+    fn filter_token_uppercase_key_returns_none() {
+        // Keys must be all lowercase ASCII; "NEAR" (and other uppercase tokens)
+        // are not treated as key:value filters.
+        assert_eq!(parse_filter_token("NEAR"), None);
+        assert_eq!(parse_filter_token("Author:Eric"), None);
+    }
+
+    #[test]
+    fn filter_token_hyphen_and_underscore_in_key() {
+        assert_eq!(
+            parse_filter_token("publish-date:2025-01-01"),
+            Some(("publish-date".into(), "2025-01-01".into())),
+        );
+        assert_eq!(
+            parse_filter_token("my_key:value"),
+            Some(("my_key".into(), "value".into())),
+        );
+    }
+
+    // ── build_fts_query ──────────────────────────────────────────────────────
+
+    #[test]
+    fn fts_empty_parts_returns_none() {
+        assert_eq!(build_fts_query(&[]), None);
+    }
+
+    #[test]
+    fn fts_single_bare_word_gets_prefix_wildcard() {
+        assert_eq!(build_fts_query(&["hello".into()]), Some("hello*".into()));
+    }
+
+    #[test]
+    fn fts_two_bare_words() {
+        assert_eq!(
+            build_fts_query(&["hello".into(), "world".into()]),
+            Some("hello* world*".into()),
+        );
+    }
+
+    #[test]
+    fn fts_quoted_phrase_passed_through() {
+        assert_eq!(
+            build_fts_query(&[r#""exact phrase""#.into()]),
+            Some(r#""exact phrase""#.into()),
+        );
+    }
+
+    #[test]
+    fn fts_mixed_bare_and_quoted() {
+        let got = build_fts_query(&["hello".into(), r#""exact phrase""#.into()]);
+        assert_eq!(got, Some(r#"hello* "exact phrase""#.into()));
+    }
+
+    #[test]
+    fn fts_near_two_bare_words() {
+        let got = build_fts_query(&["hello".into(), "NEAR".into(), "world".into()]);
+        assert_eq!(got, Some("NEAR(hello* world*, 10)".into()));
+    }
+
+    #[test]
+    fn fts_near_with_quoted_phrase() {
+        let got = build_fts_query(&[r#""hello world""#.into(), "NEAR".into(), "foo".into()]);
+        assert_eq!(got, Some(r#"NEAR("hello world" foo*, 10)"#.into()));
+    }
+
+    #[test]
+    fn fts_near_only_no_terms_returns_none() {
+        // "NEAR" with no other tokens produces no usable query.
+        let got = build_fts_query(&["NEAR".into()]);
+        assert_eq!(got, None);
+    }
+
+    // ── extract_search_filters ───────────────────────────────────────────────
+
+    #[test]
+    fn extract_unknown_key_value_goes_to_meta_filters() {
+        let (fts, filters) = extract_search_filters("author:jane");
+        assert!(fts.is_empty(), "should not reach FTS");
+        assert_eq!(filters.meta_filters, vec![("author".to_string(), "jane".to_string())]);
+    }
+
+    #[test]
+    fn extract_wildcard_value_goes_to_meta_filters() {
+        let (fts, filters) = extract_search_filters("author:*");
+        assert!(fts.is_empty());
+        assert_eq!(filters.meta_filters, vec![("author".to_string(), "*".to_string())]);
+    }
+
+    #[test]
+    fn extract_known_key_does_not_go_to_meta_filters() {
+        let (_, filters) = extract_search_filters("tag:rust in:journal");
+        assert!(filters.meta_filters.is_empty());
+        assert!(!filters.tag_groups.is_empty());
+        assert!(filters.in_journal);
+    }
+
+    #[test]
+    fn extract_mixed_known_and_unknown_filters() {
+        let (fts, filters) = extract_search_filters("notes author:jane in:wiki");
+        assert_eq!(fts, vec!["notes"]);
+        assert!(filters.in_wiki);
+        assert_eq!(filters.meta_filters, vec![("author".to_string(), "jane".to_string())]);
+    }
+
+    #[test]
+    fn extract_multiple_meta_filters_all_collected() {
+        let (_, filters) = extract_search_filters("author:jane status:done");
+        assert_eq!(filters.meta_filters.len(), 2);
+        assert!(filters.meta_filters.contains(&("author".to_string(), "jane".to_string())));
+        assert!(filters.meta_filters.contains(&("status".to_string(), "done".to_string())));
+    }
+
+    #[test]
+    fn extract_quoted_unknown_key_value_goes_to_meta_filters() {
+        let (fts, filters) = extract_search_filters(r#""author:Jane Doe""#);
+        assert!(fts.is_empty());
+        assert_eq!(filters.meta_filters, vec![("author".to_string(), "Jane Doe".to_string())]);
+    }
+
+    #[test]
+    fn extract_bare_word_goes_to_fts_not_meta() {
+        let (fts, filters) = extract_search_filters("hello");
+        assert_eq!(fts, vec!["hello"]);
+        assert!(filters.meta_filters.is_empty());
+    }
+
+    #[test]
+    fn fts_multi_word_bare_token_produces_multiple_wildcards() {
+        // fts_prefix_tokens splits on non-alphanumeric, so "hello world" (bare)
+        // becomes "hello* world*".
+        let got = build_fts_query(&["hello world".into()]);
+        assert_eq!(got, Some("hello* world*".into()));
+    }
 }

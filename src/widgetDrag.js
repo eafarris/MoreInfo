@@ -58,16 +58,23 @@ export function initWidgetDrag({
     const aboveWidget = getRegistry().get(above.dataset.widgetId);
     if (aboveWidget?.fixedSize) return null;
 
+    // If the widget is rolled, snap it open instantly so the drag grows it
+    // from the header size — same end state as clicking the roll button but
+    // without animation, and the drag sets the final size.
+    if (aboveWidget?._rolled) aboveWidget.unrollImmediate();
+
     const below = wrappers[idx + 1];
     const startPos   = e[axis];
     const startAbove = above[sizeProp];
     const startBelow = below[sizeProp];
 
     // Lock all non-fixed wrappers to their current size so flex doesn't fight us.
+    // Suppress transitions for the duration of the drag so size updates are instant.
     // Fixed-size wrappers keep their '0 0 auto' flex untouched.
     wrappers.forEach(w => {
       if (getRegistry().get(w.dataset.widgetId)?.fixedSize) return;
       w.style.flex = `0 0 ${w[sizeProp]}px`;
+      w.style.transition = 'none';
     });
 
     function onMove(ev) {
@@ -138,6 +145,13 @@ export function initWidgetDrag({
 
         lastFlex.style.flex = '1 1 0';
       }
+
+      // Restore transitions now that sizes are finalised.
+      const cssProp = horiz ? 'max-width' : 'max-height';
+      wrappers.forEach(w => {
+        if (getRegistry().get(w.dataset.widgetId)?.fixedSize) return;
+        w.style.transition = `${cssProp} 220ms ease, flex-basis 220ms ease`;
+      });
     }
 
     document.addEventListener('mousemove', onMove);

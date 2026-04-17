@@ -41,8 +41,6 @@ export class Widget {
     this._orientation = 'vertical';
     /** @type {number} Header height (vertical) or width (horizontal) in px */
     this._headerSize  = 0;
-    /** @type {number|null} Full container size before rolling; null until first roll */
-    this._naturalSize = null;
     /** @type {ResizeObserver|null} Defers rolled-state application until container is visible */
     this._rollObserver = null;
     /** @type {boolean} True when this is the last (bottom/right) widget in its sidebar */
@@ -85,9 +83,6 @@ export class Widget {
     this._isLast      = isLast;
     const savedState  = this.loadState();
     this._rolled      = savedState?._rolled ?? false;
-    // Restore the pre-roll natural size so roll-down works correctly even when
-    // the wrapper was mounted with a stale (too-small) saved flex size.
-    this._naturalSize = (savedState?._naturalSize > 0) ? savedState._naturalSize : null;
 
     const horiz = orientation === 'horizontal';
 
@@ -138,19 +133,14 @@ export class Widget {
     container.querySelector('.widget-title').addEventListener('dblclick', () => this._toggleRoll());
     this._rollBtn.addEventListener('click', () => this._toggleRoll());
 
-    // Call onMount() before measuring so the body is populated with content,
-    // giving accurate natural-size readings.
     this.onMount();
 
-    // Measure sizes with full content rendered.
-    // Only update _headerSize / _naturalSize when the container is visible
-    // (offsetHeight > 0); if the sidebar is hidden the measurements are 0
-    // and we must not clobber any restored values.
+    // Measure the header size.  Only update when the container is visible
+    // (offsetHeight > 0); if the sidebar is hidden the measurement is 0 and
+    // we must not clobber any previously stored value.
     const header = container.querySelector('.widget-header');
-    const measuredHeader  = horiz ? header.offsetWidth  : header.offsetHeight;
-    const measuredNatural = horiz ? container.offsetWidth : container.offsetHeight;
-    if (measuredHeader  > 0) this._headerSize  = measuredHeader;
-    if (measuredNatural > 0) this._naturalSize = measuredNatural;
+    const measuredHeader = horiz ? header.offsetWidth : header.offsetHeight;
+    if (measuredHeader > 0) this._headerSize = measuredHeader;
 
     // Apply the initial rolled state.
     // If the container is hidden (measurements are 0) we can't compute the
@@ -162,6 +152,7 @@ export class Widget {
       const marginProp = horiz ? 'marginLeft' : 'marginTop';
       if (this._headerSize > 0) {
         container.style[prop]          = this._headerSize + 'px';
+        container.style.flex           = `0 0 ${this._headerSize}px`;
         if (this._isLast) container.style[marginProp] = 'auto';
         this._body.style.opacity       = '0';
         this._body.style.pointerEvents = 'none';
@@ -175,9 +166,8 @@ export class Widget {
           this._rollObserver.disconnect();
           this._rollObserver = null;
           this._headerSize  = hNow;
-          const natNow = horiz ? container.offsetWidth : container.offsetHeight;
-          if (natNow > 0) this._naturalSize = natNow;
           container.style[prop] = this._headerSize + 'px';
+          container.style.flex  = `0 0 ${this._headerSize}px`;
           if (this._isLast) container.style[marginProp] = 'auto';
           // Don't enable transitions here — this fires during the reveal paint.
         });
@@ -189,7 +179,7 @@ export class Widget {
     // so the above constraints don't produce an unwanted animation on load.
     requestAnimationFrame(() => requestAnimationFrame(() => {
       const prop = horiz ? 'max-width' : 'max-height';
-      container.style.transition        = `${prop} 220ms ease`;
+      container.style.transition        = `${prop} 220ms ease, flex-basis 220ms ease`;
       this._body.style.transition       = 'opacity 180ms ease';
     }));
   }
@@ -224,41 +214,49 @@ export class Widget {
     const marginProp = horiz ? 'marginLeft' : 'marginTop';
 
     if (this._rolled) {
-      // Capture the natural (pre-roll) size so roll-down can restore it even
-      // if the wrapper is later remounted with a stale small flex size.
-      this._naturalSize = this._container[sizeProp];
-      // Set an explicit value first (so the browser has a concrete "from" value),
-      // force a reflow, then animate to the header size.
-      this._container.style[prop] = this._naturalSize + 'px';
+      // Give the browser a concrete "from" value by locking the current size,
+      // force a reflow, then animate to header size.
+      const currentSize = this._container[sizeProp];
+      this._container.style.flex  = `0 0 ${currentSize}px`;
+      this._container.style[prop] = currentSize + 'px';
       this._container.offsetHeight; // eslint-disable-line no-unused-expressions
-      // For the last widget: apply the auto-margin before animating.  As
-      // maxHeight/maxWidth decreases, the auto-margin grows automatically to
-      // absorb the freed space, keeping the title bar pinned to the sidebar's
-      // trailing edge throughout the animation (slides down / slides right).
+      // Last widget: set auto-margin before animating so the header stays
+      // pinned to the trailing edge as the widget shrinks.
       if (this._isLast) this._container.style[marginProp] = 'auto';
-      this._container.style[prop]       = this._headerSize + 'px';
-      this._body.style.opacity          = '0';
-      this._body.style.pointerEvents    = 'none';
+      this._container.style.flex     = `0 0 ${this._headerSize}px`;
+      this._container.style[prop]    = this._headerSize + 'px';
+      this._body.style.opacity       = '0';
+      this._body.style.pointerEvents = 'none';
     } else {
-      this._body.style.opacity        = '1';
-      this._body.style.pointerEvents  = '';
-      // Only animate if we have a reliable pre-roll size larger than the header.
-      // If naturalSize is unknown or equals the header (e.g. mounted with a
-      // stale tiny flex size), skip the animation and remove all constraints so
-      // flex layout can size the widget freely.
-      const validTarget = this._naturalSize && this._naturalSize > this._headerSize * 1.5;
-      if (validTarget) {
-        this._container.style[prop] = this._naturalSize + 'px';
+      this._body.style.opacity       = '1';
+      this._body.style.pointerEvents = '';
+
+      // Animate to fill the space currently available in the sidebar, then
+      // hand off to flex so the widget stays responsive to future resizes.
+      const stack        = this._container.parentElement;
+      const stackSize    = stack ? stack[sizeProp] : 0;
+      const siblingsSize = stack
+        ? [...stack.querySelectorAll('[data-widget-id]')]
+            .filter(w => w !== this._container)
+            .reduce((sum, w) => sum + w[sizeProp], 0)
+        : 0;
+      const targetSize = Math.max(this._headerSize * 2, stackSize - siblingsSize);
+
+      if (stackSize > 0) {
+        this._container.style.flex  = `1 0 ${targetSize}px`;
+        this._container.style[prop] = targetSize + 'px';
         this._container.addEventListener('transitionend', () => {
           if (!this._rolled) {
-            this._container.style[prop]        = '';
-            this._container.style[marginProp]  = ''; // clear after widget fully expands
+            this._container.style[prop]       = '';
+            this._container.style[marginProp] = '';
+            this._container.style.flex        = '1 1 0';
           }
         }, { once: true });
       } else {
-        this._container.style[prop]       = '';       // clear maxHeight/maxWidth
-        this._container.style[marginProp] = '';       // clear auto-margin
-        this._container.style.flex        = '1 1 0'; // let flex layout size it
+        // Sidebar not yet visible — skip animation, just clear constraints.
+        this._container.style[prop]       = '';
+        this._container.style[marginProp] = '';
+        this._container.style.flex        = '1 1 0';
       }
     }
 
@@ -266,7 +264,41 @@ export class Widget {
       `ph ${this._rollIconClass()} text-sm leading-none`;
 
     const existing = this.loadState() ?? {};
-    this.saveState({ ...existing, _rolled: this._rolled, _naturalSize: this._naturalSize });
+    this.saveState({ ...existing, _rolled: this._rolled });
+  }
+
+  /**
+   * Unroll this widget instantly (no animation) without changing its size.
+   * The body becomes visible and the max-height/max-width constraint is cleared,
+   * but flex is left alone so the caller (drag-resize) can grow the widget from
+   * its current header size via normal drag handling.  A no-op if already unrolled.
+   */
+  unrollImmediate() {
+    if (!this._rolled) return;
+    this._rolled = false;
+
+    const horiz      = this._orientation === 'horizontal';
+    const prop       = horiz ? 'maxWidth'  : 'maxHeight';
+    const marginProp = horiz ? 'marginLeft' : 'marginTop';
+
+    this._container.style.transition  = 'none';
+    this._body.style.transition       = 'none';
+    this._container.style[prop]       = '';
+    this._container.style[marginProp] = '';
+    this._body.style.opacity          = '1';
+    this._body.style.pointerEvents    = '';
+
+    const cssProp = horiz ? 'max-width' : 'max-height';
+    requestAnimationFrame(() => {
+      this._container.style.transition = `${cssProp} 220ms ease, flex-basis 220ms ease`;
+      this._body.style.transition      = 'opacity 180ms ease';
+    });
+
+    this._rollBtn.querySelector('i').className =
+      `ph ${this._rollIconClass()} text-sm leading-none`;
+
+    const existing = this.loadState() ?? {};
+    this.saveState({ ...existing, _rolled: false });
   }
 
   /**

@@ -82,7 +82,6 @@ describe('Widget constructor', () => {
     expect(w._rollBtn).toBeNull();
     expect(w._orientation).toBe('vertical');
     expect(w._headerSize).toBe(0);
-    expect(w._naturalSize).toBeNull();
     expect(w._rollObserver).toBeNull();
   });
 });
@@ -116,17 +115,10 @@ describe('Widget.mount() shell', () => {
   });
 
   it('reads _rolled from saved state', () => {
-    const w = makeWidget({ _rolled: true, _naturalSize: 180 });
+    const w = makeWidget({ _rolled: true });
     const el = document.createElement('div');
     w.mount(el);
     expect(w._rolled).toBe(true);
-  });
-
-  it('restores _naturalSize from saved state (> 0)', () => {
-    const w = makeWidget({ _naturalSize: 250 });
-    const el = document.createElement('div');
-    w.mount(el);
-    expect(w._naturalSize).toBe(250);
   });
 
   it('does not apply maxHeight when _rolled is false', () => {
@@ -165,14 +157,6 @@ describe('Widget.mount() in hidden container (_rolled: true)', () => {
     expect(_observers.length).toBe(1);
   });
 
-  it('does not overwrite a restored _naturalSize with the measured 0', () => {
-    const w = makeWidget({ _rolled: true, _naturalSize: 200 });
-    const el = document.createElement('div');
-    w.mount(el);
-    // Measurement returns 0 (hidden) — must not clobber 200
-    expect(w._naturalSize).toBe(200);
-  });
-
   it('ResizeObserver callback does nothing if container is still invisible', () => {
     const w = makeWidget({ _rolled: true });
     const el = document.createElement('div');
@@ -200,7 +184,6 @@ describe('Widget.mount() in hidden container (_rolled: true)', () => {
     w._rollObserver.trigger();
 
     expect(w._headerSize).toBe(32);
-    expect(w._naturalSize).toBe(220);
     expect(el.style.maxHeight).toBe('32px');
   });
 
@@ -308,8 +291,8 @@ describe('Widget.destroy()', () => {
 describe('Widget state persistence', () => {
   it('saveState and loadState round-trip', () => {
     const w = makeWidget();
-    w.saveState({ _rolled: true, _naturalSize: 200, custom: 'hello' });
-    expect(w.loadState()).toEqual({ _rolled: true, _naturalSize: 200, custom: 'hello' });
+    w.saveState({ _rolled: true, custom: 'hello' });
+    expect(w.loadState()).toEqual({ _rolled: true, custom: 'hello' });
   });
 
   it('loadState returns null when nothing is saved', () => {

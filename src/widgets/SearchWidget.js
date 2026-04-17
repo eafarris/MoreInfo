@@ -7,19 +7,85 @@ function esc(s) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// Operator tokens shown in the always-visible hint strip.
+// color key → Tailwind text class
+//   phrase  → emerald   exact phrase search
+//   op      → amber     infix operator keyword (NEAR)
+//   source  → violet    in: source filters
+//   date    → orange    after: / before: date filters
+//   taxon   → sky       tag: / cat: taxonomy filters
+//   meta    → zinc      arbitrary key:value metadata
+// cursor: characters to back up from end of final input value (0 = stay at end).
+// wrap:   wrap existing input value in `insert`…`insert` (used for phrase quotes).
+const OPERATORS = [
+  { label: '"exact phrase"', insert: '"',          color: 'phrase', wrap: true, cursor: 1 },
+  { label: 'NEAR',           insert: ' NEAR ',     color: 'op' },
+  { label: 'in:journal',     insert: 'in:journal', color: 'source' },
+  { label: 'in:wiki',        insert: 'in:wiki',    color: 'source' },
+  { label: 'after:',         insert: 'after:',     color: 'date' },
+  { label: 'before:',        insert: 'before:',    color: 'date' },
+  { label: 'tag:',           insert: 'tag:',       color: 'taxon' },
+  { label: 'cat:',           insert: 'cat:',       color: 'taxon' },
+  { label: 'key:value',      insert: '',           color: 'meta' },
+];
+
+const COLOR = {
+  phrase: 'text-emerald-400',
+  op:     'text-amber-400',
+  source: 'text-violet-400',
+  date:   'text-orange-400',
+  taxon:  'text-sky-400',
+  meta:   'text-zinc-400',
+};
+
+function buildHintStrip() {
+  const tokens = OPERATORS.map(op => {
+    // key:value is a non-interactive hint; all others are clickable buttons.
+    if (!op.insert) {
+      return `
+        <span
+          title="Any metadata field can be searched — e.g. author:eric or status:done"
+          class="shrink-0 px-1.5 py-px rounded font-mono text-[10px] leading-4
+                 border border-dashed border-olive-700
+                 cursor-default select-none ${COLOR[op.color]}">
+          ${esc(op.label)}
+        </span>`;
+    }
+    return `
+      <button
+        data-insert="${esc(op.insert)}"
+        data-cursor="${op.cursor ?? 0}"
+        data-wrap="${op.wrap ?? false}"
+        class="shrink-0 px-1.5 py-px rounded font-mono text-[10px] leading-4
+               border border-olive-700 bg-olive-800
+               hover:bg-olive-700 hover:border-olive-600
+               transition-colors cursor-pointer ${COLOR[op.color]}">
+        ${esc(op.label)}
+      </button>`;
+  }).join('');
+
+  return `
+    <div class="hint-strip flex flex-wrap items-center gap-1.5 px-3 py-1.5
+                border-b border-olive-700 bg-olive-900 shrink-0">
+      <span class="shrink-0 text-[9px] font-semibold uppercase tracking-wider
+                   text-olive-600 select-none pr-0.5">Operators</span>
+      ${tokens}
+    </div>`;
+}
+
 export class SearchWidget extends Widget {
   /**
    * @param {{ onOpen: (path: string, title: string) => void }} opts
    */
   constructor({ onOpen } = {}) {
     super({ id: 'search', title: 'Search', icon: 'ph-magnifying-glass' });
-    this._onOpen    = onOpen || (() => {});
-    this._input     = null;
-    this._clearBtn  = null;
-    this._results   = null;
-    this._debounce  = null;
-    this._query     = '';
-    this._lastHits  = null;   // null = no search yet; [] = search returned no hits
+    this._onOpen   = onOpen || (() => {});
+    this._input    = null;
+    this._clearBtn = null;
+    this._results  = null;
+    this._debounce = null;
+    this._query    = '';
+    this._lastHits = null;   // null = no search yet; [] = search returned no hits
   }
 
   get wrapperClass() { return 'flex flex-col border-b border-olive-700'; }
@@ -40,12 +106,13 @@ export class SearchWidget extends Widget {
           <i class="ph ph-x text-xs"></i>
         </button>
       </div>
-      <div id="sw-results" class="overflow-y-auto flex-1 min-h-0"></div>
+      ${buildHintStrip()}
+      <div class="sw-results overflow-y-auto flex-1 min-h-0"></div>
     `;
 
     this._input    = this._body.querySelector('input');
     this._clearBtn = this._body.querySelector('button');
-    this._results  = this._body.querySelector('#sw-results');
+    this._results  = this._body.querySelector('.sw-results');
 
     // Restore state from before the last move/remount.
     if (this._query) {
@@ -59,6 +126,8 @@ export class SearchWidget extends Widget {
     } else {
       this._renderEmpty();
     }
+
+    // ── Input events ────────────────────────────────────────────────────────
 
     this._input.addEventListener('input', () => {
       const q = this._input.value.trim();
@@ -76,6 +145,41 @@ export class SearchWidget extends Widget {
       this._renderEmpty();
       this._input.focus();
     });
+
+    // ── Hint-strip token clicks ──────────────────────────────────────────────
+
+    // Prevent token mousedown from stealing focus from the input.
+    this._body.querySelector('.hint-strip').addEventListener('mousedown', e => {
+      if (e.target.closest('[data-insert]')) e.preventDefault();
+    });
+
+    this._body.querySelector('.hint-strip').addEventListener('click', e => {
+      const token = e.target.closest('[data-insert]');
+      if (!token) return;
+
+      const op     = token.dataset.insert;
+      const wrap   = token.dataset.wrap === 'true';
+      const backup = parseInt(token.dataset.cursor, 10) || 0;
+      const cur    = this._input.value;
+
+      let next;
+      if (wrap) {
+        next = cur.trim() ? `${op}${cur.trim()}${op}` : `${op}${op}`;
+      } else if (cur.trimEnd()) {
+        next = `${cur.trimEnd()} ${op}`;
+      } else {
+        next = op;
+      }
+
+      this._input.value = next;
+      this._clearBtn.style.display = '';
+      const pos = next.length - backup;
+      this._input.setSelectionRange(pos, pos);
+      this._input.focus();
+      this._input.dispatchEvent(new Event('input'));
+    });
+
+    // ── Results click (page open) ────────────────────────────────────────────
 
     this._results.addEventListener('click', e => {
       const item = e.target.closest('[data-path]');

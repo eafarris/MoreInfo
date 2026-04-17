@@ -13,11 +13,13 @@ export class SearchWidget extends Widget {
    */
   constructor({ onOpen } = {}) {
     super({ id: 'search', title: 'Search', icon: 'ph-magnifying-glass' });
-    this._onOpen   = onOpen || (() => {});
-    this._input    = null;
-    this._clearBtn = null;
-    this._results  = null;
-    this._debounce = null;
+    this._onOpen    = onOpen || (() => {});
+    this._input     = null;
+    this._clearBtn  = null;
+    this._results   = null;
+    this._debounce  = null;
+    this._query     = '';
+    this._lastHits  = null;   // null = no search yet; [] = search returned no hits
   }
 
   get wrapperClass() { return 'flex flex-col border-b border-olive-700'; }
@@ -45,19 +47,32 @@ export class SearchWidget extends Widget {
     this._clearBtn = this._body.querySelector('button');
     this._results  = this._body.querySelector('#sw-results');
 
-    this._renderEmpty();
+    // Restore state from before the last move/remount.
+    if (this._query) {
+      this._input.value            = this._query;
+      this._clearBtn.style.display = '';
+      if (this._lastHits !== null) {
+        this._renderResults(this._lastHits, this._query);
+      } else {
+        this._search(this._query);
+      }
+    } else {
+      this._renderEmpty();
+    }
 
     this._input.addEventListener('input', () => {
       const q = this._input.value.trim();
       this._clearBtn.style.display = q ? '' : 'none';
       clearTimeout(this._debounce);
-      if (!q) { this._renderEmpty(); return; }
+      if (!q) { this._query = ''; this._lastHits = null; this._renderEmpty(); return; }
       this._debounce = setTimeout(() => this._search(q), 300);
     });
 
     this._clearBtn.addEventListener('click', () => {
       this._input.value = '';
       this._clearBtn.style.display = 'none';
+      this._query    = '';
+      this._lastHits = null;
       this._renderEmpty();
       this._input.focus();
     });
@@ -73,12 +88,15 @@ export class SearchWidget extends Widget {
   }
 
   async _search(query) {
+    this._query    = query;
+    this._lastHits = null;
     this._results.innerHTML = `
       <div class="flex items-center justify-center py-4 text-olive-700">
         <i class="ph ph-circle-notch animate-spin text-xl leading-none"></i>
       </div>`;
     try {
       const hits = await invoke('search_pages', { query });
+      this._lastHits = hits;
       this._renderResults(hits, query);
     } catch (err) {
       console.error('[SearchWidget]', err);

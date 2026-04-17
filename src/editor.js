@@ -395,12 +395,25 @@ const hrPlugin = ViewPlugin.fromClass(class {
   _build(view) {
     const deco = [];
     const tree = syntaxTree(view.state);
+    const doc  = view.state.doc;
+
+    // Identify front-matter delimiter lines so they are not styled as <hr>.
+    // Front matter is an opening --- on line 1 followed by a matching closing ---.
+    let fmOpenLine  = 0;
+    let fmCloseLine = 0;
+    if (doc.lines >= 2 && doc.line(1).text.trim() === '---') {
+      for (let n = 2; n <= doc.lines; n++) {
+        if (doc.line(n).text.trim() === '---') { fmOpenLine = 1; fmCloseLine = n; break; }
+      }
+    }
+
     for (const { from, to } of view.visibleRanges) {
       tree.iterate({
         from, to,
         enter(node) {
           if (node.name !== 'HorizontalRule') return;
-          const line = view.state.doc.lineAt(node.from);
+          const line = doc.lineAt(node.from);
+          if (line.number === fmOpenLine || line.number === fmCloseLine) return;
           deco.push(Decoration.line({ class: 'cm-hr' }).range(line.from));
         },
       });

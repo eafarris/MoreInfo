@@ -1,6 +1,7 @@
 nimbalyst-local/
 node_modules/
 dist/
+docs
 /target/debug/
 /target/release/
 src-tauri/target/

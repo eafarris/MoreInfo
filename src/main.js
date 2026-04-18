@@ -1025,7 +1025,7 @@ async function loadTasksView(pushHistory = true, contextFilter = null) {
   vDivider.style.display       = 'none';
   markdownPane.style.display   = 'none';
   metadataView.style.display   = 'none';
-  tasksView.style.display      = 'block';
+  tasksView.style.display      = 'flex';
 
   currentFile  = TASKS_PSEUDO_PAGE;
   currentTitle = 'Tasks';

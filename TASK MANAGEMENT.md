@@ -74,7 +74,7 @@ Reserved tags carry a value in parentheses.
 | `@priority(n)` | Alternate priority form; equivalent to `(n)` |
 | `@defer(date)` | Hide the task until this date |
 
-The full list of reserved tag names (never treated as page category references): `due`, `priority`, `done`, `cancelled`, `waiting`, `defer`, `repeat`.
+The full list of reserved tag names (never treated as page category references): `due`, `priority`, `done`, `waiting`, `defer`.
 
 ---
 
@@ -85,7 +85,6 @@ The full list of reserved tag names (never treated as page category references):
 | Open | Default — unchecked box |
 | Done | Check the box, or add `@done` |
 | Waiting | `@waiting` — blocked on someone or something else |
-| Someday | `@someday` — not actionable now, not forgotten |
 | Deferred | `@defer(date)` — snoozed until a date |
 
 ---
@@ -118,7 +117,7 @@ The Tasks widget shows all open tasks across the datastore, with a filter UI at 
 - Context (`@phone`, `@errands`, …)
 - Page / project (`[[Anderson Contract]]`)
 - Due date (overdue, due today, due this week)
-- State (open, waiting, someday)
+- State (open, waiting)
 - Priority
 
 Tasks from journal pages and wiki pages are both included. Template pages are excluded.

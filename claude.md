@@ -2,6 +2,17 @@
 
 MoreInfo ("MI") is a markdown-based note taking app for macOS and Windows. It allows for the building of a personal knowledge base (PKB) through wiki-like linking, daily journals, and task management. It uses plaintext markdown documents for all of its source data.
 
+## Design Philosophy
+
+**Plaintext first.** All user data lives in plain Markdown files. The SQLite database, preferences, and any other app-managed files are derived from or supplementary to those files — never authoritative. A user can delete the database, open their files in any editor, and lose nothing.
+
+**MI does not tamper with user content.** The app reads files extensively but writes back to them only in two narrow, explicit cases:
+
+1. **App-managed metadata** — `title:` and `favorite:` written to the sig block, or edited in-place if the user has already placed them in a front block. These are facts MI needs to persist that have no natural home in prose; the sig block is a clearly-delimited section the user understands to be app territory. Editing user-placed metadata in-place is acceptable because those keys exist specifically to be managed by the app — it is still metadata, not page content.
+2. **Task completion stamps** — `@done(YYYY-MM-DD HH:MM)` added to (or removed from) a task line when the user explicitly checks or unchecks the box. This modifies only the single line the user directly interacted with.
+
+Everything else — linking, indexing, search, recurrence ideas, context inference — is *read* from files, never written back. Features that would require MI to generate new content lines, silently mutate existing prose, or add markup the user didn't type are out of scope. This is a product philosophy, not just a technical constraint: users should be able to trust that their files contain exactly what they wrote.
+
 ## Engineering and Architecture
 
 MI is built using Rust and Tauri. Styling of the front-end is done with TailwindCSS and is themeable, and the Phosphor Icon set is used as glyphs. Where possible, MI defaults to OS-native API calls, forms, and styling. While being developed as an app for macOS, the toolset has been selected because of its ability to be recompiled as near-native apps for other operating systems. At least macOS, iOS, iPadOS, and Windows binaries are planned.
@@ -198,9 +209,20 @@ Favorites
 - [x] Page templates
 - [x] Basic tasks (clickable checkboxes, `@done` auto-stamp)
 - [ ] Task `@context` tags (GTD-style bare `@word`, highlighted + indexed)
-- [ ] Reserved context tags — @someday, @waiting
+- [ ] Reserved context tag — @waiting (blocked on someone or something else)
 - [x] Task implicit heading context (nearest ATX heading; resets at thematic breaks)
 - [x] Annotations: TODO, NOTE, IDEA, and FIXME (highlighted, indexed; not tasks)
 - [~] Tasks widget (grouped by page + heading, wiki links clickable; filter UI planned)
 - [x] Expanded task params: `@due`, `@priority`, `@defer`
 - [x] CamelCase wiki links (existing pages only, never creates)
+- [x] @calc named variables (assign with `name = expr`, reference by name in subsequent lines)
+- [ ] Task nesting / subtask hierarchies (indented child tasks; parent shows progress indicator, e.g. "2/5")
+- [x] Tasks pseudo-page (toolbar button opens a full-page aggregated task view, not a sidebar widget)
+- [ ] Tasks widget: filter by note/folder, sort by priority/due date
+- [ ] Tags widget (all tags across datastore; click to filter; tag cloud or list)
+- [x] Metadata widget: display key/value pairs for active document
+- [x] Metadata widget: editing interactions (click to edit value inline; double-click to find all pages with matching key/value)
+- [ ] Command palette (`⌘⇧P` — fuzzy search over commands, pages, and actions)
+- [ ] Focus mode (`⌘⇧F` — single document, no sidebars, minimal chrome)
+- [ ] Find in note (`⌘G` — highlight and jump between in-document matches)
+- [ ] Navigation shortcuts (`⌘[` / `⌘]` or `⌘⌥←` / `⌘⌥→` — back/forward through visited pages)

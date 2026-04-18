@@ -6,10 +6,10 @@
   <title>MoreInfo</title>
 
 
-  <!-- Oswald wordmark font -->
+  <!-- Wordmark + editor mono fonts -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Oswald:wght@500&family=Fira+Code:wght@400;700&family=IBM+Plex+Mono:ital,wght@0,400;0,700;1,400&family=JetBrains+Mono:ital,wght@0,400;0,700;1,400&display=swap" rel="stylesheet">
 
   <!-- Phosphor Icons (regular + bold + fill weights) -->
   <link rel="stylesheet" href="https://unpkg.com/@phosphor-icons/web@2.1.1/src/regular/style.css" />
@@ -335,6 +335,16 @@
 
           <!-- Tasks pseudo-page CM container (shown instead of editor-pane) -->
           <div id="tasks-view" class="flex-1 min-h-0 overflow-hidden flex flex-col" style="display:none">
+            <div class="shrink-0 flex items-center gap-1.5 px-3 py-2 border-b border-olive-700 bg-olive-900/40">
+              <i class="ph ph-magnifying-glass text-olive-600 text-sm leading-none shrink-0"></i>
+              <input id="tasks-search-input" type="text"
+                class="flex-1 bg-transparent text-olive-200 text-xs placeholder-olive-600 outline-none"
+                placeholder="Filter tasks…"
+                autocomplete="off" spellcheck="false" />
+              <button id="tasks-search-clear" class="text-olive-600 hover:text-olive-400 leading-none" style="display:none" aria-label="Clear">
+                <i class="ph ph-x text-xs"></i>
+              </button>
+            </div>
             <div id="tasks-filter-bar" class="shrink-0 flex items-center gap-1.5 px-3 py-1.5 border-b border-olive-700 bg-olive-900/40 overflow-x-auto scrollbar-thin"></div>
             <div id="tasks-editor-container" class="flex-1 min-h-0 overflow-hidden"></div>
           </div>

@@ -222,7 +222,14 @@ Favorites
 - [ ] Tags widget (all tags across datastore; click to filter; tag cloud or list)
 - [x] Metadata widget: display key/value pairs for active document
 - [x] Metadata widget: editing interactions (click to edit value inline; double-click to find all pages with matching key/value)
-- [ ] Command palette (`⌘⇧P` — fuzzy search over commands, pages, and actions)
-- [ ] Focus mode (`⌘⇧F` — single document, no sidebars, minimal chrome)
 - [ ] Find in note (`⌘G` — highlight and jump between in-document matches)
 - [ ] Navigation shortcuts (`⌘[` / `⌘]` or `⌘⌥←` / `⌘⌥→` — back/forward through visited pages)
+
+---
+
+## Roadmap
+
+Features planned for future versions but not targeted for v1.0.
+
+- Focus mode (`⌘⇧F` — single document, no sidebars, minimal chrome)
+- Static Site Generator (SSG) — export some or all notes and journals as a complete web site; see SSG.md

@@ -37,6 +37,20 @@ function savePrefs(prefs) {
 let searchOpenIn     = loadPrefs().searchOpenIn     ?? 'page';
 // When true, tasks on future-dated journal pages are hidden from task lists.
 let deferFutureTasks = loadPrefs().deferFutureTasks ?? false;
+
+// ── Editor mono font ──────────────────────────────────────────────────────────
+const MONO_FONTS = [
+  { name: 'JetBrains Mono', css: '"JetBrains Mono", monospace' },
+  { name: 'IBM Plex Mono',  css: '"IBM Plex Mono", monospace'  },
+  { name: 'Fira Code',      css: '"Fira Code", monospace'       },
+  { name: 'System Mono',    css: 'ui-monospace, "Cascadia Mono", "SF Mono", Consolas, Menlo, monospace' },
+];
+function applyEditorFont(name) {
+  const font = MONO_FONTS.find(f => f.name === name) ?? MONO_FONTS[0];
+  document.documentElement.style.setProperty('--font-family-mono', font.css);
+}
+applyEditorFont(loadPrefs().editorFont ?? 'JetBrains Mono');
+
 let changeTimer   = null;
 let saveTimer     = null;
 let mdTimer       = null;
@@ -50,6 +64,7 @@ let tasksEditorView  = null;
 let taskLineMap      = new Map(); // syntheticLineNo (1-based) → {path, sourceLineNo, originalText} | null
 const pendingWrites  = new Map(); // syntheticLineNo → setTimeout id
 const tasksContextFilter = new Set(); // active @context toggles; empty = show all
+let   tasksSearchQuery   = '';        // plain-text filter for the pseudo-page search bar
 
 // Metadata pseudo-page state.
 let metadataEditorView = null;
@@ -67,6 +82,8 @@ const editorArea          = document.getElementById('editor-area');
 const editorPane          = document.getElementById('editor-pane');
 const tasksView           = document.getElementById('tasks-view');
 const tasksFilterBar      = document.getElementById('tasks-filter-bar');
+const tasksSearchInput    = document.getElementById('tasks-search-input');
+const tasksSearchClear    = document.getElementById('tasks-search-clear');
 const tasksEditorContainer= document.getElementById('tasks-editor-container');
 const metadataView    = document.getElementById('metadata-view');
 const vDivider        = document.getElementById('v-divider');
@@ -1021,6 +1038,11 @@ async function loadTasksView(pushHistory = true, contextFilter = null) {
   tasksContextFilter.clear();
   if (contextFilter) tasksContextFilter.add(contextFilter.toLowerCase());
 
+  // Reset search bar.
+  tasksSearchQuery = '';
+  tasksSearchInput.value = '';
+  tasksSearchClear.style.display = 'none';
+
   editorPane.style.display     = 'none';
   vDivider.style.display       = 'none';
   markdownPane.style.display   = 'none';
@@ -1082,14 +1104,14 @@ function buildSyntheticDoc(tasks) {
   for (const g of groups) {
     const pageLabel = g.title || basename(g.path).replace(/\.md$/, '');
     lines.push(`## ${pageLabel}`);
-    lineMap.set(lineNo++, null);
+    lineMap.set(lineNo++, { type: 'page', path: g.path });
     lines.push('');
     lineMap.set(lineNo++, null);
 
     for (const [heading, bucket] of g.byHeading) {
       if (heading) {
         lines.push(`### ${heading}`);
-        lineMap.set(lineNo++, null);
+        lineMap.set(lineNo++, { type: 'heading', path: g.path, heading });
         lines.push('');
         lineMap.set(lineNo++, null);
       }
@@ -1156,13 +1178,23 @@ async function refreshTasksView() {
     // Apply context filter (OR: task must have at least one active context).
     let tasks = allTasks;
     if (tasksContextFilter.size > 0) {
-      tasks = allTasks.filter(t => {
+      tasks = tasks.filter(t => {
         const atRe = /@([a-zA-Z][a-zA-Z0-9_-]*)/g;
         let m;
         while ((m = atRe.exec(t.text)) !== null) {
           if (tasksContextFilter.has(m[1].toLowerCase())) return true;
         }
         return false;
+      });
+    }
+
+    // Apply text search filter.
+    const sq = tasksSearchQuery.trim().toLowerCase();
+    if (sq) {
+      const terms = sq.split(/\s+/).filter(Boolean);
+      tasks = tasks.filter(t => {
+        const text = t.text.toLowerCase();
+        return terms.every(term => text.includes(term));
       });
     }
 
@@ -1189,7 +1221,7 @@ function onTasksDocChanged(update) {
 
   for (const lineNo of changedLines) {
     const entry = taskLineMap.get(lineNo);
-    if (!entry) continue;
+    if (!entry || entry.type === 'page' || entry.type === 'heading') continue;
 
     const newLineText  = update.state.doc.line(lineNo).text;
     const newTaskText  = extractTaskText(newLineText);
@@ -1231,15 +1263,63 @@ editorDiv.addEventListener('dblclick', e => {
   if (context) loadTasksView(true, context);
 });
 
-// Double-clicking a @context tag in the Tasks pseudo-page toggles that context filter.
+function scrollToHeading(heading) {
+  const doc = cmView.state.doc;
+  const target = heading.toLowerCase();
+  for (let i = 1; i <= doc.lines; i++) {
+    const text = doc.line(i).text.replace(/^#{1,6}\s+/, '').trim().toLowerCase();
+    if (text === target) {
+      cmView.dispatch({ selection: { anchor: doc.line(i).from }, scrollIntoView: true });
+      break;
+    }
+  }
+}
+
+async function navigateToPathAndHeading(path, heading) {
+  try {
+    const content = await invoke('read_file', { path });
+    await navigateTo(path, content);
+    if (heading) scrollToHeading(heading);
+  } catch(e) {
+    console.error('Failed to navigate to heading:', e);
+  }
+}
+
+// Double-clicking a @context tag toggles that context filter;
+// double-clicking a ## or ### header navigates to the source page (and heading).
 tasksEditorContainer.addEventListener('dblclick', e => {
   const span = e.target.closest('.cm-at-context');
-  if (!span) return;
-  const context = span.textContent.replace(/^@/, '').trim().toLowerCase();
-  if (!context) return;
-  if (tasksContextFilter.has(context)) tasksContextFilter.delete(context);
-  else tasksContextFilter.add(context);
+  if (span) {
+    const context = span.textContent.replace(/^@/, '').trim().toLowerCase();
+    if (!context) return;
+    if (tasksContextFilter.has(context)) tasksContextFilter.delete(context);
+    else tasksContextFilter.add(context);
+    refreshTasksView();
+    return;
+  }
+
+  if (!tasksEditorView) return;
+  const pos = tasksEditorView.posAtCoords({ x: e.clientX, y: e.clientY });
+  if (pos == null) return;
+  const lineNo = tasksEditorView.state.doc.lineAt(pos).number;
+  const entry  = taskLineMap.get(lineNo);
+  if (!entry || (entry.type !== 'page' && entry.type !== 'heading')) return;
+  navigateToPathAndHeading(entry.path, entry.heading ?? null);
+});
+
+// Tasks pseudo-page search bar.
+tasksSearchInput.addEventListener('input', () => {
+  tasksSearchQuery = tasksSearchInput.value;
+  tasksSearchClear.style.display = tasksSearchQuery ? '' : 'none';
   refreshTasksView();
+});
+
+tasksSearchClear.addEventListener('click', () => {
+  tasksSearchInput.value = '';
+  tasksSearchQuery = '';
+  tasksSearchClear.style.display = 'none';
+  refreshTasksView();
+  tasksSearchInput.focus();
 });
 
 // Clicking a filter chip toggles that context.
@@ -1677,6 +1757,18 @@ async function showSettingsDialog() {
           </div>
           <p class="text-xs text-olive-600">When Yes, tasks on future-dated journal pages are hidden from the Tasks Widget and Tasks page.</p>
         </div>
+        <div class="flex flex-col gap-1.5">
+          <label class="text-xs text-olive-500 font-mono">Editor font</label>
+          <div class="flex items-center gap-4 flex-wrap">
+            ${MONO_FONTS.map(f => `
+            <label class="flex items-center gap-1.5 cursor-pointer text-xs text-olive-200">
+              <input type="radio" name="mi-editor-font" value="${f.name}"
+                ${(loadPrefs().editorFont ?? 'JetBrains Mono') === f.name ? 'checked' : ''}
+                class="accent-amber-500 cursor-pointer" />
+              <span style="font-family:${f.css}">${f.name}</span>
+            </label>`).join('')}
+          </div>
+        </div>
         <div class="flex justify-end gap-2 pt-1">
           <button id="mi-settings-cancel"
             class="px-3 py-1.5 text-xs rounded bg-olive-700 text-olive-200 hover:bg-olive-600">
@@ -1721,6 +1813,11 @@ async function showSettingsDialog() {
           savePrefs({ ...loadPrefs(), deferFutureTasks });
           allWidgetInstances.tasks?.refresh();
           refreshTasksView();
+        }
+        const newFont = overlay.querySelector('input[name="mi-editor-font"]:checked')?.value ?? 'JetBrains Mono';
+        if (newFont !== (loadPrefs().editorFont ?? 'JetBrains Mono')) {
+          savePrefs({ ...loadPrefs(), editorFont: newFont });
+          applyEditorFont(newFont);
         }
       }
       if (!save || !pendingPath || pendingPath === datastorePath) { resolve(); return; }

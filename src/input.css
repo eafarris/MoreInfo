@@ -45,13 +45,13 @@
 .cm-task-done-line .cm-link-text        { color: var(--color-amber-700); }
 .cm-task-done-line .cm-url              { color: var(--color-olive-700); text-decoration-color: var(--color-olive-800); }
 
-/* Overdue task lines: keep elements readable on red background */
-.cm-task-overdue .cm-wikilink-bracket { color: rgba(255,255,255,0.6) !important; }
-.cm-task-overdue .cm-wikilink-title   { color: #fff !important; text-decoration-color: rgba(255,255,255,0.4) !important; }
-.cm-task-overdue .cm-hashtag-punct    { color: rgba(255,255,255,0.6); }
-.cm-task-overdue .cm-hashtag          { color: #fff; }
-.cm-task-overdue .cm-link-text        { color: #fff; }
-.cm-task-overdue .cm-url              { color: rgba(255,255,255,0.6); text-decoration-color: rgba(255,255,255,0.3); }
+/* Overdue checkbox indicator (widget HTML, not CM) */
+.cm-task-cb-overdue {
+  background-color: oklch(50% 0.19 27);
+  color: #fff;
+  border-radius: 3px;
+  padding: 0 2px;
+}
 
 /* CodeMirror editor fills its container */
 .cm-editor {
@@ -130,5 +130,17 @@
 .wiki-link:hover {
   color: var(--color-amber-300);
   text-decoration-style: solid;
+}
+
+/* ── Task view semantic tokens ──────────────────────────────────────────────
+   Override these in a theme to restyle the tasks pseudo-page independently
+   of the main editor palette.                                               */
+:root {
+  --taskview-page-color:         var(--color-olive-500);  /* ## page group headers        */
+  --taskview-page-font-weight:   bold;                    /* ## font weight               */
+  --taskview-section-color:      var(--color-olive-600);  /* ### implicit heading labels  */
+  --taskview-section-font-weight: normal;                 /* ### font weight              */
+  --taskview-section-indent:     1.5rem;                  /* indent for ### lines         */
+  --taskview-badge-gutter:       calc(1.5rem + 6px);      /* pill min-width (1.5rem) + right-margin (6px)       */
 }
 

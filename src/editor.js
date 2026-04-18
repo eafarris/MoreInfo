@@ -32,6 +32,7 @@ import { autocompletion, acceptCompletion } from '@codemirror/autocomplete';
 import { tags } from '@lezer/highlight';
 import { scanCalcBlocks } from './calcBlock.js';
 import { isOverdue, isDueToday } from './dateUtils.js';
+import { priorityPillDOM } from './ui.js';
 
 // ── Theme ──────────────────────────────────────────────────────────────────
 // Matches the olive/amber palette used throughout the app.
@@ -144,17 +145,16 @@ export const miTheme = EditorView.theme({
   '.cm-at-context': {
     color: 'oklch(87.9% 0.169 91.605)',   // amber-300
   },
-  // Overdue tasks — white text on red background
-  '.cm-task-overdue': {
+  // reserved param tags (@due, @defer, @priority, @done, etc.) — de-emphasized
+  '.cm-at-param': {
+    color: 'oklch(52% 0.025 107)',        // olive-600ish — readable but recedes
+  },
+  // Overdue tasks — red highlight on checkbox only; task text stays normal
+  '.cm-task-overdue .cm-task-checkbox': {
     backgroundColor: 'oklch(50% 0.19 27)',  // muted red
     color:           '#fff',
-    borderRadius:    '2px',
-  },
-  '.cm-task-overdue .cm-task-checkbox': {
-    color: '#fff',
-  },
-  '.cm-task-overdue .cm-at-context': {
-    color: 'oklch(90% 0.05 27)',  // light pinkish — visible on red
+    borderRadius:    '3px',
+    padding:         '0 1px',
   },
   // Due-today tasks — amber background
   '.cm-task-due-today': {
@@ -212,17 +212,13 @@ export const miTheme = EditorView.theme({
 
 // ── Syntax highlighting ────────────────────────────────────────────────────
 
-export const miHighlightStyle = HighlightStyle.define([
-  { tag: tags.heading1,        color: '#fbbf24', fontWeight: 'bold',   fontSize: '1.2em'  },
-  { tag: tags.heading2,        color: '#fcd34d', fontWeight: 'bold',   fontSize: '1.1em'  },
-  { tag: tags.heading3,        color: '#fde68a', fontWeight: 'bold'                       },
-  { tag: [tags.heading4, tags.heading5, tags.heading6], color: '#fde68a'                  },
+const BASE_HIGHLIGHT_RULES = [
   { tag: tags.strong,          fontWeight: 'bold'                                         },
   { tag: tags.emphasis,        fontStyle: 'italic'                                        },
   { tag: tags.strikethrough,   textDecoration: 'line-through'                             },
   { tag: tags.link,            color: 'inherit'                                           }, // via linkPlugin
   { tag: tags.url,             color: 'inherit'                                           }, // via linkPlugin
-  { tag: tags.monospace,       color: 'inherit'                                          }, // colored via inlineCodePlugin
+  { tag: tags.monospace,       color: 'inherit'                                           }, // colored via inlineCodePlugin
   { tag: tags.meta,                  color: 'oklch(46.6% 0.025 107.3)' /* fallback */   },
   { tag: tags.comment,               color: 'oklch(46.6% 0.025 107.3)', fontStyle: 'italic' },
   { tag: tags.processingInstruction, color: 'oklch(46.6% 0.025 107.3)' /* fallback */   },
@@ -230,6 +226,22 @@ export const miHighlightStyle = HighlightStyle.define([
   { tag: tags.list,             color: 'inherit'                                         }, // colored via listMarkerPlugin instead
   { tag: tags.atom,            color: '#fbbf24'                                           },
   { tag: tags.squareBracket,   color: 'inherit'                                           }, // defer to wikilinkPlugin decoration
+];
+
+export const miHighlightStyle = HighlightStyle.define([
+  { tag: tags.heading1, color: '#fbbf24', fontWeight: 'bold', fontSize: '1.2em' },
+  { tag: tags.heading2, color: '#fcd34d', fontWeight: 'bold', fontSize: '1.1em' },
+  { tag: tags.heading3, color: '#fde68a', fontWeight: 'bold'                    },
+  { tag: [tags.heading4, tags.heading5, tags.heading6], color: '#fde68a'        },
+  ...BASE_HIGHLIGHT_RULES,
+]);
+
+const tasksHighlightStyle = HighlightStyle.define([
+  { tag: tags.heading1, color: 'var(--taskview-page-color)',    fontWeight: 'var(--taskview-page-font-weight)'    },
+  { tag: tags.heading2, color: 'var(--taskview-page-color)',    fontWeight: 'var(--taskview-page-font-weight)'    },
+  { tag: tags.heading3, color: 'var(--taskview-section-color)', fontWeight: 'var(--taskview-section-font-weight)' },
+  { tag: [tags.heading4, tags.heading5, tags.heading6], color: 'var(--taskview-section-color)', fontWeight: 'var(--taskview-section-font-weight)' },
+  ...BASE_HIGHLIGHT_RULES,
 ]);
 
 // ── Wiki-link decoration ───────────────────────────────────────────────────
@@ -640,7 +652,11 @@ const taskAtPlugin = ViewPlugin.fromClass(class {
         const line = view.state.doc.lineAt(pos);
         if (TASK_CB_RE.test(line.text)) {
           for (const p of parseAtParams(line.text)) {
-            if (p.value === null && !RESERVED_AT.has(p.name.toLowerCase())) {
+            const reserved = RESERVED_AT.has(p.name.toLowerCase());
+            if (reserved) {
+              deco.push(Decoration.mark({ class: 'cm-at-param' })
+                .range(line.from + p.from, line.from + p.to));
+            } else if (p.value === null) {
               deco.push(Decoration.mark({ class: 'cm-at-context' })
                 .range(line.from + p.from, line.from + p.to));
             }
@@ -1307,26 +1323,9 @@ class PriorityBadgeWidget extends WidgetType {
   constructor(priority) { super(); this.priority = priority; }
   eq(other) { return this.priority === other.priority; }
   toDOM() {
-    const span = document.createElement('span');
-    const p = this.priority;
-    const hasP = p <= 5;
-    span.className = 'cm-priority-badge';
-    span.style.cssText =
-      'display:inline-flex;align-items:center;justify-content:center;' +
-      'width:1.25rem;height:1.25rem;border-radius:9999px;font-size:12px;' +
-      'font-weight:700;line-height:1;margin-right:6px;flex-shrink:0;vertical-align:middle;';
-    if (hasP) {
-      span.textContent = String(p);
-      span.style.color = p <= 2 ? '#fff' : '';
-      span.style.backgroundColor =
-        p <= 1 ? 'var(--cm-pri-1, #b91c1c)' :
-        p <= 2 ? 'var(--cm-pri-2, #b45309)' :
-        p <= 3 ? 'var(--cm-pri-3, #92400e)' :
-                 'var(--cm-pri-45, #3f3f46)';
-    } else {
-      span.style.backgroundColor = 'rgba(63,63,70,0.35)';
-    }
-    return span;
+    const el = priorityPillDOM(this.priority);
+    el.className = 'cm-priority-badge';
+    return el;
   }
 }
 
@@ -1357,6 +1356,31 @@ export function createTaskPriorityPlugin(getPriority) {
   }, { decorations: v => v.decorations });
 }
 
+
+// Indents ### section headers and the tasks beneath them using the
+// --taskview-section-indent CSS variable, so themes can control it.
+const tasksIndentPlugin = ViewPlugin.fromClass(class {
+  constructor(view) { this.decorations = this._build(view); }
+  update(u) {
+    if (u.docChanged || u.viewportChanged) this.decorations = this._build(u.view);
+  }
+  _build(view) {
+    const deco      = [];
+    const doc       = view.state.doc;
+    let   inSection = false; // true once a ### heading has been seen under the current ##
+    for (let i = 1; i <= doc.lines; i++) {
+      const line = doc.line(i);
+      const text = line.text;
+      if      (text.startsWith('## '))  { inSection = false; }
+      else if (text.startsWith('### ')) { inSection = true;
+        deco.push(Decoration.line({ class: 'cm-tv-indented' }).range(line.from)); }
+      else if (TASK_CB_RE.test(text))   {
+        deco.push(Decoration.line({ class: inSection ? 'cm-tv-task' : 'cm-tv-task-root' }).range(line.from)); }
+    }
+    return Decoration.set(deco, true);
+  }
+}, { decorations: v => v.decorations });
+
 export function createTasksEditor({ parent, onUpdate, onPageClick, priorityPlugin }) {
   // Uses module-level wikiTitleAt + camelTitleAt for consistent link resolution.
   const clickHandler = EditorView.domEventHandlers({
@@ -1380,7 +1404,7 @@ export function createTasksEditor({ parent, onUpdate, onPageClick, priorityPlugi
       history(),
       drawSelection(),
       markdown({ base: { parser: markdownLanguage.parser.configure({ remove: ['SetextHeading'] }) } }),
-      syntaxHighlighting(miHighlightStyle),
+      syntaxHighlighting(tasksHighlightStyle),
       wikilinkPlugin,
       camelLinkPlugin,
       hashtagPlugin,
@@ -1389,6 +1413,7 @@ export function createTasksEditor({ parent, onUpdate, onPageClick, priorityPlugi
       taskCheckboxPlugin,
       autoDoneStampListener,
       ...(priorityPlugin ? [priorityPlugin] : []),
+      tasksIndentPlugin,
       EditorView.lineWrapping,
       checkboxClickHandler,
       keymap.of([
@@ -1399,8 +1424,17 @@ export function createTasksEditor({ parent, onUpdate, onPageClick, priorityPlugi
       ]),
       miTheme,
       EditorView.theme({
-        '&':          { height: '100%' },
+        '&':            { height: '100%' },
         '.cm-scroller': { overflow: 'auto', padding: '1.5rem 2rem' },
+        // ### section headers
+        '.cm-tv-indented': { paddingLeft: 'var(--taskview-section-indent)' },
+        // tasks under ### — checkbox aligns with ### text; badge hangs left as bullet
+        '.cm-tv-task':     { paddingLeft: 'var(--taskview-section-indent)' },
+        // tasks under ## with no ### — badge sits at content edge, checkbox at badge-gutter
+        '.cm-tv-task-root': { paddingLeft: 'var(--taskview-badge-gutter)' },
+        // badge hangs left by exactly its own width + right-margin in both cases
+        '.cm-tv-task .cm-priority-badge':      { marginLeft: 'calc(-1 * var(--taskview-badge-gutter))' },
+        '.cm-tv-task-root .cm-priority-badge': { marginLeft: 'calc(-1 * var(--taskview-badge-gutter))' },
       }),
       tasksUpdateListener,
       clickHandler,

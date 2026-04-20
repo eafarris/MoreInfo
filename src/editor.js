@@ -41,7 +41,7 @@ export const miTheme = EditorView.theme({
   '&': {
     height: '100%',
     backgroundColor: 'transparent',
-    fontSize: '0.875rem',
+    fontSize: 'var(--editor-font-size, 0.875rem)',
   },
   '.cm-scroller': {
     fontFamily: 'var(--font-family-mono)',

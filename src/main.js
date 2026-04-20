@@ -10,6 +10,7 @@ import { PageWidget }        from './widgets/PageWidget.js';
 import { ScratchPadWidget }  from './widgets/ScratchPadWidget.js';
 import { FavoritesWidget }  from './widgets/FavoritesWidget.js';
 import { TasksWidget, setDeferFutureTasks } from './widgets/TasksWidget.js';
+import { TagsWidget }           from './widgets/TagsWidget.js';
 import { AnnotationsWidget }   from './widgets/AnnotationsWidget.js';
 import { CounterWidget }     from './widgets/CounterWidget.js';
 import { OutlineWidget }     from './widgets/OutlineWidget.js';
@@ -49,7 +50,11 @@ function applyEditorFont(name) {
   const font = MONO_FONTS.find(f => f.name === name) ?? MONO_FONTS[0];
   document.documentElement.style.setProperty('--font-family-mono', font.css);
 }
+function applyEditorFontSize(px) {
+  document.documentElement.style.setProperty('--editor-font-size', `${px}px`);
+}
 applyEditorFont(loadPrefs().editorFont ?? 'JetBrains Mono');
+applyEditorFontSize(loadPrefs().editorFontSize ?? 14);
 
 let changeTimer   = null;
 let saveTimer     = null;
@@ -58,6 +63,7 @@ let mdTimer       = null;
 // Sentinel paths used when pseudo-pages are active.
 const TASKS_PSEUDO_PAGE    = '::tasks::';
 const METADATA_PSEUDO_PAGE = '::metadata::';
+const TAG_PSEUDO_PAGE      = '::tag::';
 
 // Tasks pseudo-page state.
 let tasksEditorView  = null;
@@ -70,6 +76,9 @@ let   tasksSearchQuery   = '';        // plain-text filter for the pseudo-page s
 let metadataEditorView = null;
 let metadataLineMap    = new Map(); // syntheticLineNo → { path } | null
 let metadataQuery      = null;      // { key, value } currently displayed
+
+let tagEditorView = null;
+let tagQuery      = null;           // tag string currently displayed
 
 // Strips the checkbox prefix from a synthetic task line to get the task text.
 const TASK_TEXT_RE = /^(?:[ \t]*(?:[-*+]|\d+[.)]) +)?\[[xX ]?\]\s*/;
@@ -86,6 +95,7 @@ const tasksSearchInput    = document.getElementById('tasks-search-input');
 const tasksSearchClear    = document.getElementById('tasks-search-clear');
 const tasksEditorContainer= document.getElementById('tasks-editor-container');
 const metadataView    = document.getElementById('metadata-view');
+const tagView         = document.getElementById('tag-view');
 const vDivider        = document.getElementById('v-divider');
 const markdownPane    = document.getElementById('markdown-pane');
 const markdownContent = document.getElementById('markdown-content');
@@ -891,6 +901,8 @@ breadcrumbsEl.addEventListener('click', async e => {
       await loadTasksView(/* pushHistory= */ false);
     } else if (entry.path === METADATA_PSEUDO_PAGE && metadataQuery) {
       await loadMetadataView(metadataQuery.key, metadataQuery.value, false);
+    } else if (entry.path === TAG_PSEUDO_PAGE && tagQuery) {
+      await loadTagView(tagQuery, false);
     } else {
       const content = await invoke('read_file', { path: entry.path });
       await loadFile(entry.path, content);
@@ -913,6 +925,11 @@ async function loadFile(path, content) {
     markdownPane.style.display = '';
   } else if (currentFile === METADATA_PSEUDO_PAGE) {
     metadataView.style.display = 'none';
+    editorPane.style.display   = '';
+    vDivider.style.display     = '';
+    markdownPane.style.display = '';
+  } else if (currentFile === TAG_PSEUDO_PAGE) {
+    tagView.style.display      = 'none';
     editorPane.style.display   = '';
     vDivider.style.display     = '';
     markdownPane.style.display = '';
@@ -942,7 +959,7 @@ async function navigateTo(path, content) {
   if (currentFile) {
     navHistory.push({
       path:  currentFile,
-      title: currentTitle || (currentFile === TASKS_PSEUDO_PAGE ? 'Tasks' : currentFile === METADATA_PSEUDO_PAGE ? (metadataQuery ? `${metadataQuery.key}` : 'Metadata') : basename(currentFile).replace(/\.[^.]+$/, '')),
+      title: currentTitle || (currentFile === TASKS_PSEUDO_PAGE ? 'Tasks' : currentFile === METADATA_PSEUDO_PAGE ? (metadataQuery ? `${metadataQuery.key}` : 'Metadata') : currentFile === TAG_PSEUDO_PAGE ? (tagQuery ? `#${tagQuery}` : 'Tags') : basename(currentFile).replace(/\.[^.]+$/, '')),
     });
   }
   await loadFile(path, content);
@@ -1447,6 +1464,74 @@ function buildMetadataDoc(hits, query) {
   return { doc: lines.join('\n'), lineMap };
 }
 
+// ── Tag pseudo-page ───────────────────────────────
+
+async function loadTagView(tag, pushHistory = true) {
+  if (pushHistory && currentFile && currentFile !== TAG_PSEUDO_PAGE) {
+    navHistory.push({
+      path:  currentFile,
+      title: currentTitle || basename(currentFile).replace(/\.[^.]+$/, ''),
+    });
+  }
+
+  editorPane.style.display   = 'none';
+  vDivider.style.display     = 'none';
+  markdownPane.style.display = 'none';
+  tasksView.style.display    = 'none';
+  metadataView.style.display = 'none';
+  tagView.style.display      = 'block';
+
+  tagQuery     = tag;
+  currentFile  = TAG_PSEUDO_PAGE;
+  currentTitle = `#${tag}`;
+  fileNameEl.textContent = `#${tag}`;
+  document.title = `MoreInfo \u2014 #${tag}`;
+  docTitle.textContent = `#${tag}`;
+
+  if (!tagEditorView) {
+    tagEditorView = createReadOnlyEditor({
+      parent:      tagView,
+      onPageClick: openWikiPage,
+    });
+  }
+
+  mountedWidgets.forEach(w => { try { w.onFileOpen(TAG_PSEUDO_PAGE, '', {}); } catch(e) {} });
+  renderBreadcrumbs();
+  updateNavButtonStates();
+
+  await refreshTagView();
+}
+
+async function refreshTagView() {
+  if (!tagQuery || !tagEditorView) return;
+  try {
+    const hits = await invoke('list_pages_for_tag', { tag: tagQuery });
+    const doc  = buildTagDoc(hits, tagQuery);
+    tagEditorView.dispatch({
+      changes: { from: 0, to: tagEditorView.state.doc.length, insert: doc },
+    });
+  } catch(e) {
+    console.error('list_pages_for_tag failed:', e);
+  }
+}
+
+function buildTagDoc(hits, tag) {
+  const lines = [];
+  lines.push(`# #${tag}`);
+  lines.push('');
+
+  if (hits.length === 0) {
+    lines.push('*No pages found.*');
+  } else {
+    lines.push(`${hits.length} ${hits.length === 1 ? 'page' : 'pages'}`);
+    lines.push('');
+    for (const h of hits) {
+      lines.push(`- [[${h.title}]]`);
+    }
+  }
+  return lines.join('\n');
+}
+
 // ── Wiki link navigation ──────────────────────────
 
 // Render mode: click on a rendered wiki-link anchor
@@ -1617,11 +1702,9 @@ function showWidgetPicker(sidebarName, anchorEl) {
 
   const current = new Set(widgetLayout[sidebarName] || []);
 
-  // Build items: checked ones first, then unchecked, alphabetical within each group.
-  const ids = Object.keys(WIDGET_LABELS);
-  const checked   = ids.filter(id =>  current.has(id)).sort((a,b) => WIDGET_LABELS[a].localeCompare(WIDGET_LABELS[b]));
-  const unchecked = ids.filter(id => !current.has(id)).sort((a,b) => WIDGET_LABELS[a].localeCompare(WIDGET_LABELS[b]));
-  const ordered   = [...checked, ...unchecked];
+  // All widgets alphabetically by title, regardless of visibility.
+  const ordered = Object.keys(WIDGET_LABELS)
+    .sort((a, b) => WIDGET_LABELS[a].localeCompare(WIDGET_LABELS[b]));
 
   const rect = anchorEl.getBoundingClientRect();
   const overlay = document.createElement('div');
@@ -1758,15 +1841,18 @@ async function showSettingsDialog() {
           <p class="text-xs text-olive-600">When Yes, tasks on future-dated journal pages are hidden from the Tasks Widget and Tasks page.</p>
         </div>
         <div class="flex flex-col gap-1.5">
-          <label class="text-xs text-olive-500 font-mono">Editor font</label>
-          <div class="flex items-center gap-4 flex-wrap">
-            ${MONO_FONTS.map(f => `
-            <label class="flex items-center gap-1.5 cursor-pointer text-xs text-olive-200">
-              <input type="radio" name="mi-editor-font" value="${f.name}"
-                ${(loadPrefs().editorFont ?? 'JetBrains Mono') === f.name ? 'checked' : ''}
-                class="accent-amber-500 cursor-pointer" />
-              <span style="font-family:${f.css}">${f.name}</span>
-            </label>`).join('')}
+          <label class="text-xs text-olive-500 font-mono">Editor appearance</label>
+          <div class="flex items-center gap-3">
+            <select name="mi-editor-font"
+              class="flex-1 bg-olive-800 border border-olive-600 rounded px-2 py-1.5 text-xs text-olive-200 focus:outline-none cursor-pointer">
+              ${MONO_FONTS.map(f => `<option value="${f.name}" style="font-family:${f.css}"
+                ${(loadPrefs().editorFont ?? 'JetBrains Mono') === f.name ? 'selected' : ''}>${f.name}</option>`).join('')}
+            </select>
+            <select name="mi-editor-font-size"
+              class="bg-olive-800 border border-olive-600 rounded px-2 py-1.5 text-xs text-olive-200 focus:outline-none cursor-pointer">
+              ${[11,12,13,14,15,16,18,20].map(s => `<option value="${s}"
+                ${(loadPrefs().editorFontSize ?? 14) === s ? 'selected' : ''}>${s}px</option>`).join('')}
+            </select>
           </div>
         </div>
         <div class="flex justify-end gap-2 pt-1">
@@ -1814,10 +1900,15 @@ async function showSettingsDialog() {
           allWidgetInstances.tasks?.refresh();
           refreshTasksView();
         }
-        const newFont = overlay.querySelector('input[name="mi-editor-font"]:checked')?.value ?? 'JetBrains Mono';
+        const newFont = overlay.querySelector('select[name="mi-editor-font"]')?.value ?? 'JetBrains Mono';
         if (newFont !== (loadPrefs().editorFont ?? 'JetBrains Mono')) {
           savePrefs({ ...loadPrefs(), editorFont: newFont });
           applyEditorFont(newFont);
+        }
+        const newSize = parseInt(overlay.querySelector('select[name="mi-editor-font-size"]')?.value ?? '14', 10);
+        if (newSize !== (loadPrefs().editorFontSize ?? 14)) {
+          savePrefs({ ...loadPrefs(), editorFontSize: newSize });
+          applyEditorFontSize(newSize);
         }
       }
       if (!save || !pendingPath || pendingPath === datastorePath) { resolve(); return; }
@@ -2005,6 +2096,7 @@ const allWidgetInstances = {
   scratchPad:  new ScratchPadWidget(),
   tasks:       new TasksWidget({ onOpen: openFilePath }),
   favorites:   new FavoritesWidget({ onOpen: openFilePath }),
+  tags:        new TagsWidget({ onTag: tag => loadTagView(tag) }),
   references:  new ReferencesWidget({
     onOpen: openFilePath,
     onStateChange: has => { bottomContentState.refs = has; updateBottomVisibility(); },
@@ -2034,7 +2126,7 @@ setDeferFutureTasks(deferFutureTasks);
 
 const defaultLayout = {
   left:   ['search', 'page', 'annotations'],
-  right:  ['calendar', 'scratchPad', 'tasks', 'favorites'],
+  right:  ['calendar', 'scratchPad', 'tasks', 'favorites', 'tags'],
   top:    [],
   bottom: ['references', 'metadata'],
 };

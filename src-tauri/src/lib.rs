@@ -590,16 +590,46 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
         rusqlite::params![path_str, title, body],
     ).map_err(|e| e.to_string())?;
 
-    // Tags: merge front-matter `tags` array with inline #hashtags, normalised to lowercase.
+    // Tags: merge front-matter `tags`/`tag` with inline #hashtags, normalised to lowercase.
     let mut tag_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
+    // `tags:` — accept array form or comma-separated string.
     for key in ["tags", "Tags", "TAGS"] {
-        if let Some(front_matter::Value::Array(arr)) = fm.get(key) {
-            for t in arr {
-                let normalized = t.trim().to_lowercase();
-                if !normalized.is_empty() {
-                    tag_set.insert(normalized);
+        if let Some(val) = fm.get(key) {
+            match val {
+                front_matter::Value::Array(arr) => {
+                    for t in arr {
+                        let n = t.trim().to_lowercase();
+                        if !n.is_empty() { tag_set.insert(n); }
+                    }
                 }
+                front_matter::Value::Text(s) | front_matter::Value::Date(s) => {
+                    for t in s.split(',') {
+                        let n = t.trim().to_lowercase();
+                        if !n.is_empty() { tag_set.insert(n); }
+                    }
+                }
+                front_matter::Value::Bool(_) => {}
+            }
+            break;
+        }
+    }
+
+    // `tag:` (singular) — string or array treated the same way.
+    for key in ["tag", "Tag", "TAG"] {
+        if let Some(val) = fm.get(key) {
+            match val {
+                front_matter::Value::Text(s) | front_matter::Value::Date(s) => {
+                    let n = s.trim().to_lowercase();
+                    if !n.is_empty() { tag_set.insert(n); }
+                }
+                front_matter::Value::Array(arr) => {
+                    for t in arr {
+                        let n = t.trim().to_lowercase();
+                        if !n.is_empty() { tag_set.insert(n); }
+                    }
+                }
+                front_matter::Value::Bool(_) => {}
             }
             break;
         }
@@ -1409,6 +1439,57 @@ fn list_annotations() -> Result<Vec<AnnotationEntry>, String> {
             keyword: row.get(2)?,
             text:    row.get(3)?,
         }))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(entries)
+}
+
+// ── Tag commands ──────────────────────────────────────────────────────────────
+
+/// All unique tags across the datastore, ordered by page count descending then alpha.
+#[derive(serde::Serialize)]
+struct TagEntry {
+    tag:   String,
+    count: i64,
+}
+
+#[tauri::command]
+fn list_tags() -> Result<Vec<TagEntry>, String> {
+    let conn = open_db()?;
+    init_schema(&conn)?;
+    let mut stmt = conn.prepare(
+        "SELECT tag, COUNT(*) AS count FROM file_tags \
+         GROUP BY tag ORDER BY count DESC, tag ASC",
+    ).map_err(|e| e.to_string())?;
+    let entries: Vec<TagEntry> = stmt
+        .query_map([], |row| Ok(TagEntry { tag: row.get(0)?, count: row.get(1)? }))
+        .map_err(|e| e.to_string())?
+        .filter_map(|r| r.ok())
+        .collect();
+    Ok(entries)
+}
+
+/// All pages that carry a specific tag (case-insensitive), ordered by title.
+#[derive(serde::Serialize)]
+struct TagPageEntry {
+    path:  String,
+    title: String,
+}
+
+#[tauri::command]
+fn list_pages_for_tag(tag: String) -> Result<Vec<TagPageEntry>, String> {
+    let conn = open_db()?;
+    init_schema(&conn)?;
+    let normalized = tag.trim().to_lowercase();
+    let mut stmt = conn.prepare(
+        "SELECT f.path, COALESCE(f.title, '') FROM file_tags ft \
+         JOIN files f ON f.path = ft.path \
+         WHERE lower(ft.tag) = ?1 \
+         ORDER BY f.title COLLATE NOCASE",
+    ).map_err(|e| e.to_string())?;
+    let entries: Vec<TagPageEntry> = stmt
+        .query_map([&normalized], |row| Ok(TagPageEntry { path: row.get(0)?, title: row.get(1)? }))
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
         .collect();
@@ -2567,6 +2648,8 @@ pub fn run() {
             get_linked_tasks,
             save_window_size,
             restore_window_size,
+            list_tags,
+            list_pages_for_tag,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

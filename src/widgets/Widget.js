@@ -17,6 +17,8 @@
  *   onDocumentChange()   — react to editor content changes (debounced)
  *   onFileOpen()         — react to a new file being opened
  */
+import { getPref, setPref, removePref } from '../prefs.js';
+
 export class Widget {
   /**
    * @param {{ id: string, title: string, icon: string }} config
@@ -320,7 +322,7 @@ export class Widget {
    * @param {object} data  Must be JSON-serialisable.
    */
   saveState(data) {
-    try { localStorage.setItem(`mi-widget-${this.id}`, JSON.stringify(data)); } catch { /* ignore */ }
+    setPref(`widget_${this.id}`, data);
   }
 
   /**
@@ -328,12 +330,12 @@ export class Widget {
    * @returns {object|null}
    */
   loadState() {
-    try { return JSON.parse(localStorage.getItem(`mi-widget-${this.id}`) || 'null'); } catch { return null; }
+    return getPref(`widget_${this.id}`, null);
   }
 
   /** Clear persisted state for this widget. */
   clearState() {
-    try { localStorage.removeItem(`mi-widget-${this.id}`); } catch { /* ignore */ }
+    removePref(`widget_${this.id}`);
   }
 
   // ── Lifecycle hooks (override in subclasses) ────────────────

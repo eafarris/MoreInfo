@@ -1,6 +1,21 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Widget } from '../widgets/Widget.js';
 
+// ── prefs mock ─────────────────────────────────────────────────────────────
+// Widget.js now uses getPref/setPref/removePref from prefs.js instead of
+// localStorage. Mock the entire module so tests stay self-contained.
+
+let _prefStore = {};
+
+vi.mock('../prefs.js', () => ({
+  initPrefs:   vi.fn(() => Promise.resolve()),
+  getPref:     vi.fn((key, def) => Object.prototype.hasOwnProperty.call(_prefStore, key) ? _prefStore[key] : def ?? null),
+  setPref:     vi.fn((key, val) => { _prefStore[key] = val; }),
+  setPrefs:    vi.fn((obj) => { Object.assign(_prefStore, obj); }),
+  removePref:  vi.fn((key) => { delete _prefStore[key]; }),
+  flushPrefs:  vi.fn(() => Promise.resolve()),
+}));
+
 // ── ResizeObserver mock ────────────────────────────────────────────────────
 // jsdom doesn't implement ResizeObserver; provide a minimal fake that lets
 // us trigger callbacks manually.
@@ -26,45 +41,25 @@ function stubSize(el, height, width = height) {
   Object.defineProperty(el, 'offsetWidth',  { get: () => width,  configurable: true });
 }
 
-/** Build a Widget with an optional saved localStorage state. */
+/** Build a Widget with an optional saved prefs state. */
 function makeWidget(savedState = null) {
   const w = new Widget({ id: 'test', title: 'Test', icon: 'ph-star' });
   if (savedState) {
-    localStorage.setItem('mi-widget-test', JSON.stringify(savedState));
+    _prefStore['widget_test'] = savedState;
   }
   return w;
-}
-
-// ── localStorage mock ──────────────────────────────────────────────────────
-// jsdom's localStorage implementation varies across vitest versions; use a
-// simple in-memory stub to avoid `.clear is not a function` errors.
-
-function makeStorageMock() {
-  let store = {};
-  return {
-    getItem:    (k) => Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null,
-    setItem:    (k, v) => { store[k] = String(v); },
-    removeItem: (k) => { delete store[k]; },
-    clear:      () => { store = {}; },
-  };
 }
 
 // ── Setup / teardown ───────────────────────────────────────────────────────
 
 beforeEach(() => {
-  _observers = [];
+  _observers  = [];
+  _prefStore  = {};
   globalThis.ResizeObserver = MockResizeObserver;
-  const storageMock = makeStorageMock();
-  Object.defineProperty(globalThis, 'localStorage', {
-    value: storageMock,
-    writable: true,
-    configurable: true,
-  });
 });
 
 afterEach(() => {
   document.body.innerHTML = '';
-  localStorage.clear();
   delete globalThis.ResizeObserver;
 });
 
@@ -212,9 +207,7 @@ describe('Widget.mount() in visible container (_rolled: true)', () => {
     const el = document.createElement('div');
     document.body.appendChild(el);
 
-    // Stub container and header before mount() so measurements return non-zero
-    const header = document.createElement('div');
-    header.className = 'widget-header';
+    // Stub sizes to simulate sidebar becoming visible
     // We can't easily pre-stub because mount() creates the DOM internally.
     // Instead, stub using the configurable trick after mount.
     // But the measurement happens synchronously during mount()...

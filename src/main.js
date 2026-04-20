@@ -1,6 +1,7 @@
 import './input.css';
 import { preprocessCalcBlocks } from './calcBlock.js';
 import { invoke } from './tauri.js';
+import { initPrefs, getPref, setPref, setPrefs } from './prefs.js';
 import { EditorView } from '@codemirror/view';
 import { restoreStateCurrent, StateFlags } from '@tauri-apps/plugin-window-state';
 import { CalendarWidget }    from './widgets/CalendarWidget.js';
@@ -27,17 +28,11 @@ let currentTitle  = '';
 let datastorePath = null;  // set during init via get_datastore_path
 
 // ── User preferences ──────────────────────────────
-const PREFS_KEY = 'mi-prefs';
-function loadPrefs() {
-  try { return JSON.parse(localStorage.getItem(PREFS_KEY) || '{}'); } catch { return {}; }
-}
-function savePrefs(prefs) {
-  try { localStorage.setItem(PREFS_KEY, JSON.stringify(prefs)); } catch { /* storage unavailable */ }
-}
+await initPrefs();
 // 'page' = open in Page Widget (default), 'editor' = open in main editor
-let searchOpenIn     = loadPrefs().searchOpenIn     ?? 'page';
+let searchOpenIn     = getPref('searchOpenIn',     'page');
 // When true, tasks on future-dated journal pages are hidden from task lists.
-let deferFutureTasks = loadPrefs().deferFutureTasks ?? false;
+let deferFutureTasks = getPref('deferFutureTasks', false);
 
 // ── Editor mono font ──────────────────────────────────────────────────────────
 const MONO_FONTS = [
@@ -53,8 +48,8 @@ function applyEditorFont(name) {
 function applyEditorFontSize(px) {
   document.documentElement.style.setProperty('--editor-font-size', `${px}px`);
 }
-applyEditorFont(loadPrefs().editorFont ?? 'JetBrains Mono');
-applyEditorFontSize(loadPrefs().editorFontSize ?? 14);
+applyEditorFont(getPref('editorFont', 'JetBrains Mono'));
+applyEditorFontSize(getPref('editorFontSize', 14));
 
 let changeTimer   = null;
 let saveTimer     = null;
@@ -575,31 +570,28 @@ const sbConfig = {
 
 // ── UI state persistence ──────────────────────────
 
-const UI_STATE_KEY = 'mi-ui-state';
-
 function saveUiState() {
-  try {
-    localStorage.setItem(UI_STATE_KEY, JSON.stringify({ sbState, sbSizes, widgetLayout, widgetSizes }));
-  } catch { /* storage unavailable */ }
+  setPrefs({ sbState, sbSizes, widgetLayout, widgetSizes });
 }
 
 function loadUiState() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(UI_STATE_KEY) || 'null');
-    if (!saved) return;
-    // Restore sidebar states (top is disabled, always keep hidden)
-    const validStates = ['hidden', 'pinned'];
-    for (const k of ['left', 'right', 'bottom']) {
-      if (validStates.includes(saved.sbState?.[k])) sbState[k] = saved.sbState[k];
-    }
-    // Restore sidebar sizes
-    for (const k of ['left', 'right', 'top', 'bottom']) {
-      if (typeof saved.sbSizes?.[k] === 'number') sbSizes[k] = saved.sbSizes[k];
-    }
-    // Restore widget layout and sizes
-    if (saved.widgetLayout) widgetLayout = saved.widgetLayout;
-    if (saved.widgetSizes)  widgetSizes  = saved.widgetSizes;
-  } catch { /* ignore corrupt storage */ }
+  const savedSbState    = getPref('sbState',      null);
+  const savedSbSizes    = getPref('sbSizes',      null);
+  const savedLayout     = getPref('widgetLayout', null);
+  const savedSizes      = getPref('widgetSizes',  null);
+
+  // Restore sidebar states (top is disabled, always keep hidden)
+  const validStates = ['hidden', 'pinned'];
+  for (const k of ['left', 'right', 'bottom']) {
+    if (validStates.includes(savedSbState?.[k])) sbState[k] = savedSbState[k];
+  }
+  // Restore sidebar sizes
+  for (const k of ['left', 'right', 'top', 'bottom']) {
+    if (typeof savedSbSizes?.[k] === 'number') sbSizes[k] = savedSbSizes[k];
+  }
+  // Restore widget layout and sizes
+  if (savedLayout) widgetLayout = savedLayout;
+  if (savedSizes)  widgetSizes  = savedSizes;
 }
 
 // ─────────────────────────────────────────────────
@@ -1846,12 +1838,12 @@ async function showSettingsDialog() {
             <select name="mi-editor-font"
               class="flex-1 bg-olive-800 border border-olive-600 rounded px-2 py-1.5 text-xs text-olive-200 focus:outline-none cursor-pointer">
               ${MONO_FONTS.map(f => `<option value="${f.name}" style="font-family:${f.css}"
-                ${(loadPrefs().editorFont ?? 'JetBrains Mono') === f.name ? 'selected' : ''}>${f.name}</option>`).join('')}
+                ${getPref('editorFont', 'JetBrains Mono') === f.name ? 'selected' : ''}>${f.name}</option>`).join('')}
             </select>
             <select name="mi-editor-font-size"
               class="bg-olive-800 border border-olive-600 rounded px-2 py-1.5 text-xs text-olive-200 focus:outline-none cursor-pointer">
               ${[11,12,13,14,15,16,18,20].map(s => `<option value="${s}"
-                ${(loadPrefs().editorFontSize ?? 14) === s ? 'selected' : ''}>${s}px</option>`).join('')}
+                ${getPref('editorFontSize', 14) === s ? 'selected' : ''}>${s}px</option>`).join('')}
             </select>
           </div>
         </div>
@@ -1890,24 +1882,24 @@ async function showSettingsDialog() {
         const picked = overlay.querySelector('input[name="mi-search-open-in"]:checked')?.value ?? 'page';
         if (picked !== searchOpenIn) {
           searchOpenIn = picked;
-          savePrefs({ ...loadPrefs(), searchOpenIn });
+          setPref('searchOpenIn', searchOpenIn);
         }
         const newDefer = overlay.querySelector('input[name="mi-defer-future"]:checked')?.value === 'yes';
         if (newDefer !== deferFutureTasks) {
           deferFutureTasks = newDefer;
           setDeferFutureTasks(deferFutureTasks);
-          savePrefs({ ...loadPrefs(), deferFutureTasks });
+          setPref('deferFutureTasks', deferFutureTasks);
           allWidgetInstances.tasks?.refresh();
           refreshTasksView();
         }
         const newFont = overlay.querySelector('select[name="mi-editor-font"]')?.value ?? 'JetBrains Mono';
-        if (newFont !== (loadPrefs().editorFont ?? 'JetBrains Mono')) {
-          savePrefs({ ...loadPrefs(), editorFont: newFont });
+        if (newFont !== getPref('editorFont', 'JetBrains Mono')) {
+          setPref('editorFont', newFont);
           applyEditorFont(newFont);
         }
         const newSize = parseInt(overlay.querySelector('select[name="mi-editor-font-size"]')?.value ?? '14', 10);
-        if (newSize !== (loadPrefs().editorFontSize ?? 14)) {
-          savePrefs({ ...loadPrefs(), editorFontSize: newSize });
+        if (newSize !== getPref('editorFontSize', 14)) {
+          setPref('editorFontSize', newSize);
           applyEditorFontSize(newSize);
         }
       }
@@ -2068,7 +2060,7 @@ invoke('get_datastore_path').then(p => { datastorePath = p; }).catch(console.err
 // ── Widget instantiation ──────────────────────────
 // Create all widgets up front and register them.  The layout (which sidebar
 // each widget lives in, and in what order) is either restored from
-// localStorage or falls back to the defaults below.
+// preferences.json (in the datastore) or falls back to the defaults below.
 
 const pageWidget = new PageWidget({
   onOpenInEditor: openWikiPage,
@@ -2159,7 +2151,7 @@ _widgetDrag = initWidgetDrag({
   setWidgetSizes: s  => { widgetSizes = s; saveUiState(); },
 });
 
-// Deduplicate: a widget ID may appear in multiple sidebars in stale localStorage
+// Deduplicate: a widget ID may appear in multiple sidebars in stale preferences
 // (e.g. from a move that was saved before the dedup fix). First-seen wins so
 // the dedup guard in mountWidgets doesn't silently skip the second occurrence.
 {

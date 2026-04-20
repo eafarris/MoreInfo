@@ -1152,8 +1152,28 @@ struct WinState {
 
 #[derive(serde::Serialize, serde::Deserialize, Default)]
 struct UserPrefs {
+    /// Window geometry — Rust needs this directly for restore_window_size.
     #[serde(skip_serializing_if = "Option::is_none")]
     window: Option<WinState>,
+    /// All UI preferences and app state (widget layout, sidebar sizes, font
+    /// choices, etc.).  Rust stores this as an opaque JSON value; JS owns
+    /// the schema entirely.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ui: Option<serde_json::Value>,
+}
+
+/// Return the UI preferences blob, or an empty object if none is saved yet.
+#[tauri::command]
+fn get_ui_prefs() -> serde_json::Value {
+    read_user_prefs().ui.unwrap_or_else(|| serde_json::json!({}))
+}
+
+/// Persist the UI preferences blob to the datastore's preferences.json.
+#[tauri::command]
+fn save_ui_prefs(prefs: serde_json::Value) -> Result<(), String> {
+    let mut p = read_user_prefs();
+    p.ui = if prefs.is_null() { None } else { Some(prefs) };
+    write_user_prefs(&p)
 }
 
 fn user_prefs_path() -> Result<std::path::PathBuf, String> {
@@ -2650,6 +2670,8 @@ pub fn run() {
             restore_window_size,
             list_tags,
             list_pages_for_tag,
+            get_ui_prefs,
+            save_ui_prefs,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

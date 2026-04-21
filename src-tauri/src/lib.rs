@@ -319,16 +319,14 @@ fn extract_page_title(content: &str, path: &str) -> String {
         }
     }
 
-    // 2. Front-matter title
+    // 2. Front-matter title (keys are lowercased+singularized, so only "title" needed)
     let fm = front_matter::parse(content);
-    for key in ["title", "Title", "TITLE"] {
-        if let Some(val) = fm.get(key) {
-            let s = match val {
-                front_matter::Value::Text(t) | front_matter::Value::Date(t) => t.as_str(),
-                front_matter::Value::Array(_) | front_matter::Value::Bool(_) => continue,
-            };
-            if !s.is_empty() { return s.to_string(); }
-        }
+    if let Some(val) = fm.get("title") {
+        let s = match val {
+            front_matter::Value::Text(t) | front_matter::Value::Date(t) => t.as_str(),
+            front_matter::Value::Array(_) | front_matter::Value::Bool(_) => "",
+        };
+        if !s.is_empty() { return s.to_string(); }
     }
 
     // 3. First # h1 in body
@@ -564,16 +562,15 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
     }
 
     // Parse `favorite` boolean metadata variable.
+    // Keys are lowercased + singularized by front_matter::parse, so only the
+    // canonical lowercase singular form needs to be looked up here.
     let fm = front_matter::parse(&content);
     let favorite: i64 = {
-        let mut fav = false;
-        for key in ["favorite", "Favorite", "FAVORITE"] {
-            match fm.get(key) {
-                Some(front_matter::Value::Bool(b))  => { fav = *b; break; }
-                Some(front_matter::Value::Text(t))  => { fav = t.trim().eq_ignore_ascii_case("true"); break; }
-                _ => {}
-            }
-        }
+        let fav = match fm.get("favorite") {
+            Some(front_matter::Value::Bool(b)) => *b,
+            Some(front_matter::Value::Text(t)) => t.trim().eq_ignore_ascii_case("true"),
+            _ => false,
+        };
         fav as i64
     };
 
@@ -590,48 +587,25 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
         rusqlite::params![path_str, title, body],
     ).map_err(|e| e.to_string())?;
 
-    // Tags: merge front-matter `tags`/`tag` with inline #hashtags, normalised to lowercase.
+    // Tags: merge front-matter `tag`/`tags` (both now stored as "tag" after
+    // singularization) with inline #hashtags, normalised to lowercase.
     let mut tag_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
-    // `tags:` — accept array form or comma-separated string.
-    for key in ["tags", "Tags", "TAGS"] {
-        if let Some(val) = fm.get(key) {
-            match val {
-                front_matter::Value::Array(arr) => {
-                    for t in arr {
-                        let n = t.trim().to_lowercase();
-                        if !n.is_empty() { tag_set.insert(n); }
-                    }
-                }
-                front_matter::Value::Text(s) | front_matter::Value::Date(s) => {
-                    for t in s.split(',') {
-                        let n = t.trim().to_lowercase();
-                        if !n.is_empty() { tag_set.insert(n); }
-                    }
-                }
-                front_matter::Value::Bool(_) => {}
-            }
-            break;
-        }
-    }
-
-    // `tag:` (singular) — string or array treated the same way.
-    for key in ["tag", "Tag", "TAG"] {
-        if let Some(val) = fm.get(key) {
-            match val {
-                front_matter::Value::Text(s) | front_matter::Value::Date(s) => {
-                    let n = s.trim().to_lowercase();
+    if let Some(val) = fm.get("tag") {
+        match val {
+            front_matter::Value::Array(arr) => {
+                for t in arr {
+                    let n = t.trim().to_lowercase();
                     if !n.is_empty() { tag_set.insert(n); }
                 }
-                front_matter::Value::Array(arr) => {
-                    for t in arr {
-                        let n = t.trim().to_lowercase();
-                        if !n.is_empty() { tag_set.insert(n); }
-                    }
-                }
-                front_matter::Value::Bool(_) => {}
             }
-            break;
+            front_matter::Value::Text(s) | front_matter::Value::Date(s) => {
+                for t in s.split(',') {
+                    let n = t.trim().to_lowercase();
+                    if !n.is_empty() { tag_set.insert(n); }
+                }
+            }
+            front_matter::Value::Bool(_) => {}
         }
     }
 
@@ -648,35 +622,23 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
         ).map_err(|e| e.to_string())?;
     }
 
-    // Aliases: collect from `alias` (string) and `aliases` (array), normalised to lowercase.
+    // Aliases: collect from `alias`/`aliases` (both now stored as "alias" after
+    // singularization), normalised to lowercase.
     let mut alias_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
-    for key in ["alias", "Alias", "ALIAS"] {
-        if let Some(val) = fm.get(key) {
-            match val {
-                front_matter::Value::Text(t) | front_matter::Value::Date(t) => {
-                    let a = t.trim().to_lowercase();
-                    if !a.is_empty() { alias_set.insert(a); }
-                }
-                front_matter::Value::Array(arr) => {
-                    for a in arr {
-                        let a = a.trim().to_lowercase();
-                        if !a.is_empty() { alias_set.insert(a); }
-                    }
-                }
-                front_matter::Value::Bool(_) => {}
-            }
-            break;
-        }
-    }
-
-    for key in ["aliases", "Aliases", "ALIASES"] {
-        if let Some(front_matter::Value::Array(arr)) = fm.get(key) {
-            for a in arr {
-                let a = a.trim().to_lowercase();
+    if let Some(val) = fm.get("alias") {
+        match val {
+            front_matter::Value::Text(t) | front_matter::Value::Date(t) => {
+                let a = t.trim().to_lowercase();
                 if !a.is_empty() { alias_set.insert(a); }
             }
-            break;
+            front_matter::Value::Array(arr) => {
+                for a in arr {
+                    let a = a.trim().to_lowercase();
+                    if !a.is_empty() { alias_set.insert(a); }
+                }
+            }
+            front_matter::Value::Bool(_) => {}
         }
     }
 

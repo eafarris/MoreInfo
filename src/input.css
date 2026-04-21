@@ -136,11 +136,8 @@
    Override these in a theme to restyle the tasks pseudo-page independently
    of the main editor palette.                                               */
 :root {
-  --taskview-page-color:         var(--color-olive-500);  /* ## page group headers        */
-  --taskview-page-font-weight:   bold;                    /* ## font weight               */
-  --taskview-section-color:      var(--color-olive-600);  /* ### implicit heading labels  */
-  --taskview-section-font-weight: normal;                 /* ### font weight              */
-  --taskview-section-indent:     1.5rem;                  /* indent for ### lines         */
-  --taskview-badge-gutter:       calc(1.5rem + 6px);      /* pill min-width (1.5rem) + right-margin (6px)       */
+  --taskview-badge-gutter:   calc(1.5rem + 6px);      /* pill min-width (1.5rem) + right-margin (6px) */
+  --taskview-context-color:  var(--color-olive-600);  /* page → heading context line colour           */
+  --taskview-task-gap:       0.35rem;                 /* top margin on each task line (visual spacing) */
 }
 

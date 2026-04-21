@@ -1357,31 +1357,36 @@ export function createTaskPriorityPlugin(getPriority) {
 }
 
 
-// Indents ### section headers and the tasks beneath them using the
-// --taskview-section-indent CSS variable, so themes can control it.
-const tasksIndentPlugin = ViewPlugin.fromClass(class {
-  constructor(view) { this.decorations = this._build(view); }
-  update(u) {
-    if (u.docChanged || u.viewportChanged) this.decorations = this._build(u.view);
-  }
-  _build(view) {
-    const deco      = [];
-    const doc       = view.state.doc;
-    let   inSection = false; // true once a ### heading has been seen under the current ##
-    for (let i = 1; i <= doc.lines; i++) {
-      const line = doc.line(i);
-      const text = line.text;
-      if      (text.startsWith('## '))  { inSection = false; }
-      else if (text.startsWith('### ')) { inSection = true;
-        deco.push(Decoration.line({ class: 'cm-tv-indented' }).range(line.from)); }
-      else if (TASK_CB_RE.test(text))   {
-        deco.push(Decoration.line({ class: inSection ? 'cm-tv-task' : 'cm-tv-task-root' }).range(line.from)); }
+// Decorates task lines and their context (page → heading) lines in the
+// compact flat tasks view.  getEntry(lineNo) returns the lineMap entry for
+// that 1-based line number so the plugin can distinguish task vs context.
+export function createTasksContextPlugin(getEntry) {
+  return ViewPlugin.fromClass(class {
+    constructor(view) { this.decorations = this._build(view); }
+    update(u) {
+      if (u.docChanged || u.viewportChanged) this.decorations = this._build(u.view);
     }
-    return Decoration.set(deco, true);
-  }
-}, { decorations: v => v.decorations });
+    _build(view) {
+      const deco = [];
+      for (const { from, to } of view.visibleRanges) {
+        let pos = from;
+        while (pos <= to) {
+          const line  = view.state.doc.lineAt(pos);
+          const entry = getEntry(line.number);
+          if (entry?.type === 'task') {
+            deco.push(Decoration.line({ class: 'cm-tv-task-line' }).range(line.from));
+          } else if (entry?.type === 'context') {
+            deco.push(Decoration.line({ class: 'cm-tv-context' }).range(line.from));
+          }
+          pos = line.to + 1;
+        }
+      }
+      return Decoration.set(deco, true);
+    }
+  }, { decorations: v => v.decorations });
+}
 
-export function createTasksEditor({ parent, onUpdate, onPageClick, priorityPlugin }) {
+export function createTasksEditor({ parent, onUpdate, onPageClick, priorityPlugin, contextPlugin }) {
   // Uses module-level wikiTitleAt + camelTitleAt for consistent link resolution.
   const clickHandler = EditorView.domEventHandlers({
     click(event, view) {
@@ -1413,7 +1418,7 @@ export function createTasksEditor({ parent, onUpdate, onPageClick, priorityPlugi
       taskCheckboxPlugin,
       autoDoneStampListener,
       ...(priorityPlugin ? [priorityPlugin] : []),
-      tasksIndentPlugin,
+      ...(contextPlugin  ? [contextPlugin]  : []),
       EditorView.lineWrapping,
       checkboxClickHandler,
       keymap.of([
@@ -1426,15 +1431,22 @@ export function createTasksEditor({ parent, onUpdate, onPageClick, priorityPlugi
       EditorView.theme({
         '&':            { height: '100%' },
         '.cm-scroller': { overflow: 'auto', padding: '1.5rem 2rem' },
-        // ### section headers
-        '.cm-tv-indented': { paddingLeft: 'var(--taskview-section-indent)' },
-        // tasks under ### — checkbox aligns with ### text; badge hangs left as bullet
-        '.cm-tv-task':     { paddingLeft: 'var(--taskview-section-indent)' },
-        // tasks under ## with no ### — badge sits at content edge, checkbox at badge-gutter
-        '.cm-tv-task-root': { paddingLeft: 'var(--taskview-badge-gutter)' },
-        // badge hangs left by exactly its own width + right-margin in both cases
-        '.cm-tv-task .cm-priority-badge':      { marginLeft: 'calc(-1 * var(--taskview-badge-gutter))' },
-        '.cm-tv-task-root .cm-priority-badge': { marginLeft: 'calc(-1 * var(--taskview-badge-gutter))' },
+        // task line: indent to leave room for the priority badge gutter
+        '.cm-tv-task-line': {
+          paddingLeft: 'var(--taskview-badge-gutter)',
+          marginTop:   'var(--taskview-task-gap)',
+        },
+        '.cm-tv-task-line .cm-priority-badge': {
+          marginLeft: 'calc(-1 * var(--taskview-badge-gutter))',
+        },
+        // context line: same left edge as task, smaller + muted + clickable
+        '.cm-tv-context': {
+          paddingLeft: 'var(--taskview-badge-gutter)',
+          color:       'var(--taskview-context-color)',
+          fontSize:    '0.8em',
+          fontStyle:   'italic',
+          cursor:      'pointer',
+        },
       }),
       tasksUpdateListener,
       clickHandler,

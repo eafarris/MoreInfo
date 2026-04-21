@@ -16,7 +16,7 @@ import { AnnotationsWidget }   from './widgets/AnnotationsWidget.js';
 import { CounterWidget }     from './widgets/CounterWidget.js';
 import { OutlineWidget }     from './widgets/OutlineWidget.js';
 import { SearchWidget }      from './widgets/SearchWidget.js';
-import { createEditor, createTasksEditor, createTaskPriorityPlugin, createReadOnlyEditor, setEditorPages, setEditorJournalDates, placeholderCompartment } from './editor.js';
+import { createEditor, createTasksEditor, createTaskPriorityPlugin, createTasksContextPlugin, createReadOnlyEditor, setEditorPages, setEditorJournalDates, placeholderCompartment } from './editor.js';
 import { initWidgetDrag } from './widgetDrag.js';
 import { placeholder } from '@codemirror/view';
 import { formatJournalDate, isDeferred, todayIso, computeEffectivePriority } from './dateUtils.js';
@@ -1089,11 +1089,13 @@ async function loadTasksView(pushHistory = true, contextFilter = null) {
   // Create the CM instance once and reuse it.
   if (!tasksEditorView) {
     const priPlugin = createTaskPriorityPlugin(lineNo => taskLineMap.get(lineNo)?.effectivePriority);
+    const ctxPlugin = createTasksContextPlugin(lineNo => taskLineMap.get(lineNo));
     tasksEditorView = createTasksEditor({
       parent:         tasksEditorContainer,
       onUpdate:       onTasksDocChanged,
       onPageClick:    openWikiPage,
       priorityPlugin: priPlugin,
+      contextPlugin:  ctxPlugin,
     });
   }
 
@@ -1113,52 +1115,38 @@ function isFutureJournalTask(t) {
 // with a line map.  The map keys are 1-based line numbers in the synthetic doc;
 // values are {path, sourceLineNo, originalText} for task lines, null otherwise.
 function buildSyntheticDoc(tasks) {
-  const groups  = [];
-  const pathIdx = new Map();
-  for (const t of tasks) {
-    if (isDeferred(t.defer_until)) continue;
-    if (deferFutureTasks && isFutureJournalTask(t)) continue;
-    if (!pathIdx.has(t.path)) {
-      pathIdx.set(t.path, groups.length);
-      groups.push({ path: t.path, title: t.title, byHeading: new Map() });
-    }
-    const g = groups[pathIdx.get(t.path)];
-    const h = t.implicit_heading || '';
-    if (!g.byHeading.has(h)) g.byHeading.set(h, []);
-    g.byHeading.get(h).push(t);
-  }
+  // Filter then sort globally by effective priority so the most urgent tasks
+  // appear first regardless of which page or heading they belong to.
+  const visible = tasks.filter(t => {
+    if (isDeferred(t.defer_until)) return false;
+    if (deferFutureTasks && isFutureJournalTask(t)) return false;
+    return true;
+  });
+
+  visible.sort((a, b) => {
+    const pa = computeEffectivePriority(a.priority ?? 10, a.due_date, a.first_seen);
+    const pb = computeEffectivePriority(b.priority ?? 10, b.due_date, b.first_seen);
+    if (pa !== pb) return pa - pb;
+    if (a.path !== b.path) return a.path < b.path ? -1 : 1;
+    return (a.line_number ?? 0) - (b.line_number ?? 0);
+  });
 
   const lines   = [];
   const lineMap = new Map();
   let   lineNo  = 1;
 
-  for (const g of groups) {
-    const pageLabel = g.title || basename(g.path).replace(/\.md$/, '');
-    lines.push(`## ${pageLabel}`);
-    lineMap.set(lineNo++, { type: 'page', path: g.path });
-    lines.push('');
-    lineMap.set(lineNo++, null);
+  for (const t of visible) {
+    const ep = computeEffectivePriority(t.priority ?? 10, t.due_date, t.first_seen);
 
-    for (const [heading, bucket] of g.byHeading) {
-      if (heading) {
-        lines.push(`### ${heading}`);
-        lineMap.set(lineNo++, { type: 'heading', path: g.path, heading });
-        lines.push('');
-        lineMap.set(lineNo++, null);
-      }
-      bucket.sort((a, b) => {
-        const pa = computeEffectivePriority(a.priority ?? 10, a.due_date, a.first_seen);
-        const pb = computeEffectivePriority(b.priority ?? 10, b.due_date, b.first_seen);
-        return pa - pb;
-      });
-      for (const t of bucket) {
-        const ep = computeEffectivePriority(t.priority ?? 10, t.due_date, t.first_seen);
-        lines.push(`[ ] ${t.text}`);
-        lineMap.set(lineNo++, { path: t.path, sourceLineNo: t.line_number, originalText: t.text, effectivePriority: ep });
-      }
-      lines.push('');
-      lineMap.set(lineNo++, null);
-    }
+    // Line 1: task checkbox + text
+    lines.push(`[ ] ${t.text}`);
+    lineMap.set(lineNo++, { type: 'task', path: t.path, sourceLineNo: t.line_number, originalText: t.text, effectivePriority: ep });
+
+    // Line 2: page → heading context (indented, muted, clickable)
+    const pageLabel = t.title || basename(t.path).replace(/\.md$/, '');
+    const ctxText   = t.implicit_heading ? `${pageLabel} \u2192 ${t.implicit_heading}` : pageLabel;
+    lines.push(ctxText);
+    lineMap.set(lineNo++, { type: 'context', path: t.path, heading: t.implicit_heading || null });
   }
 
   return { doc: lines.join('\n'), lineMap };
@@ -1257,7 +1245,7 @@ function onTasksDocChanged(update) {
 
   for (const lineNo of changedLines) {
     const entry = taskLineMap.get(lineNo);
-    if (!entry || entry.type === 'page' || entry.type === 'heading') continue;
+    if (!entry || entry.type !== 'task') continue;
 
     const newLineText  = update.state.doc.line(lineNo).text;
     const newTaskText  = extractTaskText(newLineText);
@@ -1321,26 +1309,26 @@ async function navigateToPathAndHeading(path, heading) {
   }
 }
 
-// Double-clicking a @context tag toggles that context filter;
-// double-clicking a ## or ### header navigates to the source page (and heading).
-tasksEditorContainer.addEventListener('dblclick', e => {
-  const span = e.target.closest('.cm-at-context');
-  if (span) {
-    const context = span.textContent.replace(/^@/, '').trim().toLowerCase();
-    if (!context) return;
-    if (tasksContextFilter.has(context)) tasksContextFilter.delete(context);
-    else tasksContextFilter.add(context);
-    refreshTasksView();
-    return;
-  }
-
+// Single-clicking a context line navigates to its source page (and heading).
+tasksEditorContainer.addEventListener('click', e => {
   if (!tasksEditorView) return;
   const pos = tasksEditorView.posAtCoords({ x: e.clientX, y: e.clientY });
   if (pos == null) return;
   const lineNo = tasksEditorView.state.doc.lineAt(pos).number;
   const entry  = taskLineMap.get(lineNo);
-  if (!entry || (entry.type !== 'page' && entry.type !== 'heading')) return;
+  if (entry?.type !== 'context') return;
   navigateToPathAndHeading(entry.path, entry.heading ?? null);
+});
+
+// Double-clicking a @context tag toggles that context filter.
+tasksEditorContainer.addEventListener('dblclick', e => {
+  const span = e.target.closest('.cm-at-context');
+  if (!span) return;
+  const context = span.textContent.replace(/^@/, '').trim().toLowerCase();
+  if (!context) return;
+  if (tasksContextFilter.has(context)) tasksContextFilter.delete(context);
+  else tasksContextFilter.add(context);
+  refreshTasksView();
 });
 
 // Tasks pseudo-page search bar.

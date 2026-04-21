@@ -135,14 +135,119 @@ fn parse_pairs_slice(lines: &[&str]) -> Vec<(String, Value)> {
             .unwrap_or(line)
             .trim_start();
         if let Some(colon) = line.find(':') {
-            let key = line[..colon].trim().to_ascii_lowercase();
-            let raw = line[colon + 1..].trim();
+            let raw_key = line[..colon].trim().to_ascii_lowercase();
+            let key     = singularize(&raw_key);
+            let raw     = line[colon + 1..].trim();
             if !key.is_empty() {
                 pairs.push((key, parse_value(raw)));
             }
         }
     }
     pairs
+}
+
+// ── Key singularization ───────────────────────────────────────────────────────
+
+/// Normalise a metadata key to its singular form.
+///
+/// The input must already be lowercase.  The function is idempotent:
+/// `singularize("room") == "room"`.
+///
+/// This allows users to write either `room:` or `rooms:`, `child:` or
+/// `children:`, etc. — both are stored under the singular key.
+fn singularize(word: &str) -> String {
+    // ── Irregular plurals ─────────────────────────────────────────────────────
+    // Words whose plural cannot be derived by suffix rules.
+    const IRREGULAR: &[(&str, &str)] = &[
+        ("aliases",   "alias"),    // reserved MI key
+        ("children",  "child"),
+        ("people",    "person"),
+        ("men",       "man"),
+        ("women",     "woman"),
+        ("mice",      "mouse"),
+        ("geese",     "goose"),
+        ("feet",      "foot"),
+        ("teeth",     "tooth"),
+        ("oxen",      "ox"),
+        ("alumni",    "alumnus"),
+        ("syllabi",   "syllabus"),
+        ("cacti",     "cactus"),
+        ("fungi",     "fungus"),
+        ("nuclei",    "nucleus"),
+        ("radii",     "radius"),
+        ("stimuli",   "stimulus"),
+        ("criteria",  "criterion"),
+        ("phenomena", "phenomenon"),
+        ("indices",   "index"),
+        ("vertices",  "vertex"),
+        ("matrices",  "matrix"),
+    ];
+    for &(plural, singular) in IRREGULAR {
+        if word == plural {
+            return singular.to_string();
+        }
+    }
+
+    // ── Invariant / uncountable words ─────────────────────────────────────────
+    // These look like plurals under certain rules but are not.
+    const INVARIANT: &[&str] = &[
+        // Already singular — protect from -s stripping
+        "alias", "status", "virus", "corpus", "campus", "nexus",
+        "census", "bonus", "focus", "circus", "toss",
+        // -is words (axis, basis, …)
+        "axis", "basis", "crisis", "thesis", "analysis", "diagnosis",
+        "oasis", "ellipsis", "emphasis", "hypothesis", "synthesis",
+        // Pluralia tantum / invariant
+        "series", "species", "means", "news", "crossroads",
+        "physics", "economics", "mathematics", "politics", "athletics",
+        "data", "chess", "tennis",
+    ];
+    if INVARIANT.contains(&word) {
+        return word.to_string();
+    }
+
+    // ── Suffix rules (longest-match first) ───────────────────────────────────
+
+    // *ies → *y   hobbies→hobby  categories→category  priorities→priority
+    // Guard: len ≥ 5 keeps short words ("dies","lies","ties") unchanged.
+    if word.ends_with("ies") && word.len() >= 5 {
+        return format!("{}y", &word[..word.len() - 3]);
+    }
+
+    // *sses → *ss  masses→mass  classes→class  addresses→address
+    if word.ends_with("sses") {
+        return word[..word.len() - 2].to_string();
+    }
+
+    // *ches → *ch  churches→church  witches→witch  watches→watch
+    if word.ends_with("ches") {
+        return word[..word.len() - 2].to_string();
+    }
+
+    // *shes → *sh  washes→wash  dishes→dish  bushes→bush
+    if word.ends_with("shes") {
+        return word[..word.len() - 2].to_string();
+    }
+
+    // *xes → *x   boxes→box  foxes→fox  taxes→tax
+    if word.ends_with("xes") {
+        return word[..word.len() - 2].to_string();
+    }
+
+    // General *s → drop the s.
+    // Skip when the stem ends with a pattern that signals the word is already
+    // singular or that stripping would produce a non-word:
+    //   ss  →  grass, chess (also caught by invariant list)
+    //   is  →  tennis, axis
+    //   us  →  bonus, campus, virus (also caught by invariant list)
+    if word.ends_with('s') && word.len() >= 3 {
+        let stem = &word[..word.len() - 1];
+        if !stem.ends_with("ss") && !stem.ends_with("is") && !stem.ends_with("us") {
+            return stem.to_string();
+        }
+    }
+
+    word.to_string()
 }
 
 fn parse_value(raw: &str) -> Value {
@@ -278,23 +383,24 @@ mod tests {
 
     #[test]
     fn array_bracket_syntax() {
+        // "tags" is singularized to "tag" at parse time.
         let doc = "---\ntags: ['rust', 'tauri', 'markdown']\n---";
         let fm = parse(doc);
-        assert_eq!(fm["tags"], array(&["rust", "tauri", "markdown"]));
+        assert_eq!(fm["tag"], array(&["rust", "tauri", "markdown"]));
     }
 
     #[test]
     fn array_comma_delimited() {
         let doc = "---\ntags: one, two, three\n---";
         let fm = parse(doc);
-        assert_eq!(fm["tags"], array(&["one", "two", "three"]));
+        assert_eq!(fm["tag"], array(&["one", "two", "three"]));
     }
 
     #[test]
     fn array_comma_delimited_no_spaces() {
         let doc = "---\ntags: alpha,beta,gamma\n---";
         let fm = parse(doc);
-        assert_eq!(fm["tags"], array(&["alpha", "beta", "gamma"]));
+        assert_eq!(fm["tag"], array(&["alpha", "beta", "gamma"]));
     }
 
     #[test]
@@ -364,7 +470,7 @@ mod tests {
         let doc = "---\n- title: My Page\n- tags: one, two\n- favorite: true\n---";
         let fm = parse(doc);
         assert_eq!(fm["title"],    text("My Page"));
-        assert_eq!(fm["tags"],     array(&["one", "two"]));
+        assert_eq!(fm["tag"],      array(&["one", "two"]));  // "tags" → "tag"
         assert_eq!(fm["favorite"], Value::Bool(true));
     }
 
@@ -377,11 +483,12 @@ mod tests {
     }
 
     #[test]
-    fn keys_are_normalized_to_lowercase() {
+    fn keys_are_normalized_to_lowercase_and_singular() {
+        // Keys are lowercased then singularized: "TAGS" → "tags" → "tag".
         let doc = "---\nTitle: My Page\nTAGS: one, two\nFavorite: true\n---";
         let fm = parse(doc);
         assert_eq!(fm["title"],    text("My Page"));
-        assert_eq!(fm["tags"],     array(&["one", "two"]));
+        assert_eq!(fm["tag"],      array(&["one", "two"]));
         assert_eq!(fm["favorite"], Value::Bool(true));
     }
 
@@ -402,5 +509,89 @@ mod tests {
         let doc = "Body text.\n\n---\ntitle: Should be ignored\n---";
         let fm = parse(doc);
         assert!(fm.is_empty());
+    }
+
+    // ── singularize ───────────────────────────────────────────────────────────
+
+    #[test]
+    fn singularize_idempotent_on_singular() {
+        for w in &["room", "child", "tag", "category", "award", "alias", "person",
+                   "status", "series", "analysis", "tooth", "mouse"] {
+            assert_eq!(singularize(w), *w, "singularize({w:?}) should be a no-op");
+        }
+    }
+
+    #[test]
+    fn singularize_simple_s() {
+        assert_eq!(singularize("rooms"),   "room");
+        assert_eq!(singularize("awards"),  "award");
+        assert_eq!(singularize("tags"),    "tag");
+        assert_eq!(singularize("events"),  "event");
+        assert_eq!(singularize("projects"),"project");
+    }
+
+    #[test]
+    fn singularize_ies_to_y() {
+        assert_eq!(singularize("categories"),  "category");
+        assert_eq!(singularize("hobbies"),     "hobby");
+        assert_eq!(singularize("priorities"),  "priority");
+        assert_eq!(singularize("activities"),  "activity");
+        assert_eq!(singularize("dependencies"),"dependency");
+    }
+
+    #[test]
+    fn singularize_sibilant_es() {
+        assert_eq!(singularize("churches"),  "church");
+        assert_eq!(singularize("watches"),   "watch");
+        assert_eq!(singularize("dishes"),    "dish");
+        assert_eq!(singularize("washes"),    "wash");
+        assert_eq!(singularize("boxes"),     "box");
+        assert_eq!(singularize("taxes"),     "tax");
+        assert_eq!(singularize("classes"),   "class");
+        assert_eq!(singularize("addresses"), "address");
+    }
+
+    #[test]
+    fn singularize_irregulars() {
+        assert_eq!(singularize("children"),  "child");
+        assert_eq!(singularize("people"),    "person");
+        assert_eq!(singularize("men"),       "man");
+        assert_eq!(singularize("women"),     "woman");
+        assert_eq!(singularize("mice"),      "mouse");
+        assert_eq!(singularize("geese"),     "goose");
+        assert_eq!(singularize("feet"),      "foot");
+        assert_eq!(singularize("teeth"),     "tooth");
+        assert_eq!(singularize("criteria"),  "criterion");
+        assert_eq!(singularize("phenomena"), "phenomenon");
+        assert_eq!(singularize("indices"),   "index");
+        assert_eq!(singularize("alumni"),    "alumnus");
+        assert_eq!(singularize("aliases"),   "alias");
+    }
+
+    #[test]
+    fn singularize_invariant_words_unchanged() {
+        for w in &["series", "species", "status", "virus", "analysis",
+                   "basis", "axis", "tennis", "news", "data", "alias"] {
+            assert_eq!(singularize(w), *w, "invariant word {w:?} should be unchanged");
+        }
+    }
+
+    #[test]
+    fn plural_key_stored_as_singular() {
+        // "rooms: A, B" and "room: A, B" should produce the same key.
+        let plural   = parse("---\nrooms: A, B\n---");
+        let singular = parse("---\nroom: A, B\n---");
+        assert!(plural.contains_key("room"),   "plural key 'rooms' should be stored as 'room'");
+        assert!(singular.contains_key("room"), "singular key 'room' should be stored as 'room'");
+        assert_eq!(plural["room"], singular["room"]);
+    }
+
+    #[test]
+    fn irregular_plural_key_stored_as_singular() {
+        let plural   = parse("---\nchildren: Alice, Bob\n---");
+        let singular = parse("---\nchild: Alice\n---");
+        assert!(plural.contains_key("child"),
+            "plural key 'children' should be stored as 'child'");
+        assert!(singular.contains_key("child"));
     }
 }

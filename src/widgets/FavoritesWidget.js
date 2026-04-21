@@ -17,11 +17,12 @@ export class FavoritesWidget extends Widget {
     this._list   = null;
   }
 
-  get wrapperClass() { return 'flex flex-col border-b border-olive-700'; }
+  get wrapperClass() { return 'shrink-0 border-b border-olive-700'; }
+  get fixedSize()    { return true; }
 
   onMount() {
     this._list = document.createElement('div');
-    this._list.className = 'overflow-y-auto flex-1 min-h-0';
+    this._list.className = 'overflow-y-auto';
     this._body.classList.add('flex', 'flex-col');
     this._body.appendChild(this._list);
 

@@ -570,8 +570,15 @@ const sbConfig = {
 
 // ── UI state persistence ──────────────────────────
 
+// Tracks every widget ID the user has ever placed in a sidebar.  Used at
+// startup to distinguish "newly-shipped widget" (absent from widgetsSeen →
+// auto-place in default sidebar) from "user intentionally removed widget"
+// (present in widgetsSeen but absent from current layout → leave it gone).
+let widgetsSeen = new Set();
+
 function saveUiState() {
-  setPrefs({ sbState, sbSizes, widgetLayout, widgetSizes });
+  setPrefs({ sbState, sbSizes, widgetLayout, widgetSizes,
+             widgetsSeen: [...widgetsSeen] });
 }
 
 function loadUiState() {
@@ -579,6 +586,7 @@ function loadUiState() {
   const savedSbSizes    = getPref('sbSizes',      null);
   const savedLayout     = getPref('widgetLayout', null);
   const savedSizes      = getPref('widgetSizes',  null);
+  const savedSeen       = getPref('widgetsSeen',  null);
 
   // Restore sidebar states (top is disabled, always keep hidden)
   const validStates = ['hidden', 'pinned'];
@@ -592,6 +600,13 @@ function loadUiState() {
   // Restore widget layout and sizes
   if (savedLayout) widgetLayout = savedLayout;
   if (savedSizes)  widgetSizes  = savedSizes;
+  // Restore seen set — seed from layout if no explicit seen record yet
+  // (first run after this feature ships).
+  if (Array.isArray(savedSeen)) {
+    widgetsSeen = new Set(savedSeen);
+  } else if (savedLayout) {
+    widgetsSeen = new Set(Object.values(savedLayout).flat());
+  }
 }
 
 // ─────────────────────────────────────────────────
@@ -788,14 +803,21 @@ function mountWidgets(sidebarName, widgets) {
     // min-size 0 prevents flex items from refusing to shrink below content size.
     wrapper.style[horiz ? 'minWidth' : 'minHeight'] = '0';
 
-    // Use 1 1 (grow + shrink) for all widgets so that when total saved sizes
-    // exceed the container, they shrink proportionally rather than crowding out
-    // any widget that has no saved size yet (e.g. a freshly added widget).
-    // The last widget gets a 150px default basis so it's always visible even
-    // when all other widgets have large saved sizes.
-    if (savedSize) {
+    // Fixed-size widgets (e.g. Calendar, Favorites) size themselves from their
+    // content — never from a saved pixel value.  flex: 0 0 auto lets the wrapper
+    // shrink-wrap its content and prevents the flex container from growing it.
+    // Evict any stale saved size so it can't creep back in on remount.
+    if (widget.fixedSize) {
+      delete widgetSizes[widget.id];
+      wrapper.style.flex = '0 0 auto';
+    } else if (savedSize) {
+      // Use 1 1 (grow + shrink) so that when total saved sizes exceed the
+      // container, they shrink proportionally rather than crowding out any
+      // widget that has no saved size yet (e.g. a freshly added widget).
       wrapper.style.flex = `1 1 ${savedSize}px`;
     } else {
+      // The last widget gets a 150px default basis so it's always visible even
+      // when all other widgets have large saved sizes.
       wrapper.style.flex = isLast ? '1 1 150px' : '1 1 0';
     }
     wrapper.dataset.widgetId = widget.id;
@@ -1160,7 +1182,11 @@ function extractContexts(tasks) {
 
 /** Render the filter chip bar above the tasks editor. */
 function renderTasksFilterBar(contexts) {
-  if (!contexts.length) { tasksFilterBar.innerHTML = ''; return; }
+  if (!contexts.length) {
+    tasksFilterBar.innerHTML = `<span class="text-xs text-olive-600 font-semibold tracking-wider uppercase shrink-0">Contexts</span><span class="text-xs text-olive-700 italic">None found</span>`;
+    tasksFilterBar.style.display = '';
+    return;
+  }
 
   const label = `<span class="text-xs text-olive-600 font-semibold tracking-wider uppercase shrink-0">Contexts</span>`;
   const chips = contexts.map(c => {
@@ -1173,6 +1199,7 @@ function renderTasksFilterBar(contexts) {
     >@${escapeHtml(c)}</button>`;
   }).join('');
   tasksFilterBar.innerHTML = label + chips;
+  tasksFilterBar.style.display = '';
 }
 
 async function refreshTasksView() {
@@ -1749,6 +1776,8 @@ function showWidgetPicker(sidebarName, anchorEl) {
     if (inCurrent) {
       // Remove from this sidebar.
       widgetLayout[sidebarName] = widgetLayout[sidebarName].filter(w => w !== id);
+      // widgetsSeen intentionally NOT updated — the widget remains "known" so
+      // the startup merge won't re-add it automatically.
     } else {
       // Remove from any other sidebar it may occupy.
       for (const sb of Object.keys(widgetLayout)) {
@@ -1756,6 +1785,7 @@ function showWidgetPicker(sidebarName, anchorEl) {
           widgetLayout[sb] = widgetLayout[sb].filter(w => w !== id);
         }
       }
+      widgetsSeen.add(id);
       // Add to the end of this sidebar.
       widgetLayout[sidebarName] = [...(widgetLayout[sidebarName] || []), id];
     }
@@ -1781,7 +1811,7 @@ async function showSettingsDialog() {
     const soiPage   = searchOpenIn === 'page';
     const soiEditor = searchOpenIn === 'editor';
     overlay.innerHTML = `
-      <div class="bg-olive-900 border border-olive-700 rounded-lg shadow-xl p-5 w-[480px] flex flex-col gap-4">
+      <div class="bg-olive-900 border border-olive-700 rounded-lg shadow-xl p-5 w-120 flex flex-col gap-4">
         <h2 class="text-sm font-semibold text-olive-100">Settings</h2>
         <div class="flex flex-col gap-1.5">
           <label class="text-xs text-olive-500 font-mono">Datastore location</label>
@@ -2127,14 +2157,21 @@ const defaultLayout = {
 const hasSavedLayout = Object.values(widgetLayout).some(arr => arr.length > 0);
 if (!hasSavedLayout) {
   widgetLayout = JSON.parse(JSON.stringify(defaultLayout));
+  // Treat all default widgets as seen so future removals are honoured.
+  for (const ids of Object.values(defaultLayout)) ids.forEach(id => widgetsSeen.add(id));
 } else {
-  // Merge: any widget in the default layout that is absent from every saved
-  // sidebar gets inserted into its default sidebar (handles newly-added widgets).
+  // Merge: any widget in the default layout that has NEVER been seen before
+  // (i.e. it's newly shipped) gets auto-placed in its default sidebar.
+  // Widgets that were seen before but are now absent were intentionally removed
+  // by the user — leave them gone.
   const allSaved = new Set(Object.values(widgetLayout).flat());
+  // Seed widgetsSeen with everything currently in the layout.
+  allSaved.forEach(id => widgetsSeen.add(id));
   for (const [sb, ids] of Object.entries(defaultLayout)) {
     for (const id of ids) {
-      if (!allSaved.has(id)) {
+      if (!allSaved.has(id) && !widgetsSeen.has(id)) {
         widgetLayout[sb] = [...(widgetLayout[sb] || []), id];
+        widgetsSeen.add(id);
       }
     }
   }
@@ -2144,7 +2181,7 @@ if (!hasSavedLayout) {
 _widgetDrag = initWidgetDrag({
   sbConfig,
   getLayout:      () => widgetLayout,
-  setLayout:      l  => { widgetLayout = l; saveUiState(); },
+  setLayout:      l  => { widgetLayout = l; Object.values(l).flat().forEach(id => widgetsSeen.add(id)); saveUiState(); },
   getRegistry:    () => widgetRegistry,
   remountSidebar,
   getWidgetSizes: () => widgetSizes,

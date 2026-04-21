@@ -219,7 +219,7 @@ Favorites
 - [ ] Task nesting / subtask hierarchies (indented child tasks; parent shows progress indicator, e.g. "2/5")
 - [x] Tasks pseudo-page (toolbar button opens a full-page aggregated task view, not a sidebar widget)
 - [ ] Tasks widget: filter by note/folder, sort by priority/due date
-- [ ] Tags widget (all tags across datastore; click to filter; tag cloud or list)
+- [X] Tags widget (all tags across datastore; click to filter; tag cloud or list)
 - [x] Metadata widget: display key/value pairs for active document
 - [x] Metadata widget: editing interactions (click to edit value inline; double-click to find all pages with matching key/value)
 - [ ] Find in note (`⌘G` — highlight and jump between in-document matches)

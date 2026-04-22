@@ -141,3 +141,29 @@
   --taskview-task-gap:       0.35rem;                 /* top margin on each task line (visual spacing) */
 }
 
+/* ── Tasks table layout ─────────────────────────────────────────────────────
+   An invisible table used only for column alignment. No borders, headers,
+   or hover states. Column widths are driven by content; only the badge
+   column has a fixed width via the shrink-to-fit trick (width:1px +
+   white-space:nowrap).                                                       */
+.mi-tasks-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: var(--font-family-mono);
+  font-size: var(--editor-font-size, 0.875rem);
+  line-height: 1.625;
+}
+.mi-tasks-table td               { padding: 0; vertical-align: top; }
+.mi-tasks-table td.td-badge      { width: 1px; white-space: nowrap; padding-right: 6px; }
+.mi-tasks-table td.td-cb         { width: 1px; white-space: nowrap; padding-right: 1ch;
+                                    color: oklch(65% 0.08 107); cursor: pointer; }
+.mi-tasks-table td.td-cb-overdue { background-color: oklch(50% 0.19 27);
+                                    color: #fff; border-radius: 3px; padding: 0 2px; }
+.mi-tasks-table tr:not(:first-child) td { padding-top: var(--taskview-task-gap); }
+
+.mi-tasks-ctx      { color: var(--taskview-context-color); font-size: 0.8em;
+                     font-style: italic; cursor: pointer; }
+.mi-tasks-at-param { color: var(--color-olive-500); }
+.mi-tasks-at-ctx   { color: var(--color-amber-400); }
+.mi-tasks-wiki     { color: var(--color-amber-400); cursor: pointer; }
+

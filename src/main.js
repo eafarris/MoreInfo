@@ -16,10 +16,11 @@ import { AnnotationsWidget }   from './widgets/AnnotationsWidget.js';
 import { CounterWidget }     from './widgets/CounterWidget.js';
 import { OutlineWidget }     from './widgets/OutlineWidget.js';
 import { SearchWidget }      from './widgets/SearchWidget.js';
-import { createEditor, createTasksEditor, createTaskPriorityPlugin, createTasksContextPlugin, createReadOnlyEditor, setEditorPages, setEditorJournalDates, placeholderCompartment } from './editor.js';
+import { createEditor, createReadOnlyEditor, setEditorPages, setEditorJournalDates, placeholderCompartment, doneStamp } from './editor.js';
+import { priorityPillHTML } from './ui.js';
 import { initWidgetDrag } from './widgetDrag.js';
 import { placeholder } from '@codemirror/view';
-import { formatJournalDate, isDeferred, todayIso, computeEffectivePriority } from './dateUtils.js';
+import { formatJournalDate, isDeferred, isDueToday, isOverdue, todayIso, computeEffectivePriority } from './dateUtils.js';
 
 // ── State ─────────────────────────────────────────
 
@@ -61,9 +62,6 @@ const METADATA_PSEUDO_PAGE = '::metadata::';
 const TAG_PSEUDO_PAGE      = '::tag::';
 
 // Tasks pseudo-page state.
-let tasksEditorView  = null;
-let taskLineMap      = new Map(); // syntheticLineNo (1-based) → {path, sourceLineNo, originalText} | null
-const pendingWrites  = new Map(); // syntheticLineNo → setTimeout id
 const tasksContextFilter = new Set(); // active @context toggles; empty = show all
 let   tasksSearchQuery   = '';        // plain-text filter for the pseudo-page search bar
 
@@ -75,9 +73,6 @@ let metadataQuery      = null;      // { key, value } currently displayed
 let tagEditorView = null;
 let tagQuery      = null;           // tag string currently displayed
 
-// Strips the checkbox prefix from a synthetic task line to get the task text.
-const TASK_TEXT_RE = /^(?:[ \t]*(?:[-*+]|\d+[.)]) +)?\[[xX ]?\]\s*/;
-function extractTaskText(line) { return line.replace(TASK_TEXT_RE, ''); }
 
 // ── DOM refs ──────────────────────────────────────
 
@@ -1086,19 +1081,6 @@ async function loadTasksView(pushHistory = true, contextFilter = null) {
   document.title = 'MoreInfo \u2014 Tasks';
   docTitle.textContent = 'Tasks';
 
-  // Create the CM instance once and reuse it.
-  if (!tasksEditorView) {
-    const priPlugin = createTaskPriorityPlugin(lineNo => taskLineMap.get(lineNo)?.effectivePriority);
-    const ctxPlugin = createTasksContextPlugin(lineNo => taskLineMap.get(lineNo));
-    tasksEditorView = createTasksEditor({
-      parent:         tasksEditorContainer,
-      onUpdate:       onTasksDocChanged,
-      onPageClick:    openWikiPage,
-      priorityPlugin: priPlugin,
-      contextPlugin:  ctxPlugin,
-    });
-  }
-
   mountedWidgets.forEach(w => { try { w.onFileOpen(TASKS_PSEUDO_PAGE, '', {}); } catch(e) {} });
   renderBreadcrumbs();
   updateNavButtonStates();
@@ -1111,12 +1093,37 @@ function isFutureJournalTask(t) {
   return m ? m[1] > todayIso() : false;
 }
 
-// Build a synthetic markdown document from the task list and return it along
-// with a line map.  The map keys are 1-based line numbers in the synthetic doc;
-// values are {path, sourceLineNo, originalText} for task lines, null otherwise.
-function buildSyntheticDoc(tasks) {
-  // Filter then sort globally by effective priority so the most urgent tasks
-  // appear first regardless of which page or heading they belong to.
+// Escape a string for use inside an HTML attribute value (double-quoted).
+function escapeAttr(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+}
+
+// Colorize task text: wiki links, @reserved params, @context tags.
+const TASKS_TOKEN_RE = /(\[\[[^\]]+\]\])|(@(?:due|defer|priority|done|overdue|waiting|someday)(?:\([^)]*\))?)|(@[a-zA-Z][a-zA-Z0-9_-]*)/g;
+function renderTaskText(raw) {
+  const parts = [];
+  let last = 0;
+  let m;
+  TASKS_TOKEN_RE.lastIndex = 0;
+  while ((m = TASKS_TOKEN_RE.exec(raw)) !== null) {
+    if (m.index > last) parts.push(escapeHtml(raw.slice(last, m.index)));
+    const [full, wiki, atParam, atCtx] = m;
+    if (wiki) {
+      const title = wiki.slice(2, -2);
+      parts.push(`<span class="mi-tasks-wiki" data-title="${escapeAttr(title)}">${escapeHtml(full)}</span>`);
+    } else if (atParam) {
+      parts.push(`<span class="mi-tasks-at-param">${escapeHtml(full)}</span>`);
+    } else {
+      parts.push(`<span class="mi-tasks-at-ctx">${escapeHtml(full)}</span>`);
+    }
+    last = m.index + full.length;
+  }
+  if (last < raw.length) parts.push(escapeHtml(raw.slice(last)));
+  return parts.join('');
+}
+
+// Build the tasks table HTML from a filtered, sorted task list.
+function buildTasksHTML(tasks) {
   const visible = tasks.filter(t => {
     if (isDeferred(t.defer_until)) return false;
     if (deferFutureTasks && isFutureJournalTask(t)) return false;
@@ -1131,25 +1138,33 @@ function buildSyntheticDoc(tasks) {
     return (a.line_number ?? 0) - (b.line_number ?? 0);
   });
 
-  const lines   = [];
-  const lineMap = new Map();
-  let   lineNo  = 1;
-
-  for (const t of visible) {
-    const ep = computeEffectivePriority(t.priority ?? 10, t.due_date, t.first_seen);
-
-    // Line 1: task checkbox + text
-    lines.push(`[ ] ${t.text}`);
-    lineMap.set(lineNo++, { type: 'task', path: t.path, sourceLineNo: t.line_number, originalText: t.text, effectivePriority: ep });
-
-    // Line 2: page → heading context (indented, muted, clickable)
-    const pageLabel = t.title || basename(t.path).replace(/\.md$/, '');
-    const ctxText   = t.implicit_heading ? `${pageLabel} \u2192 ${t.implicit_heading}` : pageLabel;
-    lines.push(ctxText);
-    lineMap.set(lineNo++, { type: 'context', path: t.path, heading: t.implicit_heading || null });
+  if (!visible.length) {
+    return '<p class="text-sm italic" style="color:var(--color-olive-600)">No tasks found.</p>';
   }
 
-  return { doc: lines.join('\n'), lineMap };
+  const rows = visible.map(t => {
+    const ep      = computeEffectivePriority(t.priority ?? 10, t.due_date, t.first_seen);
+    const overdue = t.due_date && isOverdue(t.due_date);
+    const today   = !overdue && t.due_date && isDueToday(t.due_date);
+    const cbClass = overdue ? 'td-cb td-cb-overdue' : 'td-cb';
+    const cbColor = today   ? 'style="color:oklch(87.9% 0.169 91.605)"' : '';
+
+    const pageLabel  = escapeHtml(t.title || basename(t.path).replace(/\.md$/, ''));
+    const rawHeading = t.implicit_heading || null;
+    const ctxText    = rawHeading ? `${pageLabel} \u2192 ${escapeHtml(rawHeading)}` : pageLabel;
+    const ctxAttrs   = `data-path="${escapeAttr(t.path)}"${rawHeading ? ` data-heading="${escapeAttr(rawHeading)}"` : ''}`;
+
+    return `<tr data-path="${escapeAttr(t.path)}" data-line="${t.line_number}" data-text="${escapeAttr(t.text)}">
+      <td class="td-badge">${priorityPillHTML(ep)}</td>
+      <td class="${cbClass}" ${cbColor}>[ ]</td>
+      <td class="td-text">
+        <div>${renderTaskText(t.text)}</div>
+        <div class="mi-tasks-ctx" ${ctxAttrs}>${ctxText}</div>
+      </td>
+    </tr>`;
+  });
+
+  return `<table class="mi-tasks-table"><tbody>${rows.join('')}</tbody></table>`;
 }
 
 /** Extract all unique @context tokens from a task list (excludes reserved params). */
@@ -1191,7 +1206,7 @@ function renderTasksFilterBar(contexts) {
 }
 
 async function refreshTasksView() {
-  const scrollTop = tasksEditorView ? tasksEditorView.scrollDOM.scrollTop : 0;
+  const scrollTop = tasksEditorContainer.scrollTop;
   try {
     const allTasks = await invoke('list_tasks', { checked: false });
 
@@ -1222,60 +1237,13 @@ async function refreshTasksView() {
       });
     }
 
-    const { doc, lineMap } = buildSyntheticDoc(tasks);
-    taskLineMap = lineMap;
-    tasksEditorView.dispatch({
-      changes: { from: 0, to: tasksEditorView.state.doc.length, insert: doc },
-    });
+    tasksEditorContainer.innerHTML = buildTasksHTML(tasks);
   } catch(e) {
     console.error('list_tasks failed:', e);
   }
-  requestAnimationFrame(() => { if (tasksEditorView) tasksEditorView.scrollDOM.scrollTop = scrollTop; });
+  requestAnimationFrame(() => { tasksEditorContainer.scrollTop = scrollTop; });
 }
 
-// Called by the tasks CM updateListener on every doc change.
-function onTasksDocChanged(update) {
-  const changedLines = new Set();
-  update.changes.iterChangedRanges((fromA, toA, fromB, toB) => {
-    const doc  = update.state.doc;
-    const lFrom = doc.lineAt(fromB).number;
-    const lTo   = doc.lineAt(Math.min(toB, doc.length)).number;
-    for (let l = lFrom; l <= lTo; l++) changedLines.add(l);
-  });
-
-  for (const lineNo of changedLines) {
-    const entry = taskLineMap.get(lineNo);
-    if (!entry || entry.type !== 'task') continue;
-
-    const newLineText  = update.state.doc.line(lineNo).text;
-    const newTaskText  = extractTaskText(newLineText);
-    const isCompletion = newTaskText.includes('@done') && !entry.originalText.includes('@done');
-
-    if (pendingWrites.has(lineNo)) clearTimeout(pendingWrites.get(lineNo));
-
-    const doWrite = async () => {
-      pendingWrites.delete(lineNo);
-      try {
-        await invoke('write_task_line', {
-          path:         entry.path,
-          lineNumber:   entry.sourceLineNo,
-          originalText: entry.originalText,
-          newText:      newTaskText,
-        });
-        entry.originalText = newTaskText;
-        if (isCompletion) await refreshTasksView();
-      } catch(err) {
-        console.error('write_task_line failed:', err);
-      }
-    };
-
-    if (isCompletion) {
-      doWrite();
-    } else {
-      pendingWrites.set(lineNo, setTimeout(doWrite, 1500));
-    }
-  }
-}
 
 document.getElementById('btn-tasks').addEventListener('click', () => loadTasksView());
 
@@ -1309,20 +1277,35 @@ async function navigateToPathAndHeading(path, heading) {
   }
 }
 
-// Single-clicking a context line navigates to its source page (and heading).
-tasksEditorContainer.addEventListener('click', e => {
-  if (!tasksEditorView) return;
-  const pos = tasksEditorView.posAtCoords({ x: e.clientX, y: e.clientY });
-  if (pos == null) return;
-  const lineNo = tasksEditorView.state.doc.lineAt(pos).number;
-  const entry  = taskLineMap.get(lineNo);
-  if (entry?.type !== 'context') return;
-  navigateToPathAndHeading(entry.path, entry.heading ?? null);
+// Click handler: checkbox completion, context navigation, wiki link opening.
+tasksEditorContainer.addEventListener('click', async e => {
+  // Checkbox: mark task done
+  const cbCell = e.target.closest('.td-cb');
+  if (cbCell) {
+    const row = cbCell.closest('tr[data-path]');
+    if (!row) return;
+    try {
+      await invoke('write_task_line', {
+        path:         row.dataset.path,
+        lineNumber:   parseInt(row.dataset.line, 10),
+        originalText: row.dataset.text,
+        newText:      row.dataset.text + ' ' + doneStamp(),
+      });
+      await refreshTasksView();
+    } catch(err) { console.error('write_task_line failed:', err); }
+    return;
+  }
+  // Context line: navigate to source page + heading
+  const ctx = e.target.closest('.mi-tasks-ctx');
+  if (ctx) { navigateToPathAndHeading(ctx.dataset.path, ctx.dataset.heading || null); return; }
+  // Wiki link: open page
+  const wiki = e.target.closest('.mi-tasks-wiki');
+  if (wiki) { openWikiPage(wiki.dataset.title); return; }
 });
 
 // Double-clicking a @context tag toggles that context filter.
 tasksEditorContainer.addEventListener('dblclick', e => {
-  const span = e.target.closest('.cm-at-context');
+  const span = e.target.closest('.mi-tasks-at-ctx');
   if (!span) return;
   const context = span.textContent.replace(/^@/, '').trim().toLowerCase();
   if (!context) return;

@@ -1431,13 +1431,20 @@ export function createTasksEditor({ parent, onUpdate, onPageClick, priorityPlugi
       EditorView.theme({
         '&':            { height: '100%' },
         '.cm-scroller': { overflow: 'auto', padding: '1.5rem 2rem' },
-        // task line: indent to leave room for the priority badge gutter
+        // task line: hanging indent so wrapped text aligns with task text start.
+        // padding-left reserves badge-gutter + 4ch ("[ ] " prefix);
+        // text-indent: -4ch pulls the first line (checkbox) back by 4ch at the
+        // LINE'S font size — keeping ch consistent between both properties.
+        // The badge resets text-indent to 0 so the number inside the pill does
+        // not inherit the negative indent and separate from its background.
         '.cm-tv-task-line': {
-          paddingLeft: 'var(--taskview-badge-gutter)',
+          paddingLeft: 'calc(var(--taskview-badge-gutter) + 4ch)',
+          textIndent:  '-4ch',
           marginTop:   'var(--taskview-task-gap)',
         },
         '.cm-tv-task-line .cm-priority-badge': {
           marginLeft: 'calc(-1 * var(--taskview-badge-gutter))',
+          textIndent: '0',
         },
         // context line: same left edge as task, smaller + muted + clickable
         '.cm-tv-context': {

@@ -209,7 +209,7 @@ Favorites
 - [ ] Reserved context tag — @waiting (blocked on someone or something else)
 - [x] Task implicit heading context (nearest ATX heading; resets at thematic breaks)
 - [x] Annotations: TODO, NOTE, IDEA, and FIXME (highlighted, indexed; not tasks)
-- [~] Tasks widget (grouped by page + heading, wiki links clickable; filter UI planned)
+- [X] Tasks widget (grouped by page + heading, wiki links clickable; filter UI)
 - [x] Expanded task params: `@due`, `@priority`, `@defer`
 - [x] CamelCase wiki links (existing pages only, never creates)
 - [x] @calc named variables (assign with `name = expr`, reference by name in subsequent lines)

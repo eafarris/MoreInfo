@@ -102,25 +102,25 @@ export class Widget {
       // horizontal layout.
       // Padding is the horizontal header's px↔py swapped for the axis change.
       container.innerHTML = `
-        <div class="widget-header flex flex-col items-center px-1.5 py-3 shrink-0 border-r border-olive-700 bg-transparent cursor-default select-none" style="width:28px">
-          <button class="widget-roll-btn text-olive-500 hover:text-olive-300 p-0.5 leading-none bg-transparent border-none cursor-pointer" title="Roll">
+        <div class="widget-header flex flex-col items-center px-1.5 py-3 shrink-0 border-r border-olive-700 bg-olive-800 cursor-default select-none" style="width:28px">
+          <button class="widget-roll-btn text-olive-600 hover:text-olive-400 p-0.5 leading-none bg-transparent border-none cursor-pointer" title="Roll">
             <i class="ph ${this._rollIconClass()} text-sm leading-none"></i>
           </button>
-          <span class="widget-title mt-auto text-xs font-semibold text-olive-500 tracking-wide uppercase" style="writing-mode:vertical-rl;transform:rotate(180deg)"><i class="ph ${this.icon} text-sm leading-none"></i>${this.title}</span>
+          <span class="widget-title mt-auto text-xs font-semibold text-olive-600 tracking-wide uppercase" style="writing-mode:vertical-rl;transform:rotate(180deg)"><i class="ph ${this.icon} text-sm leading-none"></i>${this.title}</span>
         </div>
         <div class="widget-body flex-1 min-w-0 overflow-y-auto"></div>
       `;
     } else {
       // ── Vertical orientation (left / right sidebars) ─────────────────────
       container.innerHTML = `
-        <div class="widget-header flex items-center justify-between px-3 py-1 shrink-0 border-b border-olive-700 bg-transparent cursor-default select-none">
-          <span class="widget-title flex items-center gap-1.5 text-xs font-semibold text-olive-500 tracking-wide uppercase">
+        <div class="widget-header flex items-center justify-between px-3 py-1 shrink-0 border-b border-olive-700 bg-olive-800 cursor-default select-none">
+          <span class="widget-title flex items-center gap-1.5 text-xs font-semibold text-olive-600 tracking-wide uppercase">
             <i class="ph ${this.icon} text-sm leading-none"></i>
             ${this.title}
           </span>
           <span class="flex items-center gap-1">
             ${this.headerAction}
-            <button class="widget-roll-btn text-olive-500 hover:text-olive-300 p-0.5 leading-none bg-transparent border-none cursor-pointer" title="Roll">
+            <button class="widget-roll-btn text-olive-600 hover:text-olive-400 p-0.5 leading-none bg-transparent border-none cursor-pointer" title="Roll">
               <i class="ph ${this._rollIconClass()} text-sm leading-none"></i>
             </button>
           </span>

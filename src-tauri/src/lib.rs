@@ -2502,6 +2502,8 @@ pub fn run() {
             let view_tasks    = MenuItem::with_id(handle, "view-tasks",    "Tasks",                 true, Some("CmdOrCtrl+Shift+K"))?;
             let view_render   = MenuItem::with_id(handle, "view-render",   "Render Markdown",       true, Some("CmdOrCtrl+Shift+R"))?;
 
+            let edit_find             = MenuItem::with_id(handle, "edit-find",             "Find\u{2026}",                true, Some("CmdOrCtrl+G"))?;
+
             let file_new              = MenuItem::with_id(handle, "file-new",              "New Page\u{2026}",          true, Some("CmdOrCtrl+N"))?;
             let file_new_template     = MenuItem::with_id(handle, "file-new-template",     "New Template\u{2026}",      true, None::<&str>)?;
             let file_from_template    = MenuItem::with_id(handle, "file-from-template",    "New from Template\u{2026}", true, None::<&str>)?;
@@ -2554,6 +2556,8 @@ pub fn run() {
                         .paste()
                         .separator()
                         .select_all()
+                        .separator()
+                        .item(&edit_find)
                         .build()?,
                     // ── View ────────────────────────────────────────
                     &SubmenuBuilder::new(handle, "View")

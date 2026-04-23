@@ -132,6 +132,32 @@
   text-decoration-style: solid;
 }
 
+/* ── In-page search highlights ──────────────────────────────────────────────
+   Dim strategy: set explicit color on .cm-line (plain text) and every span
+   inside it (syntax-highlight tokens) when search is active.  Match spans
+   override back to the normal body text color with higher specificity (the
+   element+class selector beats the generic span selector).                  */
+#editor[data-search-active] .cm-line        { color: var(--color-olive-700); }
+#editor[data-search-active] .cm-line span   { color: var(--color-olive-700) !important; }
+
+/* Match spans: restore to normal body text + subtle background.
+   span.cm-search-* has higher specificity than the generic `span` rule.    */
+#editor[data-search-active] .cm-line span.cm-search-match,
+#editor[data-search-active] .cm-line span.cm-search-match span {
+  color: var(--color-olive-200) !important;
+  background: oklch(55% 0.12 85 / 0.18);
+  border-radius: 2px;
+  padding: 0 1px;
+}
+#editor[data-search-active] .cm-line span.cm-search-current,
+#editor[data-search-active] .cm-line span.cm-search-current span {
+  color: var(--color-olive-100) !important;
+  background: oklch(55% 0.18 85 / 0.38);
+  border-radius: 2px;
+  padding: 0 1px;
+  outline: 1px solid oklch(65% 0.18 85 / 0.5);
+}
+
 /* ── Task view semantic tokens ──────────────────────────────────────────────
    Override these in a theme to restyle the tasks pseudo-page independently
    of the main editor palette.                                               */

@@ -339,7 +339,7 @@
               <i class="ph ph-magnifying-glass text-olive-600 text-sm leading-none shrink-0"></i>
               <input id="tasks-search-input" type="text"
                 class="flex-1 bg-transparent text-olive-200 text-xs placeholder-olive-600 outline-none"
-                placeholder="Filter tasks…"
+                placeholder="Filter… (@context, (priority))"
                 autocomplete="off" spellcheck="false" />
               <button id="tasks-search-clear" class="text-olive-600 hover:text-olive-400 leading-none" style="display:none" aria-label="Clear">
                 <i class="ph ph-x text-xs"></i>
@@ -354,9 +354,29 @@
           <div id="tag-view" class="flex-1 min-h-0 overflow-hidden" style="display:none"></div>
 
           <!-- Editor pane -->
-          <div id="editor-pane" class="flex-1 min-h-0 relative overflow-hidden">
-            <div id="doc-title" class="px-6 pt-5 pb-3 text-xl font-semibold text-olive-100 leading-tight select-text"></div>
-            <div id="editor" class="absolute inset-0"></div>
+          <div id="editor-pane" class="flex-1 min-h-0 flex flex-col overflow-hidden">
+            <!-- In-page search bar (shown when Edit → Find is active) -->
+            <div id="editor-search-bar" class="shrink-0 flex items-center gap-2 px-3 py-2 border-b border-olive-700 bg-olive-950" style="display:none">
+              <i class="ph ph-magnifying-glass text-olive-400 text-sm leading-none shrink-0"></i>
+              <input id="editor-search-input" type="text"
+                class="flex-1 bg-transparent text-olive-100 text-xs placeholder-olive-500 outline-none"
+                placeholder="Find in page…"
+                autocomplete="off" spellcheck="false" />
+              <span id="editor-search-count" class="text-xs text-olive-500 shrink-0 tabular-nums whitespace-nowrap select-none"></span>
+              <button id="editor-search-prev" class="w-5 h-5 flex items-center justify-center rounded text-olive-400 hover:text-olive-200 hover:bg-olive-700 transition-colors" title="Previous (Shift+Enter)">
+                <i class="ph ph-caret-up text-xs leading-none"></i>
+              </button>
+              <button id="editor-search-next" class="w-5 h-5 flex items-center justify-center rounded text-olive-400 hover:text-olive-200 hover:bg-olive-700 transition-colors" title="Next (Enter)">
+                <i class="ph ph-caret-down text-xs leading-none"></i>
+              </button>
+              <button id="editor-search-close" class="w-5 h-5 flex items-center justify-center rounded text-olive-600 hover:text-olive-400 hover:bg-olive-700 transition-colors" title="Close (Esc)">
+                <i class="ph ph-x text-xs leading-none"></i>
+              </button>
+            </div>
+            <!-- Editor fills remaining space; doc-title floats absolutely inside it -->
+            <div id="editor" class="flex-1 min-h-0 relative overflow-hidden">
+              <div id="doc-title" class="px-6 pt-5 pb-3 text-xl font-semibold text-olive-100 leading-tight select-text"></div>
+            </div>
           </div>
 
           <!-- Vertical resize handle (render mode only) -->

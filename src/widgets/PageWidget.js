@@ -37,15 +37,15 @@ export class PageWidget extends Widget {
   onMount() {
     this._body.innerHTML = `
       <div id="pw-header" class="relative shrink-0 border-b border-olive-700"
-           style="position:sticky; top:0; z-index:10; background:var(--color-olive-900)">
+           style="position:sticky; top:0; z-index:10; background:var(--color-olive-950)">
         <div class="flex items-center gap-2 px-3 py-2">
-          <i class="ph ph-magnifying-glass text-olive-600 text-sm leading-none shrink-0"></i>
+          <i class="ph ph-magnifying-glass text-olive-400 text-sm leading-none shrink-0"></i>
           <input id="pw-search" type="text"
-            class="flex-1 bg-transparent text-olive-200 text-xs placeholder-olive-600 outline-none"
+            class="flex-1 bg-transparent text-olive-100 text-xs placeholder-olive-500 outline-none"
             placeholder="Search pages or enter a date…"
             autocomplete="off" spellcheck="false"
           />
-          <button id="pw-clear" class="text-olive-600 hover:text-olive-400 leading-none"
+          <button id="pw-clear" class="text-olive-500 hover:text-olive-300 leading-none"
                   style="display:none" aria-label="Clear">
             <i class="ph ph-x text-xs"></i>
           </button>

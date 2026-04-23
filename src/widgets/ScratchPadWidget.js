@@ -14,7 +14,7 @@ import {
   bracketMatching,
 } from '@codemirror/language';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
-import { miTheme, miHighlightStyle, calcBlockPlugin, specialBlockEnterKey } from '../editor.js';
+import { miTheme, miHighlightStyle, calcBlockPlugin, calcCopyHandler, specialBlockEnterKey } from '../editor.js';
 
 export class ScratchPadWidget extends Widget {
   constructor() {
@@ -48,6 +48,7 @@ export class ScratchPadWidget extends Widget {
         EditorView.lineWrapping,
         keymap.of([...defaultKeymap, ...historyKeymap]),
         calcBlockPlugin,
+        calcCopyHandler,
         specialBlockEnterKey,
         miTheme,
         updateListener,

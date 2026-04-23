@@ -2,6 +2,8 @@ import {
   EditorState,
   Compartment,
   Prec,
+  StateEffect,
+  StateField,
 } from '@codemirror/state';
 import {
   EditorView,
@@ -837,6 +839,45 @@ class CalcResultWidget extends WidgetType {
   ignoreEvent() { return true; }
 }
 
+// When copying text that includes calc expression lines, append the result
+// to each line whose selection extends to the line end so the clipboard
+// contains e.g. "5 miles / 10 days  = 0.5 miles/day" rather than just the
+// expression.  Fires only when there is at least one calc result in scope.
+export const calcCopyHandler = EditorView.domEventHandlers({
+  copy(event, view) {
+    const { state } = view;
+    if (state.selection.ranges.every(r => r.empty)) return false;
+    const { results } = scanCalcBlocks(state.doc.toString());
+    if (!results.size) return false;
+
+    const doc   = state.doc;
+    const parts = [];
+    for (const range of state.selection.ranges) {
+      if (range.empty) continue;
+      const lineFrom = doc.lineAt(range.from).number;
+      const lineTo   = doc.lineAt(Math.min(range.to, doc.length)).number;
+      const lineTexts = [];
+      for (let ln = lineFrom; ln <= lineTo; ln++) {
+        const line  = doc.line(ln);
+        const slFrom = ln === lineFrom ? range.from : line.from;
+        const slTo   = ln === lineTo   ? range.to   : line.to;
+        let t = doc.sliceString(slFrom, slTo);
+        // Append result when the selection reaches the end of the line.
+        const res = results.get(ln);
+        if (res && !res.error && res.formatted && slTo >= line.to) {
+          t = t.trimEnd() + '  = ' + res.formatted;
+        }
+        lineTexts.push(t);
+      }
+      parts.push(lineTexts.join('\n'));
+    }
+    if (!parts.length) return false;
+    event.clipboardData.setData('text/plain', parts.join('\n'));
+    event.preventDefault();
+    return true;
+  },
+});
+
 const calcCommentMark = Decoration.mark({ class: 'cm-calc-comment' });
 
 export const calcBlockPlugin = ViewPlugin.fromClass(class {
@@ -1145,6 +1186,43 @@ export const specialBlockEnterKey = Prec.highest(keymap.of([
   },
 ]));
 
+// ── In-page search ─────────────────────────────────────────────────────────
+// State is pushed in from main.js via searchSetEffect; the plugin turns it
+// into Decoration.mark decorations for all matches (cm-search-match) and the
+// current focused match (cm-search-current).
+
+export const searchSetEffect = StateEffect.define();
+
+export const searchStateField = StateField.define({
+  create: () => ({ matches: [], currentIdx: -1 }),
+  update(val, tr) {
+    for (const e of tr.effects) if (e.is(searchSetEffect)) return e.value;
+    return val;
+  },
+});
+
+export const searchHighlightPlugin = ViewPlugin.fromClass(class {
+  constructor(view) { this.decorations = this._build(view); }
+  update(u) {
+    if (u.state.field(searchStateField) !== u.startState.field(searchStateField)
+        || u.viewportChanged) {
+      this.decorations = this._build(u.view);
+    }
+  }
+  _build(view) {
+    const { matches, currentIdx } = view.state.field(searchStateField);
+    if (!matches.length) return Decoration.none;
+    const deco = [];
+    for (let i = 0; i < matches.length; i++) {
+      const { from, to } = matches[i];
+      deco.push(Decoration.mark({
+        class: i === currentIdx ? 'cm-search-current' : 'cm-search-match',
+      }).range(from, to));
+    }
+    return Decoration.set(deco, true);
+  }
+}, { decorations: v => v.decorations });
+
 // ── Editor factory ─────────────────────────────────────────────────────────
 
 export function createEditor({ parent, onDocChange, onCursorChange, onPageClick, onCmdClick }) {
@@ -1245,7 +1323,10 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
       annotationPlugin,
       taskAtPlugin,
       taskCheckboxPlugin,
+      searchStateField,
+      searchHighlightPlugin,
       calcBlockPlugin,
+      calcCopyHandler,
       specialBlockEnterKey,
       EditorView.lineWrapping,
       surroundHandler,

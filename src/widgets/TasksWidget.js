@@ -2,6 +2,7 @@ import { Widget } from './Widget.js';
 import { invoke } from '../tauri.js';
 import { isDeferred, isOverdue, isDueToday, computeEffectivePriority, todayIso } from '../dateUtils.js';
 import { priorityPillHTML } from '../ui.js';
+import { parseTaskQuery, applyTaskFilter } from '../taskFilter.js';
 
 let _deferFutureTasks = false;
 export function setDeferFutureTasks(val) { _deferFutureTasks = val; }
@@ -54,7 +55,7 @@ export class TasksWidget extends Widget {
         <i class="ph ph-magnifying-glass text-olive-600 text-xs leading-none shrink-0"></i>
         <input type="text"
           class="flex-1 bg-transparent text-olive-200 text-xs placeholder-olive-600 outline-none min-w-0"
-          placeholder="Filter… (@context)"
+          placeholder="Filter… (@context, (priority))"
           autocomplete="off" spellcheck="false" />
         <button class="tw-clear text-olive-600 hover:text-olive-400 leading-none" style="display:none"
                 aria-label="Clear">
@@ -200,27 +201,8 @@ export class TasksWidget extends Widget {
   }
 
   _filterTasks(tasks) {
-    const q = this._query.trim().toLowerCase();
-    if (!q) return tasks;
-
-    const contexts = [];
-    const terms    = [];
-    for (const token of q.split(/\s+/)) {
-      if (!token) continue;
-      if (token.startsWith('@')) { const c = token.slice(1); if (c) contexts.push(c); }
-      else terms.push(token);
-    }
-
-    return tasks.filter(t => {
-      const text = t.text.toLowerCase();
-      for (const ctx of contexts) {
-        if (!new RegExp(`@${ctx}[a-zA-Z0-9_-]*`).test(text)) return false;
-      }
-      for (const term of terms) {
-        if (!text.includes(term)) return false;
-      }
-      return true;
-    });
+    if (!this._query.trim()) return tasks;
+    return applyTaskFilter(tasks, parseTaskQuery(this._query));
   }
 
   // ── Rendering ──────────────────────────────────────────────────────────────

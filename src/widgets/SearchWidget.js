@@ -95,13 +95,13 @@ export class SearchWidget extends Widget {
     this._body.classList.remove('overflow-y-auto');
 
     this._body.innerHTML = `
-      <div class="flex items-center gap-2 px-3 py-2 border-b border-olive-700 shrink-0 bg-olive-900">
-        <i class="ph ph-magnifying-glass text-olive-600 text-sm leading-none shrink-0"></i>
+      <div class="flex items-center gap-2 px-3 py-2 border-b border-olive-700 shrink-0 bg-olive-950">
+        <i class="ph ph-magnifying-glass text-olive-400 text-sm leading-none shrink-0"></i>
         <input type="text"
-          class="flex-1 bg-transparent text-olive-200 text-xs placeholder-olive-600 outline-none"
+          class="flex-1 bg-transparent text-olive-100 text-xs placeholder-olive-500 outline-none"
           placeholder="Full-text search…"
           autocomplete="off" spellcheck="false" />
-        <button class="text-olive-600 hover:text-olive-400 leading-none" style="display:none"
+        <button class="text-olive-500 hover:text-olive-300 leading-none" style="display:none"
                 aria-label="Clear">
           <i class="ph ph-x text-xs"></i>
         </button>

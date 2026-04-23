@@ -16,8 +16,9 @@ import { AnnotationsWidget }   from './widgets/AnnotationsWidget.js';
 import { CounterWidget }     from './widgets/CounterWidget.js';
 import { OutlineWidget }     from './widgets/OutlineWidget.js';
 import { SearchWidget }      from './widgets/SearchWidget.js';
-import { createEditor, createReadOnlyEditor, setEditorPages, setEditorJournalDates, placeholderCompartment, doneStamp } from './editor.js';
+import { createEditor, createReadOnlyEditor, setEditorPages, setEditorJournalDates, placeholderCompartment, doneStamp, searchSetEffect } from './editor.js';
 import { priorityPillHTML } from './ui.js';
+import { parseTaskQuery, applyTaskFilter } from './taskFilter.js';
 import { initWidgetDrag } from './widgetDrag.js';
 import { placeholder } from '@codemirror/view';
 import { formatJournalDate, isDeferred, isDueToday, isOverdue, todayIso, computeEffectivePriority } from './dateUtils.js';
@@ -77,6 +78,12 @@ let tagQuery      = null;           // tag string currently displayed
 // ── DOM refs ──────────────────────────────────────
 
 const editorDiv           = document.getElementById('editor');
+const editorSearchBar     = document.getElementById('editor-search-bar');
+const editorSearchInput   = document.getElementById('editor-search-input');
+const editorSearchCount   = document.getElementById('editor-search-count');
+const editorSearchPrev    = document.getElementById('editor-search-prev');
+const editorSearchNext    = document.getElementById('editor-search-next');
+const editorSearchClose   = document.getElementById('editor-search-close');
 const editorArea          = document.getElementById('editor-area');
 const editorPane          = document.getElementById('editor-pane');
 const tasksView           = document.getElementById('tasks-view');
@@ -965,6 +972,7 @@ async function loadFile(path, content) {
 
 // Push current page onto history, then load `path`.
 async function navigateTo(path, content) {
+  closeSearchIfOpen();
   if (currentFile) {
     navHistory.push({
       path:  currentFile,
@@ -1227,14 +1235,9 @@ async function refreshTasksView() {
       });
     }
 
-    // Apply text search filter.
-    const sq = tasksSearchQuery.trim().toLowerCase();
-    if (sq) {
-      const terms = sq.split(/\s+/).filter(Boolean);
-      tasks = tasks.filter(t => {
-        const text = t.text.toLowerCase();
-        return terms.every(term => text.includes(term));
-      });
+    // Apply typed query filter (@context, (priority), plain text).
+    if (tasksSearchQuery.trim()) {
+      tasks = applyTaskFilter(tasks, parseTaskQuery(tasksSearchQuery));
     }
 
     tasksEditorContainer.innerHTML = buildTasksHTML(tasks);
@@ -1246,6 +1249,109 @@ async function refreshTasksView() {
 
 
 document.getElementById('btn-tasks').addEventListener('click', () => loadTasksView());
+
+// ── In-page search ────────────────────────────────────────────────────────
+
+let _searchMatches  = [];
+let _searchIdx      = -1;
+
+function _searchScan(query) {
+  _searchMatches = [];
+  if (!query || !cmView) return;
+  const text = cmView.state.doc.toString();
+  const lq   = query.toLowerCase();
+  let i = 0;
+  while (i < text.length) {
+    const pos = text.toLowerCase().indexOf(lq, i);
+    if (pos === -1) break;
+    _searchMatches.push({ from: pos, to: pos + lq.length });
+    i = pos + 1;
+  }
+}
+
+function _searchApply() {
+  if (!cmView) return;
+  cmView.dispatch({ effects: searchSetEffect.of({ matches: _searchMatches, currentIdx: _searchIdx }) });
+
+  // Only dim when the query is non-empty.
+  if (editorSearchInput.value.trim()) {
+    editorDiv.dataset.searchActive = '';
+  } else {
+    delete editorDiv.dataset.searchActive;
+  }
+
+  const count = _searchMatches.length;
+  if (!editorSearchInput.value.trim()) {
+    editorSearchCount.textContent = '';
+  } else if (count === 0) {
+    editorSearchCount.textContent = 'No results';
+  } else {
+    editorSearchCount.textContent = `${_searchIdx + 1} of ${count}`;
+  }
+  editorSearchPrev.disabled = count === 0;
+  editorSearchNext.disabled = count === 0;
+
+  // Scroll current match into view.
+  if (_searchIdx >= 0 && _searchMatches[_searchIdx]) {
+    const { from } = _searchMatches[_searchIdx];
+    cmView.dispatch({ selection: { anchor: from }, scrollIntoView: true });
+  }
+}
+
+function openSearch() {
+  if (currentFile === TASKS_PSEUDO_PAGE) return; // search bar is for the text editor only
+  editorSearchBar.style.display = '';
+  // data-search-active is set by _searchApply() only when query is non-empty.
+  editorSearchInput.focus();
+  editorSearchInput.select();
+  // Re-run search with whatever is already in the input.
+  const q = editorSearchInput.value.trim();
+  _searchScan(q);
+  _searchIdx = _searchMatches.length ? 0 : -1;
+  _searchApply();
+}
+
+function closeSearch() {
+  editorSearchBar.style.display = 'none';
+  delete editorDiv.dataset.searchActive;
+  _searchMatches = [];
+  _searchIdx = -1;
+  if (cmView) cmView.dispatch({ effects: searchSetEffect.of({ matches: [], currentIdx: -1 }) });
+  editorSearchCount.textContent = '';
+  cmView?.focus();
+}
+
+function searchStep(delta) {
+  if (!_searchMatches.length) return;
+  _searchIdx = ((_searchIdx + delta) % _searchMatches.length + _searchMatches.length) % _searchMatches.length;
+  _searchApply();
+}
+
+editorSearchInput.addEventListener('input', () => {
+  const q = editorSearchInput.value.trim();
+  _searchScan(q);
+  _searchIdx = _searchMatches.length ? 0 : -1;
+  _searchApply();
+});
+
+editorSearchInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') {
+    e.preventDefault();
+    searchStep(e.shiftKey ? -1 : 1);
+  } else if (e.key === 'Escape') {
+    e.preventDefault();
+    closeSearch();
+  }
+});
+
+editorSearchPrev.addEventListener('click', () => searchStep(-1));
+editorSearchNext.addEventListener('click', () => searchStep(1));
+editorSearchClose.addEventListener('click', closeSearch);
+
+// Close search when navigating away from the editor.
+function closeSearchIfOpen() {
+  if (editorSearchBar.style.display !== 'none') closeSearch();
+}
 
 // Double-clicking a @context tag in the main editor opens the Tasks view filtered to that context.
 editorDiv.addEventListener('dblclick', e => {
@@ -1940,6 +2046,11 @@ window.__TAURI__.event.listen('menu', async e => {
     case 'toggle-right':  togglePin('right');  break;
     case 'toggle-top':    togglePin('top');    break;
     case 'toggle-bottom': togglePin('bottom'); break;
+
+    case 'edit-find':
+      if (editorSearchBar.style.display === 'none') openSearch();
+      else searchStep(1);
+      break;
 
     case 'view-today': {
       const d = new Date();

@@ -284,7 +284,9 @@ export function scanCalcBlocks(text) {
   const docLines     = text.split('\n');
 
   let inBlock = false;
-  let scope   = null;
+  // Page-wide scope: named variables persist across blocks; only the implicit
+  // carry-forward fields reset at each new @calc header.
+  const scope = { _last: 0, _lastDate: null, _lastCurrency: null, _lastDuration: null };
 
   for (let i = 0; i < docLines.length; i++) {
     const lineNo  = i + 1;
@@ -293,13 +295,15 @@ export function scanCalcBlocks(text) {
     if (!inBlock) {
       if (trimmed === '@calc') {
         inBlock = true;
-        scope   = { _last: 0, _lastDate: null, _lastCurrency: null, _lastDuration: null };
+        // Reset carry-forward state for this block; named variables survive.
+        scope._last = 0; scope._lastDate = null;
+        scope._lastCurrency = null; scope._lastDuration = null;
         headerLines.add(lineNo);
       }
     } else {
       if (trimmed === '') {
         inBlock = false;
-        scope   = null;
+        // Named variables remain in scope for subsequent blocks.
       } else {
         const res = evalCalcExpr(trimmed, scope);
         if (res.value === null && !res.formatted && !res.error) {
@@ -330,7 +334,8 @@ export function preprocessCalcBlocks(markdown) {
   const lines = markdown.split('\n');
   const out   = [];
   let block   = null;
-  let scope   = null;
+  // Page-wide scope: named variables persist across blocks.
+  const scope = { _last: 0, _lastDate: null, _lastCurrency: null, _lastDuration: null };
 
   const flushBlock = () => {
     if (!block || block.length === 0) { block = null; return; }
@@ -354,7 +359,9 @@ export function preprocessCalcBlocks(markdown) {
     if (!block) {
       if (trimmed === '@calc') {
         block = [];
-        scope = { _last: 0, _lastDate: null, _lastCurrency: null, _lastDuration: null };
+        // Reset carry-forward state for this block; named variables survive.
+        scope._last = 0; scope._lastDate = null;
+        scope._lastCurrency = null; scope._lastDuration = null;
       } else {
         out.push(raw);
       }

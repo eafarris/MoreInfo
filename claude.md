@@ -205,7 +205,7 @@ Favorites
 - [x] Page References widget
 - [x] Page templates
 - [x] Basic tasks (clickable checkboxes, `@done` auto-stamp)
-- [ ] Task `@context` tags (GTD-style bare `@word`, highlighted + indexed)
+- [X] Task `@context` tags (GTD-style bare `@word`, highlighted + indexed)
 - [ ] Reserved context tag — @waiting (blocked on someone or something else)
 - [x] Task implicit heading context (nearest ATX heading; resets at thematic breaks)
 - [x] Annotations: TODO, NOTE, IDEA, and FIXME (highlighted, indexed; not tasks)

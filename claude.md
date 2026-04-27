@@ -213,14 +213,13 @@ Favorites
 - [x] Expanded task params: `@due`, `@priority`, `@defer`
 - [x] CamelCase wiki links (existing pages only, never creates)
 - [x] @calc named variables (assign with `name = expr`, reference by name in subsequent lines)
-- [ ] Task nesting / subtask hierarchies (indented child tasks; parent shows progress indicator, e.g. "2/5")
 - [x] Tasks pseudo-page (toolbar button opens a full-page aggregated task view, not a sidebar widget)
 - [ ] Tasks widget: filter by note/folder, sort by priority/due date
 - [X] Tags widget (all tags across datastore; click to filter; tag cloud or list)
 - [x] Metadata widget: display key/value pairs for active document
 - [x] Metadata widget: editing interactions (click to edit value inline; double-click to find all pages with matching key/value)
-- [ ] Find in note (`⌘G` — highlight and jump between in-document matches)
-- [ ] Navigation shortcuts (`⌘[` / `⌘]` or `⌘⌥←` / `⌘⌥→` — back/forward through visited pages)
+- [X] Find in note (`⌘G` — highlight and jump between in-document matches)
+- [x] Navigation shortcuts (`⌘[` / `⌘]` — back/forward through visited pages)
 
 ---
 
@@ -230,3 +229,4 @@ Features planned for future versions but not targeted for v1.0.
 
 - Focus mode (`⌘⇧F` — single document, no sidebars, minimal chrome)
 - Static Site Generator (SSG) — export some or all notes and journals as a complete web site; see SSG.md
+- Task nesting / subtask hierarchies (indented child tasks; parent shows progress indicator, e.g. "2/5"

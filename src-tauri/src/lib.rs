@@ -2493,8 +2493,8 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle();
 
-            let toggle_left   = MenuItem::with_id(handle, "toggle-left",   "Toggle Left Sidebar",   true, Some("CmdOrCtrl+["))?;
-            let toggle_right  = MenuItem::with_id(handle, "toggle-right",  "Toggle Right Sidebar",  true, Some("CmdOrCtrl+]"))?;
+            let toggle_left   = MenuItem::with_id(handle, "toggle-left",   "Toggle Left Sidebar",   true, None::<&str>)?;
+            let toggle_right  = MenuItem::with_id(handle, "toggle-right",  "Toggle Right Sidebar",  true, None::<&str>)?;
             let toggle_top    = MenuItem::with_id(handle, "toggle-top",    "Toggle Top Panel",      true, None::<&str>)?;
             let toggle_bottom = MenuItem::with_id(handle, "toggle-bottom", "Toggle Bottom Panel",   true, None::<&str>)?;
 
@@ -2503,6 +2503,9 @@ pub fn run() {
             let view_render   = MenuItem::with_id(handle, "view-render",   "Render Markdown",       true, Some("CmdOrCtrl+Shift+R"))?;
 
             let edit_find             = MenuItem::with_id(handle, "edit-find",             "Find\u{2026}",                true, Some("CmdOrCtrl+G"))?;
+
+            let nav_back              = MenuItem::with_id(handle, "nav-back",              "Back",                        true, None::<&str>)?;
+            let nav_forward           = MenuItem::with_id(handle, "nav-forward",           "Forward",                     true, None::<&str>)?;
 
             let file_new              = MenuItem::with_id(handle, "file-new",              "New Page\u{2026}",          true, Some("CmdOrCtrl+N"))?;
             let file_new_template     = MenuItem::with_id(handle, "file-new-template",     "New Template\u{2026}",      true, None::<&str>)?;
@@ -2561,6 +2564,9 @@ pub fn run() {
                         .build()?,
                     // ── View ────────────────────────────────────────
                     &SubmenuBuilder::new(handle, "View")
+                        .item(&nav_back)
+                        .item(&nav_forward)
+                        .separator()
                         .item(&view_today)
                         .item(&view_tasks)
                         .item(&view_render)

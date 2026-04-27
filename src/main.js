@@ -893,7 +893,51 @@ let _widgetDrag = null;
 
 // ── Navigation history (breadcrumbs) ─────────────
 
-const navHistory = [];  // [ { path, title }, … ]
+const navHistory = [];  // back stack  [ { path, title }, … ]
+const navFuture  = [];  // forward stack — cleared on any new user navigation
+
+// Load a history entry without touching either stack.
+async function _loadHistoryEntry(entry) {
+  try {
+    if (entry.path === TASKS_PSEUDO_PAGE) {
+      await loadTasksView(false);
+    } else if (entry.path === METADATA_PSEUDO_PAGE && metadataQuery) {
+      await loadMetadataView(metadataQuery.key, metadataQuery.value, false);
+    } else if (entry.path === TAG_PSEUDO_PAGE && tagQuery) {
+      await loadTagView(tagQuery, false);
+    } else {
+      const content = await invoke('read_file', { path: entry.path });
+      await loadFile(entry.path, content);
+    }
+  } catch(err) {
+    console.error('history navigation failed:', err);
+  }
+}
+
+async function navigateBack() {
+  if (!navHistory.length) return;
+  navFuture.push({ path: currentFile, title: currentTitle });
+  await _loadHistoryEntry(navHistory.pop());
+  renderBreadcrumbs();
+}
+
+async function navigateForward() {
+  if (!navFuture.length) return;
+  navHistory.push({ path: currentFile, title: currentTitle });
+  await _loadHistoryEntry(navFuture.pop());
+  renderBreadcrumbs();
+}
+
+// Cmd+[ / Cmd+] — navigate back/forward through the breadcrumb history.
+// Runs at capture phase so it fires before CM6 can handle Mod-] (indentMore).
+// Skips plain <input> and <textarea> elements so typing is unaffected.
+window.addEventListener('keydown', e => {
+  if (!e.metaKey && !e.ctrlKey) return;
+  const tag = document.activeElement?.tagName;
+  if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+  if (e.code === 'BracketLeft')  { e.preventDefault(); navigateBack();    }
+  if (e.code === 'BracketRight') { e.preventDefault(); navigateForward(); }
+}, { capture: true });
 
 function renderBreadcrumbs() {
   const trail = navHistory.map((entry, i) => {
@@ -911,21 +955,9 @@ breadcrumbsEl.addEventListener('click', async e => {
   const idx   = parseInt(item.dataset.index, 10);
   const entry = navHistory[idx];
   if (!entry) return;
-  navHistory.splice(idx);          // truncate — this entry becomes current
-  try {
-    if (entry.path === TASKS_PSEUDO_PAGE) {
-      await loadTasksView(/* pushHistory= */ false);
-    } else if (entry.path === METADATA_PSEUDO_PAGE && metadataQuery) {
-      await loadMetadataView(metadataQuery.key, metadataQuery.value, false);
-    } else if (entry.path === TAG_PSEUDO_PAGE && tagQuery) {
-      await loadTagView(tagQuery, false);
-    } else {
-      const content = await invoke('read_file', { path: entry.path });
-      await loadFile(entry.path, content);
-    }
-  } catch (err) {
-    console.error('breadcrumb nav failed:', err);
-  }
+  navHistory.splice(idx);   // truncate — this entry becomes current
+  navFuture.length = 0;     // breadcrumb jump clears forward history
+  await _loadHistoryEntry(entry);
 });
 
 // ── Core file loader (does NOT touch navHistory) ──
@@ -978,6 +1010,7 @@ async function navigateTo(path, content) {
       path:  currentFile,
       title: currentTitle || (currentFile === TASKS_PSEUDO_PAGE ? 'Tasks' : currentFile === METADATA_PSEUDO_PAGE ? (metadataQuery ? `${metadataQuery.key}` : 'Metadata') : currentFile === TAG_PSEUDO_PAGE ? (tagQuery ? `#${tagQuery}` : 'Tags') : basename(currentFile).replace(/\.[^.]+$/, '')),
     });
+    navFuture.length = 0;
   }
   await loadFile(path, content);
 }
@@ -1047,6 +1080,7 @@ async function openFilePath(path) {
 async function openJournalDate(dateStr) {
   try {
     navHistory.length = 0;        // journal opens reset the trail
+    navFuture.length  = 0;
     const { path, content } = await invoke('open_journal', { date: dateStr });
     await loadFile(path, content);
   } catch (e) {
@@ -1066,6 +1100,7 @@ async function loadTasksView(pushHistory = true, contextFilter = null) {
       path:  currentFile,
       title: currentTitle || basename(currentFile).replace(/\.[^.]+$/, ''),
     });
+    navFuture.length = 0;
   }
 
   // Seed the filter: replace current selection with the provided context, or clear.
@@ -1453,6 +1488,7 @@ async function loadMetadataView(key, value, pushHistory = true) {
       path:  currentFile,
       title: currentTitle || basename(currentFile).replace(/\.[^.]+$/, ''),
     });
+    navFuture.length = 0;
   }
 
   // Hide normal editor, show metadata view.
@@ -1568,6 +1604,7 @@ async function loadTagView(tag, pushHistory = true) {
       path:  currentFile,
       title: currentTitle || basename(currentFile).replace(/\.[^.]+$/, ''),
     });
+    navFuture.length = 0;
   }
 
   editorPane.style.display   = 'none';
@@ -2046,6 +2083,9 @@ window.__TAURI__.event.listen('menu', async e => {
     case 'toggle-right':  togglePin('right');  break;
     case 'toggle-top':    togglePin('top');    break;
     case 'toggle-bottom': togglePin('bottom'); break;
+
+    case 'nav-back':    navigateBack();    break;
+    case 'nav-forward': navigateForward(); break;
 
     case 'edit-find':
       if (editorSearchBar.style.display === 'none') openSearch();

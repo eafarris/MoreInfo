@@ -78,6 +78,7 @@ let tagQuery      = null;           // tag string currently displayed
 // ── DOM refs ──────────────────────────────────────
 
 const editorDiv           = document.getElementById('editor');
+const wikilinkPreview     = document.getElementById('wikilink-preview');
 const editorSearchBar     = document.getElementById('editor-search-bar');
 const editorSearchInput   = document.getElementById('editor-search-input');
 const editorSearchCount   = document.getElementById('editor-search-count');
@@ -1004,6 +1005,7 @@ async function loadFile(path, content) {
 
 // Push current page onto history, then load `path`.
 async function navigateTo(path, content) {
+  _wlHide();
   closeSearchIfOpen();
   if (currentFile) {
     navHistory.push({
@@ -1387,6 +1389,126 @@ editorSearchClose.addEventListener('click', closeSearch);
 function closeSearchIfOpen() {
   if (editorSearchBar.style.display !== 'none') closeSearch();
 }
+
+// ── Wikilink hover preview ─────────────────────────────────────────────────
+
+let _wlTimer = null;
+
+function _wlHide() {
+  clearTimeout(_wlTimer);
+  _wlTimer = null;
+  wikilinkPreview.style.display = 'none';
+}
+
+function _wlPosition(anchorEl) {
+  const rect = anchorEl.getBoundingClientRect();
+  const W = 352; // matches CSS width (22rem ≈ 352px)
+  const H = 288; // approx max height
+  const vw = window.innerWidth, vh = window.innerHeight;
+  let left = rect.left;
+  let top  = rect.bottom + 6;
+  if (left + W > vw - 8) left = vw - W - 8;
+  if (left < 8) left = 8;
+  if (top + H > vh - 8) top = rect.top - H - 6;
+  wikilinkPreview.style.left = left + 'px';
+  wikilinkPreview.style.top  = top  + 'px';
+}
+
+const SKIP_META_KEYS = new Set(['title', 'created-date', 'publish-date', 'unpublish-date']);
+
+// Convert CamelCase to spaced title — mirrors camelToTitle() in editor.js.
+function _camelToTitle(s) { return s.replace(/([A-Z])/g, ' $1').trim(); }
+const CAMEL_RE = /^[A-Z][a-z]+(?:[A-Z][a-z]+)+$/;
+
+async function _wlShow(rawTitle, anchorEl) {
+  // CamelCase spans carry the raw CamelCase word; convert it to the page title.
+  const lookupTitle = CAMEL_RE.test(rawTitle) ? _camelToTitle(rawTitle) : rawTitle;
+  const lc   = lookupTitle.toLowerCase();
+  const page = allPages.find(p => p.title?.toLowerCase() === lc
+                                || (p.aliases || []).some(a => a.toLowerCase() === lc));
+
+  if (!page) {
+    wikilinkPreview.innerHTML =
+      `<div class="wp-title wp-missing">${escapeHtml(lookupTitle)}</div>
+       <div class="wp-missing-msg">This page doesn't exist yet.</div>
+       <span class="wp-new-btn" data-title="${escapeHtml(lookupTitle)}">New…</span>`;
+    _wlPosition(anchorEl);
+    wikilinkPreview.style.display = 'block';
+    return;
+  }
+
+  // Show skeleton while loading.
+  wikilinkPreview.innerHTML =
+    `<div class="wp-title">${escapeHtml(page.title || lookupTitle)}</div>
+     <div class="wp-missing-msg">Loading…</div>`;
+  _wlPosition(anchorEl);
+  wikilinkPreview.style.display = 'block';
+
+  try {
+    const content = await invoke('read_file', { path: page.path });
+    const [meta, html] = await Promise.all([
+      invoke('get_metadata', { content }),
+      invoke('parse_markdown', { markdown: _wlTruncate(content) }),  // param is 'markdown', not 'content'
+    ]);
+
+    // Build metadata rows, skipping built-ins and empty values.
+    const metaRows = Object.entries(meta)
+      .filter(([k, v]) => !SKIP_META_KEYS.has(k) && v?.value != null && v.value !== '')
+      .slice(0, 8)
+      .map(([k, v]) => {
+        const display = Array.isArray(v.value) ? v.value.join(', ') : String(v.value);
+        return `<div><span class="wp-meta-key">${escapeHtml(k)}:</span> `
+             + `<span class="wp-meta-val">${escapeHtml(display)}</span></div>`;
+      }).join('');
+
+    wikilinkPreview.innerHTML =
+      `<div class="wp-title">${escapeHtml(page.title || rawTitle)}</div>`
+      + (metaRows ? `<div class="wp-meta">${metaRows}</div>` : '')
+      + `<div class="wp-content">${html}</div>`;
+    _wlPosition(anchorEl); // re-position now that content is known
+  } catch {
+    wikilinkPreview.innerHTML =
+      `<div class="wp-title">${escapeHtml(page.title || lookupTitle)}</div>
+       <div class="wp-missing-msg">Could not load preview.</div>`;
+  }
+}
+
+// Strip front/sig block and limit to ~500 chars of prose for the preview.
+function _wlTruncate(content) {
+  let s = content
+    .replace(/^---[\s\S]*?---\n?/, '')   // front block
+    .replace(/\n-- \n[\s\S]*$/, '')       // sig block
+    .trim();
+  return s.length > 500 ? s.slice(0, 500) + '…' : s;
+}
+
+// Delegation: mouseover starts the 500 ms timer; mouseout cancels it (unless
+// the pointer moves into the popover itself).
+editorDiv.addEventListener('mouseover', e => {
+  const span = e.target.closest('.cm-wikilink-title');
+  if (!span) return;
+  clearTimeout(_wlTimer);
+  const title = span.textContent.trim();
+  if (!title) return;
+  _wlTimer = setTimeout(() => _wlShow(title, span), 500);
+});
+
+editorDiv.addEventListener('mouseout', e => {
+  if (!e.target.closest('.cm-wikilink-title')) return;
+  clearTimeout(_wlTimer);
+  _wlTimer = null;
+  // Keep popover open if the mouse is moving into it.
+  if (!wikilinkPreview.contains(e.relatedTarget)) wikilinkPreview.style.display = 'none';
+});
+
+wikilinkPreview.addEventListener('mouseleave', _wlHide);
+
+wikilinkPreview.addEventListener('click', e => {
+  const btn = e.target.closest('.wp-new-btn');
+  if (!btn) return;
+  _wlHide();
+  openWikiPage(btn.dataset.title);
+});
 
 // Double-clicking a @context tag in the main editor opens the Tasks view filtered to that context.
 editorDiv.addEventListener('dblclick', e => {

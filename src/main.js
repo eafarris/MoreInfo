@@ -1392,12 +1392,27 @@ function closeSearchIfOpen() {
 
 // ── Wikilink hover preview ─────────────────────────────────────────────────
 
-let _wlTimer = null;
+let _wlTimer     = null;  // show delay
+let _wlHideTimer = null;  // hide delay
 
 function _wlHide() {
   clearTimeout(_wlTimer);
-  _wlTimer = null;
+  clearTimeout(_wlHideTimer);
+  _wlTimer = _wlHideTimer = null;
   wikilinkPreview.style.display = 'none';
+}
+
+function _wlScheduleHide() {
+  clearTimeout(_wlHideTimer);
+  _wlHideTimer = setTimeout(() => {
+    wikilinkPreview.style.display = 'none';
+    _wlHideTimer = null;
+  }, 120);
+}
+
+function _wlCancelHide() {
+  clearTimeout(_wlHideTimer);
+  _wlHideTimer = null;
 }
 
 function _wlPosition(anchorEl) {
@@ -1497,11 +1512,11 @@ editorDiv.addEventListener('mouseout', e => {
   if (!e.target.closest('.cm-wikilink-title')) return;
   clearTimeout(_wlTimer);
   _wlTimer = null;
-  // Keep popover open if the mouse is moving into it.
-  if (!wikilinkPreview.contains(e.relatedTarget)) wikilinkPreview.style.display = 'none';
+  _wlScheduleHide();  // short delay so mouse can cross the gap into the popover
 });
 
-wikilinkPreview.addEventListener('mouseleave', _wlHide);
+wikilinkPreview.addEventListener('mouseenter', _wlCancelHide);
+wikilinkPreview.addEventListener('mouseleave', _wlScheduleHide);
 
 wikilinkPreview.addEventListener('click', e => {
   const btn = e.target.closest('.wp-new-btn');

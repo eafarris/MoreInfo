@@ -1533,6 +1533,38 @@ editorDiv.addEventListener('dblclick', e => {
   if (context) loadTasksView(true, context);
 });
 
+// ── Smart URL paste ────────────────────────────────────────────────────────
+// When the clipboard contains a bare URL, intercept the paste, fetch the
+// page title, and insert [Page Title](url) instead of the raw URL.
+// { capture: true } fires this before CM6's bubble-phase paste handler so
+// preventDefault() stops CM6 from inserting the raw URL first.
+const URL_RE = /^https?:\/\/[^\s]+$/i;
+
+editorDiv.addEventListener('paste', async e => {
+  if (!cmView) return;
+  const text = (e.clipboardData?.getData('text/plain') ?? '').trim();
+  if (!URL_RE.test(text)) return;         // not a bare URL — normal paste
+  e.preventDefault();
+
+  // Snapshot the selection before going async.
+  const { from, to } = cmView.state.selection.main;
+
+  let md;
+  try {
+    const title = await invoke('fetch_url_title', { url: text });
+    md = `[${title}](${text})`;
+  } catch {
+    // Unreachable, timed out, or no title — fall back to [url](url).
+    md = `[${text}](${text})`;
+  }
+
+  cmView.dispatch({
+    changes:   { from, to, insert: md },
+    selection: { anchor: from + md.length },
+  });
+  cmView.focus();
+}, { capture: true });
+
 function scrollToHeading(heading) {
   const doc = cmView.state.doc;
   const target = heading.toLowerCase();

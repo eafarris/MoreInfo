@@ -2461,8 +2461,59 @@ fn write_scratchpad(content: String) -> Result<(), String> {
     std::fs::write(&path, content).map_err(|e| e.to_string())
 }
 
-/// Fetch raw HTML from a URL, server-side (bypasses CORS / X-Frame-Options).
-/// Sends a Safari-like User-Agent and requests dark-mode via the Sec-CH-Prefers-Color-Scheme hint.
+/// Fetch a URL and extract its HTML `<title>` for use as Markdown link text.
+/// Returns the decoded, whitespace-collapsed title, or an error if
+/// unreachable or the page has no title element.
+#[tauri::command]
+async fn fetch_url_title(url: String) -> Result<String, String> {
+    let client = reqwest::Client::builder()
+        .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15")
+        .gzip(true)
+        .timeout(std::time::Duration::from_secs(6))
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let html = client
+        .get(&url)
+        .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
+        .header("Accept-Language", "en-US,en;q=0.9")
+        .send()
+        .await
+        .map_err(|e| e.to_string())?
+        .text()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    // Locate <title>…</title> without pulling in an HTML parser.
+    let lower = html.to_ascii_lowercase();
+    let tag_start = lower.find("<title").ok_or("no title element")?;
+    let content_start = lower[tag_start..].find('>').ok_or("malformed title tag")? + tag_start + 1;
+    let content_end   = lower[content_start..].find("</title>").ok_or("unclosed title")? + content_start;
+
+    let raw = html[content_start..content_end].trim();
+
+    // Decode the handful of HTML entities that commonly appear in titles.
+    let decoded = raw
+        .replace("&amp;",  "&")
+        .replace("&lt;",   "<")
+        .replace("&gt;",   ">")
+        .replace("&quot;", "\"")
+        .replace("&#39;",  "'")
+        .replace("&apos;", "'")
+        .replace("&nbsp;", " ")
+        .replace("&#x27;", "'")
+        .replace("&#x2F;", "/");
+
+    // Collapse whitespace (titles sometimes contain newlines or runs of spaces).
+    let title: String = decoded.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    if title.is_empty() {
+        Err("empty title".to_string())
+    } else {
+        Ok(title)
+    }
+}
+
 #[tauri::command]
 async fn fetch_page(url: String) -> Result<String, String> {
     let client = reqwest::Client::builder()
@@ -2632,6 +2683,7 @@ pub fn run() {
             write_scratchpad,
             search_pages,
             fetch_page,
+            fetch_url_title,
             list_favorites,
             list_annotations,
             list_tasks,

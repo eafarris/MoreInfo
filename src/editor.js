@@ -46,7 +46,7 @@ export const miTheme = EditorView.theme({
     fontSize: 'var(--editor-font-size, 0.875rem)',
   },
   '.cm-scroller': {
-    fontFamily: 'var(--font-family-mono)',
+    fontFamily: 'var(--font-editor)',
     lineHeight: '1.625',
     overflow: 'auto',
   },
@@ -102,7 +102,7 @@ export const miTheme = EditorView.theme({
     top:           '0',
     color:         'oklch(79.5% 0.184 86.5)',  // amber-400
     fontSize:      '0.85em',
-    fontFamily:    'var(--font-family-mono)',
+    fontFamily:    'var(--font-mono)',
     cursor:        'text',
   },
   '.cm-calc-result.cm-calc-result-error': {
@@ -184,7 +184,7 @@ export const miTheme = EditorView.theme({
     overflow: 'hidden',
   },
   '.cm-tooltip-autocomplete > ul': {
-    fontFamily: 'var(--font-family-mono)',
+    fontFamily: 'var(--font-editor)',
     fontSize: '0.75rem',
     maxHeight: '13rem',
   },

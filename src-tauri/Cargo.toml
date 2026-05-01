@@ -27,3 +27,4 @@ front-matter      = { path = "../crates/front-matter" }
 rusqlite          = { version = "0.32", features = ["bundled"] }
 reqwest           = { version = "0.12", default-features = false, features = ["default-tls", "gzip"] }
 chrono            = { version = "0.4", default-features = false, features = ["clock"] }
+font-kit          = { version = "0.13", default-features = false, features = ["source"] }

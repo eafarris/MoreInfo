@@ -36,21 +36,43 @@ let searchOpenIn     = getPref('searchOpenIn',     'page');
 // When true, tasks on future-dated journal pages are hidden from task lists.
 let deferFutureTasks = getPref('deferFutureTasks', false);
 
-// ── Editor mono font ──────────────────────────────────────────────────────────
-const MONO_FONTS = [
-  { name: 'JetBrains Mono', css: '"JetBrains Mono", monospace' },
-  { name: 'IBM Plex Mono',  css: '"IBM Plex Mono", monospace'  },
-  { name: 'Fira Code',      css: '"Fira Code", monospace'       },
-  { name: 'System Mono',    css: 'ui-monospace, "Cascadia Mono", "SF Mono", Consolas, Menlo, monospace' },
-];
+// ── Four-font system ──────────────────────────────────────────────────────────
+// Each slot has a CSS default in :root (input.css); JS overrides via prefs.
+// An empty string means "use the CSS default" (removeProperty falls back to :root).
+const _MONO_FB = 'ui-monospace, "Cascadia Code", "SF Mono", Consolas, Menlo, monospace';
+const _UI_FB   = 'system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif';
+
 function applyEditorFont(name) {
-  const font = MONO_FONTS.find(f => f.name === name) ?? MONO_FONTS[0];
-  document.documentElement.style.setProperty('--font-family-mono', font.css);
+  const v = name ? `"${name}", ${_MONO_FB}` : null;
+  if (v) document.documentElement.style.setProperty('--font-editor', v);
+  else   document.documentElement.style.removeProperty('--font-editor');
+}
+function applyUiFont(name) {
+  const v = name ? `"${name}", ${_UI_FB}` : null;
+  if (v) document.documentElement.style.setProperty('--font-ui', v);
+  else   document.documentElement.style.removeProperty('--font-ui');
+}
+function applyContentFont(name) {
+  const v = name ? `"${name}", ${_UI_FB}` : null;
+  if (v) document.documentElement.style.setProperty('--font-content', v);
+  else   document.documentElement.style.removeProperty('--font-content');
+}
+function applyMonoFont(name) {
+  const v = name ? `"${name}", ${_MONO_FB}` : null;
+  if (v) document.documentElement.style.setProperty('--font-mono', v);
+  else   document.documentElement.style.removeProperty('--font-mono');
 }
 function applyEditorFontSize(px) {
   document.documentElement.style.setProperty('--editor-font-size', `${px}px`);
 }
-applyEditorFont(getPref('editorFont', 'JetBrains Mono'));
+
+let systemFonts = [];
+invoke('list_system_fonts').then(f => { systemFonts = f; }).catch(() => {});
+
+applyEditorFont(getPref('editorFont', ''));
+applyUiFont(getPref('uiFont', ''));
+applyContentFont(getPref('contentFont', ''));
+applyMonoFont(getPref('monoFont', ''));
 applyEditorFontSize(getPref('editorFontSize', 14));
 
 let changeTimer   = null;
@@ -343,6 +365,7 @@ function refreshPages() {
   invoke('list_pages').then(pages => {
     allPages = pages;
     setEditorPages(pages);
+    allWidgetInstances?.tasks?.setPages(pages);
   }).catch(console.error);
   invoke('list_journal_dates').then(setEditorJournalDates).catch(console.error);
 }
@@ -1143,23 +1166,32 @@ function escapeAttr(s) {
   return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
 
-// Colorize task text: wiki links, @reserved params, @context tags.
-const TASKS_TOKEN_RE = /(\[\[[^\]]+\]\])|(@(?:due|defer|priority|done|overdue|waiting|someday)(?:\([^)]*\))?)|(@[a-zA-Z][a-zA-Z0-9_-]*)/g;
-function renderTaskText(raw) {
+const WAITING_RE = /@waiting(?![a-zA-Z0-9_-])/i;
+
+// Colorize task text: [[wiki links]], @reserved params, @contexts, CamelCase links.
+const TASKS_TOKEN_RE = /(\[\[[^\]]+\]\])|(@(?:due|defer|priority|done|overdue|waiting|someday)(?:\([^)]*\))?)|(@[a-zA-Z][a-zA-Z0-9_-]*)|(\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b)/g;
+function renderTaskText(raw, titleSet) {
   const parts = [];
-  let last = 0;
-  let m;
+  let last = 0, m;
   TASKS_TOKEN_RE.lastIndex = 0;
   while ((m = TASKS_TOKEN_RE.exec(raw)) !== null) {
     if (m.index > last) parts.push(escapeHtml(raw.slice(last, m.index)));
-    const [full, wiki, atParam, atCtx] = m;
+    const [full, wiki, atParam, atCtx, camel] = m;
     if (wiki) {
       const title = wiki.slice(2, -2);
       parts.push(`<span class="mi-tasks-wiki" data-title="${escapeAttr(title)}">${escapeHtml(full)}</span>`);
     } else if (atParam) {
       parts.push(`<span class="mi-tasks-at-param">${escapeHtml(full)}</span>`);
-    } else {
+    } else if (atCtx) {
       parts.push(`<span class="mi-tasks-at-ctx">${escapeHtml(full)}</span>`);
+    } else {
+      // CamelCase: render as wiki link only if the expanded title exists.
+      const title = camel.replace(/([A-Z])/g, ' $1').trim();
+      if (titleSet?.has(title)) {
+        parts.push(`<span class="mi-tasks-wiki" data-title="${escapeAttr(title)}">${escapeHtml(camel)}</span>`);
+      } else {
+        parts.push(escapeHtml(camel));
+      }
     }
     last = m.index + full.length;
   }
@@ -1169,6 +1201,7 @@ function renderTaskText(raw) {
 
 // Build the tasks table HTML from a filtered, sorted task list.
 function buildTasksHTML(tasks) {
+  const titleSet = new Set(allPages.map(p => p.title));
   const visible = tasks.filter(t => {
     if (isDeferred(t.defer_until)) return false;
     if (deferFutureTasks && isFutureJournalTask(t)) return false;
@@ -1203,7 +1236,7 @@ function buildTasksHTML(tasks) {
       <td class="td-badge">${priorityPillHTML(ep)}</td>
       <td class="${cbClass}" ${cbColor}>[ ]</td>
       <td class="td-text">
-        <div>${renderTaskText(t.text)}</div>
+        <div>${renderTaskText(t.text, titleSet)}</div>
         <div class="mi-tasks-ctx" ${ctxAttrs}>${ctxText}</div>
       </td>
     </tr>`;
@@ -1253,14 +1286,25 @@ function renderTasksFilterBar(contexts) {
 async function refreshTasksView() {
   const scrollTop = tasksEditorContainer.scrollTop;
   try {
-    const allTasks = await invoke('list_tasks', { checked: false });
+    const allTasks  = await invoke('list_tasks', { checked: false });
+    const noWaiting = allTasks.filter(t => !WAITING_RE.test(t.text));
 
-    // Render filter bar from the full unfiltered set.
-    const contexts = extractContexts(allTasks);
+    // Context chips: regular contexts from all tasks, plus 'waiting' as a
+    // special chip when any waiting tasks exist (so users can click to see them).
+    const contexts = extractContexts(allTasks); // @waiting still excluded by RESERVED_AT_NAMES
+    if (allTasks.some(t => WAITING_RE.test(t.text))) {
+      contexts.push('waiting');
+      contexts.sort();
+    }
     renderTasksFilterBar(contexts);
 
+    // @waiting tasks hidden by default; shown when explicitly requested via
+    // the @waiting chip or by typing @waiting in the query box.
+    const parsedQ          = tasksSearchQuery.trim() ? parseTaskQuery(tasksSearchQuery) : null;
+    const wantsWaiting     = tasksContextFilter.has('waiting') || (parsedQ?.contexts.includes('waiting') ?? false);
+
     // Apply context filter (OR: task must have at least one active context).
-    let tasks = allTasks;
+    let tasks = wantsWaiting ? allTasks : noWaiting;
     if (tasksContextFilter.size > 0) {
       tasks = tasks.filter(t => {
         const atRe = /@([a-zA-Z][a-zA-Z0-9_-]*)/g;
@@ -1273,8 +1317,8 @@ async function refreshTasksView() {
     }
 
     // Apply typed query filter (@context, (priority), plain text).
-    if (tasksSearchQuery.trim()) {
-      tasks = applyTaskFilter(tasks, parseTaskQuery(tasksSearchQuery));
+    if (parsedQ) {
+      tasks = applyTaskFilter(tasks, parsedQ);
     }
 
     tasksEditorContainer.innerHTML = buildTasksHTML(tasks);
@@ -2080,6 +2124,72 @@ function showWidgetPicker(sidebarName, anchorEl) {
   overlay.addEventListener('blur', () => finish(), true);
 }
 
+// ── Font browser ──────────────────────────────────
+
+function openFontBrowser(currentValue) {
+  return new Promise(resolve => {
+    let selected = currentValue || '';
+
+    const overlay = document.createElement('div');
+    overlay.className = 'fixed inset-0 z-[10000] flex items-center justify-center bg-black/70';
+
+    const buildItems = (q) => (q
+      ? systemFonts.filter(f => f.toLowerCase().includes(q.toLowerCase()))
+      : systemFonts
+    ).map(f => {
+      const active = f === selected;
+      return `<div class="fp-item px-3 py-1 cursor-pointer text-xs ${active ? 'bg-olive-700 text-olive-100' : 'text-olive-300 hover:bg-olive-800'}" data-font="${f.replace(/"/g,'&quot;')}">${f}</div>`;
+    }).join('');
+
+    overlay.innerHTML = `
+      <div class="bg-olive-900 border border-olive-700 rounded-lg shadow-xl flex flex-col w-80" style="height:28rem">
+        <div class="px-3 py-2 border-b border-olive-800 flex items-center gap-2">
+          <span class="text-xs font-semibold text-olive-400 shrink-0">Font</span>
+          <input id="fp-search" type="search" placeholder="Search…" autocomplete="off"
+            class="flex-1 bg-olive-800 border border-olive-700 rounded px-2 py-0.5 text-xs text-olive-200 focus:outline-none placeholder-olive-600" />
+        </div>
+        <div id="fp-list" class="flex-1 overflow-y-auto py-1">${buildItems('')}</div>
+        <div class="px-3 py-2 border-t border-olive-800 flex items-center justify-end gap-2">
+          <button id="fp-clear"  class="px-2.5 py-1 text-xs rounded bg-olive-700 text-olive-300 hover:bg-olive-600">Clear</button>
+          <button id="fp-cancel" class="px-2.5 py-1 text-xs rounded bg-olive-700 text-olive-300 hover:bg-olive-600">Cancel</button>
+          <button id="fp-ok"     class="px-2.5 py-1 text-xs rounded bg-amber-700 text-white hover:bg-amber-600">Select</button>
+        </div>
+      </div>`;
+
+    document.body.appendChild(overlay);
+
+    const listEl   = overlay.querySelector('#fp-list');
+    const searchEl = overlay.querySelector('#fp-search');
+
+    const rerender = (q = '') => {
+      listEl.innerHTML = buildItems(q);
+      const active = listEl.querySelector(`[data-font="${selected.replace(/"/g,'&quot;')}"]`);
+      active?.scrollIntoView({ block: 'nearest' });
+    };
+
+    listEl.addEventListener('click', e => {
+      const item = e.target.closest('.fp-item');
+      if (!item) return;
+      selected = item.dataset.font;
+      rerender(searchEl.value);
+    });
+
+    searchEl.addEventListener('input', e => rerender(e.target.value));
+
+    overlay.querySelector('#fp-ok').addEventListener('click',     () => { overlay.remove(); resolve(selected); });
+    overlay.querySelector('#fp-cancel').addEventListener('click', () => { overlay.remove(); resolve(null); });
+    overlay.querySelector('#fp-clear').addEventListener('click',  () => { selected = ''; rerender(searchEl.value); });
+
+    overlay.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { overlay.remove(); resolve(null); }
+    });
+
+    // Scroll to current selection on open
+    rerender('');
+    searchEl.focus();
+  });
+}
+
 // ── Settings dialog ───────────────────────────────
 
 async function showSettingsDialog() {
@@ -2146,19 +2256,49 @@ async function showSettingsDialog() {
           <p class="text-xs text-olive-600">When Yes, tasks on future-dated journal pages are hidden from the Tasks Widget and Tasks page.</p>
         </div>
         <div class="flex flex-col gap-1.5">
-          <label class="text-xs text-olive-500 font-mono">Editor appearance</label>
-          <div class="flex items-center gap-3">
-            <select name="mi-editor-font"
-              class="flex-1 bg-olive-800 border border-olive-600 rounded px-2 py-1.5 text-xs text-olive-200 focus:outline-none cursor-pointer">
-              ${MONO_FONTS.map(f => `<option value="${f.name}" style="font-family:${f.css}"
-                ${getPref('editorFont', 'JetBrains Mono') === f.name ? 'selected' : ''}>${f.name}</option>`).join('')}
-            </select>
+          <label class="text-xs text-olive-500 font-mono">Fonts</label>
+          <datalist id="mi-fonts-list"></datalist>
+          <div class="grid items-center gap-x-3 gap-y-1.5 text-xs" style="grid-template-columns:auto 1fr">
+            <span class="text-olive-500 whitespace-nowrap">Editor</span>
+            <div class="flex gap-1">
+              <input type="text" list="mi-fonts-list" name="mi-font-editor"
+                value="${getPref('editorFont', '')}"
+                placeholder="System default (monospace)"
+                class="flex-1 min-w-0 bg-olive-800 border border-olive-600 rounded px-2 py-1 text-olive-200 focus:outline-none placeholder-olive-600 text-xs" />
+              <button class="fp-btn shrink-0 px-2 py-1 text-xs rounded bg-olive-700 text-olive-300 hover:bg-olive-600" data-target="mi-font-editor">&hellip;</button>
+            </div>
+            <span class="text-olive-500 whitespace-nowrap">Interface</span>
+            <div class="flex gap-1">
+              <input type="text" list="mi-fonts-list" name="mi-font-ui"
+                value="${getPref('uiFont', '')}"
+                placeholder="System default"
+                class="flex-1 min-w-0 bg-olive-800 border border-olive-600 rounded px-2 py-1 text-olive-200 focus:outline-none placeholder-olive-600 text-xs" />
+              <button class="fp-btn shrink-0 px-2 py-1 text-xs rounded bg-olive-700 text-olive-300 hover:bg-olive-600" data-target="mi-font-ui">&hellip;</button>
+            </div>
+            <span class="text-olive-500 whitespace-nowrap">Content</span>
+            <div class="flex gap-1">
+              <input type="text" list="mi-fonts-list" name="mi-font-content"
+                value="${getPref('contentFont', '')}"
+                placeholder="System default"
+                class="flex-1 min-w-0 bg-olive-800 border border-olive-600 rounded px-2 py-1 text-olive-200 focus:outline-none placeholder-olive-600 text-xs" />
+              <button class="fp-btn shrink-0 px-2 py-1 text-xs rounded bg-olive-700 text-olive-300 hover:bg-olive-600" data-target="mi-font-content">&hellip;</button>
+            </div>
+            <span class="text-olive-500 whitespace-nowrap">Code/Mono</span>
+            <div class="flex gap-1">
+              <input type="text" list="mi-fonts-list" name="mi-font-mono"
+                value="${getPref('monoFont', '')}"
+                placeholder="System default (monospace)"
+                class="flex-1 min-w-0 bg-olive-800 border border-olive-600 rounded px-2 py-1 text-olive-200 focus:outline-none placeholder-olive-600 text-xs" />
+              <button class="fp-btn shrink-0 px-2 py-1 text-xs rounded bg-olive-700 text-olive-300 hover:bg-olive-600" data-target="mi-font-mono">&hellip;</button>
+            </div>
+            <span class="text-olive-500 whitespace-nowrap">Size</span>
             <select name="mi-editor-font-size"
-              class="bg-olive-800 border border-olive-600 rounded px-2 py-1.5 text-xs text-olive-200 focus:outline-none cursor-pointer">
+              class="bg-olive-800 border border-olive-600 rounded px-2 py-1 text-olive-200 focus:outline-none cursor-pointer text-xs">
               ${[11,12,13,14,15,16,18,20].map(s => `<option value="${s}"
                 ${getPref('editorFontSize', 14) === s ? 'selected' : ''}>${s}px</option>`).join('')}
             </select>
           </div>
+          <p class="text-xs text-olive-600">Type a font name or click &hellip; to browse installed fonts. Leave blank for the system default.</p>
         </div>
         <div class="flex justify-end gap-2 pt-1">
           <button id="mi-settings-cancel"
@@ -2173,6 +2313,22 @@ async function showSettingsDialog() {
       </div>`;
 
     document.body.appendChild(overlay);
+
+    // Populate font datalist from system fonts (already loaded at startup)
+    const fontDatalist = overlay.querySelector('#mi-fonts-list');
+    if (systemFonts.length) {
+      fontDatalist.innerHTML = systemFonts.map(f => `<option value="${f}">`).join('');
+    }
+
+    // Wire … browse buttons — each updates the paired text input
+    overlay.querySelectorAll('.fp-btn').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const input  = overlay.querySelector(`input[name="${btn.dataset.target}"]`);
+        const chosen = await openFontBrowser(input.value.trim());
+        if (chosen !== null) input.value = chosen;
+      });
+    });
+
     const pathInput = overlay.querySelector('#mi-settings-path');
     const chooseBtn = overlay.querySelector('#mi-settings-choose');
     const okBtn     = overlay.querySelector('#mi-settings-ok');
@@ -2205,11 +2361,14 @@ async function showSettingsDialog() {
           allWidgetInstances.tasks?.refresh();
           refreshTasksView();
         }
-        const newFont = overlay.querySelector('select[name="mi-editor-font"]')?.value ?? 'JetBrains Mono';
-        if (newFont !== getPref('editorFont', 'JetBrains Mono')) {
-          setPref('editorFont', newFont);
-          applyEditorFont(newFont);
-        }
+        const newEditorFont  = overlay.querySelector('input[name="mi-font-editor"]')?.value.trim()  ?? '';
+        const newUiFont      = overlay.querySelector('input[name="mi-font-ui"]')?.value.trim()      ?? '';
+        const newContentFont = overlay.querySelector('input[name="mi-font-content"]')?.value.trim() ?? '';
+        const newMonoFont    = overlay.querySelector('input[name="mi-font-mono"]')?.value.trim()    ?? '';
+        if (newEditorFont  !== getPref('editorFont',  '')) { setPref('editorFont',  newEditorFont);  applyEditorFont(newEditorFont);   }
+        if (newUiFont      !== getPref('uiFont',      '')) { setPref('uiFont',      newUiFont);      applyUiFont(newUiFont);           }
+        if (newContentFont !== getPref('contentFont', '')) { setPref('contentFont', newContentFont); applyContentFont(newContentFont); }
+        if (newMonoFont    !== getPref('monoFont',    '')) { setPref('monoFont',    newMonoFont);    applyMonoFont(newMonoFont);       }
         const newSize = parseInt(overlay.querySelector('select[name="mi-editor-font-size"]')?.value ?? '14', 10);
         if (newSize !== getPref('editorFontSize', 14)) {
           setPref('editorFontSize', newSize);
@@ -2407,7 +2566,7 @@ const allWidgetInstances = {
   annotations: new AnnotationsWidget({ onOpen: openFilePath }),
   calendar:    new CalendarWidget({ onDateSelected: openJournalDate }),
   scratchPad:  new ScratchPadWidget(),
-  tasks:       new TasksWidget({ onOpen: openFilePath }),
+  tasks:       new TasksWidget({ onOpen: openFilePath, onOpenTitle: openWikiPage }),
   favorites:   new FavoritesWidget({ onOpen: openFilePath }),
   tags:        new TagsWidget({ onTag: tag => loadTagView(tag) }),
   references:  new ReferencesWidget({

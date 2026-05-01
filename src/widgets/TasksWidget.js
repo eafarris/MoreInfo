@@ -18,8 +18,40 @@ function esc(s) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
-const OVERDUE_RE = /@overdue(?![a-zA-Z0-9_-])/;
+const OVERDUE_RE  = /@overdue(?![a-zA-Z0-9_-])/;
+const WAITING_RE  = /@waiting(?![a-zA-Z0-9_-])/i;
 const RESERVED_AT = new Set(['done', 'due', 'defer', 'priority', 'overdue', 'waiting', 'someday']);
+
+// Matches the same token types as renderTaskText in main.js.
+const WIDGET_TOKEN_RE = /(\[\[[^\]]+\]\])|(@(?:due|defer|priority|done|overdue|waiting|someday)(?:\([^)]*\))?)|(@[a-zA-Z][a-zA-Z0-9_-]*)|(\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b)/g;
+
+function renderText(raw, titleSet) {
+  const parts = [];
+  let last = 0, m;
+  WIDGET_TOKEN_RE.lastIndex = 0;
+  while ((m = WIDGET_TOKEN_RE.exec(raw)) !== null) {
+    if (m.index > last) parts.push(esc(raw.slice(last, m.index)));
+    const [full, wiki, atParam, atCtx, camel] = m;
+    if (wiki) {
+      const title = wiki.slice(2, -2);
+      parts.push(`<span class="mi-tasks-wiki" data-title="${esc(title)}">${esc(full)}</span>`);
+    } else if (atParam) {
+      parts.push(`<span class="mi-tasks-at-param">${esc(full)}</span>`);
+    } else if (atCtx) {
+      parts.push(`<span class="mi-tasks-at-ctx">${esc(full)}</span>`);
+    } else {
+      const title = camel.replace(/([A-Z])/g, ' $1').trim();
+      if (titleSet.has(title)) {
+        parts.push(`<span class="mi-tasks-wiki" data-title="${esc(title)}">${esc(camel)}</span>`);
+      } else {
+        parts.push(esc(camel));
+      }
+    }
+    last = m.index + full.length;
+  }
+  if (last < raw.length) parts.push(esc(raw.slice(last)));
+  return parts.join('');
+}
 
 function taskIsOverdue(task) {
   return OVERDUE_RE.test(task.text) || isOverdue(task.due_date, task.first_seen);
@@ -27,11 +59,13 @@ function taskIsOverdue(task) {
 
 export class TasksWidget extends Widget {
   /**
-   * @param {{ onOpen: (path: string) => void }} opts
+   * @param {{ onOpen: (path: string) => void, onOpenTitle: (title: string) => void }} opts
    */
-  constructor({ onOpen } = {}) {
+  constructor({ onOpen, onOpenTitle } = {}) {
     super({ id: 'tasks', title: 'Tasks', icon: 'ph-check-square' });
-    this._onOpen    = onOpen || (() => {});
+    this._onOpen      = onOpen      || (() => {});
+    this._onOpenTitle = onOpenTitle || (() => {});
+    this._pageTitleSet = new Set();
     this._list      = null;
     this._input     = null;
     this._clearBtn  = null;
@@ -40,6 +74,10 @@ export class TasksWidget extends Widget {
     this._query     = '';
     this._allTasks  = [];
     this._contexts  = [];
+  }
+
+  setPages(pages) {
+    this._pageTitleSet = new Set(pages.map(p => p.title));
   }
 
   get wrapperClass() { return 'flex flex-col border-b border-olive-700'; }
@@ -124,6 +162,8 @@ export class TasksWidget extends Widget {
 
     // ── Task list click ──────────────────────────────────────────────────────
     this._list.addEventListener('click', e => {
+      const wiki = e.target.closest('.mi-tasks-wiki');
+      if (wiki) { this._onOpenTitle(wiki.dataset.title); return; }
       const item = e.target.closest('[data-path]');
       if (item) this._onOpen(item.dataset.path);
     });
@@ -210,8 +250,15 @@ export class TasksWidget extends Widget {
   _render() {
     if (!this._list) return;
 
-    this._contexts = this._extractContexts(this._allTasks);
-    const tasks    = this._filterTasks(this._allTasks);
+    // @waiting tasks are hidden by default; surfaced only when @waiting is
+    // explicitly typed in the filter box.
+    const parsed       = this._query.trim() ? parseTaskQuery(this._query) : null;
+    const wantsWaiting = parsed?.contexts.includes('waiting') ?? false;
+    const noWaiting    = this._allTasks.filter(t => !WAITING_RE.test(t.text));
+    const source       = wantsWaiting ? this._allTasks : noWaiting;
+
+    this._contexts = this._extractContexts(noWaiting); // chips never include @waiting
+    const tasks    = this._filterTasks(source);
 
     // Separate into active and deferred per page → per heading bucket.
     const byPage = new Map();
@@ -271,7 +318,7 @@ export class TasksWidget extends Widget {
           <div class="${rowCls}">
             <span class="${cbCls}" style="pointer-events:none"></span>
             ${priBadge}
-            <span class="${textCls}">${esc(t.text || '…')}</span>
+            <span class="${textCls}">${renderText(t.text || '…', this._pageTitleSet)}</span>
           </div>`;
         }).join('');
         return headingRow + rows;

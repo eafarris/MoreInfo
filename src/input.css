@@ -1,10 +1,25 @@
 @import "tailwindcss";
 @plugin "@tailwindcss/typography";
 
-/* Custom mono font stack (replaces tailwind.config theme.extend) */
+/* Custom font stacks (replaces tailwind.config theme.extend) */
 @theme {
-  --font-family-mono: "JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, ui-monospace, monospace;
+  /* --font-family-mono is wired through --font-mono at runtime so Tailwind's
+     font-mono utility picks up the user's chosen monospace font. */
+  --font-family-mono: ui-monospace, "Cascadia Code", "SF Mono", Consolas, Menlo, monospace;
 }
+
+:root {
+  /* Four user-configurable font slots.  JS overrides these on startup from
+     prefs; empty pref → remove override → falls back to these defaults. */
+  --font-editor:  ui-monospace, "Cascadia Code", "SF Mono", Consolas, Menlo, monospace;
+  --font-ui:      system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-content: system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
+  --font-mono:    ui-monospace, "Cascadia Code", "SF Mono", Consolas, Menlo, monospace;
+  /* Wire Tailwind's font-mono class through the user's choice. */
+  --font-family-mono: var(--font-mono);
+}
+
+body { font-family: var(--font-ui); }
 
 
 #doc-title {
@@ -62,6 +77,9 @@
 /* ── Render pane: theme prose to match the olive editor palette ──
    Typography uses :where() (zero specificity) for all its selectors,
    so plain element rules here will always win.               ── */
+/* Apply content font to all rendered/content areas */
+.prose                                           { font-family:      var(--font-content); }
+.widget-body                                     { font-family:      var(--font-content); }
 #markdown-content                                { color:            var(--color-olive-200); }
 #markdown-content h1,
 #markdown-content h2,
@@ -93,7 +111,7 @@
   margin: 0.75rem 0;
   border-left: 2px solid var(--color-amber-700, oklch(47.1% 0.104 83.5));
   padding-left: 0.75rem;
-  font-family: var(--font-family-mono);
+  font-family: var(--font-mono);
   font-size: 0.875rem;
   display: block;
 }
@@ -131,7 +149,7 @@
   border-radius: 6px;
   box-shadow: 0 8px 28px rgba(0,0,0,0.5);
   padding: 0.75rem 1rem;
-  font-family: var(--font-family-mono);
+  font-family: var(--font-content);
   font-size: 0.8rem;
   line-height: 1.5;
   pointer-events: auto;
@@ -231,7 +249,7 @@
 .mi-tasks-table {
   width: 100%;
   border-collapse: collapse;
-  font-family: var(--font-family-mono);
+  font-family: var(--font-content);
   font-size: var(--editor-font-size, 0.875rem);
   line-height: 1.625;
 }

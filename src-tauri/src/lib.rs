@@ -2515,6 +2515,15 @@ async fn fetch_url_title(url: String) -> Result<String, String> {
 }
 
 #[tauri::command]
+fn list_system_fonts() -> Vec<String> {
+    use font_kit::source::SystemSource;
+    let source = SystemSource::new();
+    let mut families = source.all_families().unwrap_or_default();
+    families.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
+    families
+}
+
+#[tauri::command]
 async fn fetch_page(url: String) -> Result<String, String> {
     let client = reqwest::Client::builder()
         .user_agent("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15")
@@ -2696,6 +2705,7 @@ pub fn run() {
             list_pages_for_tag,
             get_ui_prefs,
             save_ui_prefs,
+            list_system_fonts,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

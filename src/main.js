@@ -2546,6 +2546,15 @@ const pageWidget = new PageWidget({
   onOpenInEditor: openWikiPage,
   onOpenJournal:  openJournalDate,
   onEditPage:     openFilePath,
+  onPreviewShow: (title, el) => {
+    clearTimeout(_wlTimer);
+    _wlTimer = setTimeout(() => _wlShow(title, el), 500);
+  },
+  onPreviewHide: () => {
+    clearTimeout(_wlTimer);
+    _wlTimer = null;
+    _wlScheduleHide();
+  },
 });
 
 const bottomContentState = { refs: false, meta: false };

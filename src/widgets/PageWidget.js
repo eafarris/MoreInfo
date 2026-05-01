@@ -14,11 +14,14 @@ export class PageWidget extends Widget {
    *            onOpenJournal:  (date:string)=>void,
    *            onEditPage:     (path:string)=>void }} opts
    */
-  constructor({ onOpenInEditor, onOpenJournal, onEditPage } = {}) {
+  constructor({ onOpenInEditor, onOpenJournal, onEditPage,
+                onPreviewShow, onPreviewHide } = {}) {
     super({ id: 'page', title: 'Page', icon: 'ph-file-text' });
     this._onOpenInEditor = onOpenInEditor || (() => {});
     this._onOpenJournal  = onOpenJournal  || (() => {});
     this._onEditPage     = onEditPage     || (() => {});
+    this._onPreviewShow  = onPreviewShow  || (() => {});
+    this._onPreviewHide  = onPreviewHide  || (() => {});
 
     this._allPages    = [];
     this._currentPath = null;
@@ -295,6 +298,14 @@ export class PageWidget extends Widget {
 
     this._contentEl.innerHTML = rows.join('');
     this._wireListClicks();
+    this._wireListHovers();
+  }
+
+  _wireListHovers() {
+    this._contentEl.querySelectorAll('.pw-page-item[data-path]').forEach(el => {
+      el.addEventListener('mouseover', () => this._onPreviewShow(el.dataset.title, el));
+      el.addEventListener('mouseout',  () => this._onPreviewHide());
+    });
   }
 
   _wireListClicks() {
@@ -423,5 +434,6 @@ export class PageWidget extends Widget {
     }).join('');
 
     this._wireListClicks();
+    this._wireListHovers();
   }
 }

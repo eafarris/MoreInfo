@@ -174,6 +174,7 @@ fn process_wiki_links(text: &str) -> String {
             let mut found = false;
             while i + 1 < len {
                 if bytes[i] == b']' && bytes[i + 1] == b']' {
+                    // i is on ASCII ']', guaranteed valid char boundary.
                     let raw_title = &text[title_start..i];
                     let title     = raw_title.trim();
                     if !title.is_empty() {
@@ -189,12 +190,17 @@ fn process_wiki_links(text: &str) -> String {
                     i += 2;
                     break;
                 }
-                i += 1;
+                // Advance by a full UTF-8 character so i never lands mid-char.
+                i += utf8_char_len(bytes[i]);
             }
 
             if !found {
+                // Unclosed [[: emit the brackets and the rest of the string
+                // as plain text.  Do NOT slice at i — the loop may have left
+                // i pointing into the middle of a multi-byte character.
                 result.push_str("[[");
-                result.push_str(&text[title_start..i]);
+                result.push_str(&text[title_start..]);
+                i = len; // nothing left to process
             }
         } else {
             // Advance by a full UTF-8 character, not just one byte.
@@ -244,10 +250,10 @@ fn extract_wiki_links(text: &str) -> Vec<(String, String, String)> {
                     i = bracket_end;
                     break;
                 }
-                i += 1;
+                i += utf8_char_len(bytes[i]);
             }
         } else {
-            i += 1;
+            i += utf8_char_len(bytes[i]);
         }
     }
 
@@ -2771,6 +2777,56 @@ pub fn run() {
 }
 
 // ── Search helper tests ───────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod wiki_link_tests {
+    use super::*;
+
+    #[test]
+    fn process_wiki_links_ascii() {
+        let out = process_wiki_links("See [[Hello World]] for details.");
+        assert!(out.contains("wiki-link"));
+        assert!(out.contains("Hello World"));
+        assert!(out.contains("for details."));
+    }
+
+    #[test]
+    fn process_wiki_links_multibyte_in_title() {
+        // Non-ASCII inside a properly closed link must not panic.
+        let out = process_wiki_links("See [[Héllo Wörld]] ok.");
+        assert!(out.contains("Héllo Wörld"));
+    }
+
+    #[test]
+    fn process_wiki_links_unclosed_ascii() {
+        // An unclosed [[ with ASCII content must not panic.
+        let out = process_wiki_links("See [[unclosed");
+        assert!(out.contains("[[unclosed"));
+    }
+
+    #[test]
+    fn process_wiki_links_unclosed_multibyte() {
+        // Crash case: unclosed [[ followed by multi-byte UTF-8 characters.
+        // The continuation byte of ö (0xB6) is not a char boundary; slicing
+        // there used to abort the process.
+        let out = process_wiki_links("[[Hello wörld");
+        assert!(out.contains("[[Hello wörld"));
+    }
+
+    #[test]
+    fn process_wiki_links_unclosed_emoji() {
+        // 4-byte emoji after an unclosed [[.
+        let out = process_wiki_links("[[emoji 🦀 here");
+        assert!(out.contains("[[emoji 🦀 here"));
+    }
+
+    #[test]
+    fn process_wiki_links_multiple_links() {
+        let out = process_wiki_links("[[Page One]] and [[Page Two]].");
+        assert!(out.contains("Page One"));
+        assert!(out.contains("Page Two"));
+    }
+}
 
 #[cfg(test)]
 mod search_tests {

@@ -2514,13 +2514,72 @@ async fn fetch_url_title(url: String) -> Result<String, String> {
     }
 }
 
+/// Return a sorted, deduplicated list of font family names from the OS font
+/// directories.  We derive the family name by stripping common style suffixes
+/// from each font file stem; this is good enough for a datalist autocomplete.
+/// Using font-kit / CoreText here caused a "failed to initiate panic" abort on
+/// macOS (stack overflow inside the CoreText signal-handler alt-stack), so we
+/// use plain filesystem I/O instead.
 #[tauri::command]
 fn list_system_fonts() -> Vec<String> {
-    use font_kit::source::SystemSource;
-    let source = SystemSource::new();
-    let mut families = source.all_families().unwrap_or_default();
-    families.sort_by(|a, b| a.to_lowercase().cmp(&b.to_lowercase()));
-    families
+    let mut families = std::collections::BTreeSet::new();
+
+    for dir in font_dirs() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let ext  = path.extension()
+                .and_then(|e| e.to_str())
+                .map(str::to_lowercase)
+                .unwrap_or_default();
+            if matches!(ext.as_str(), "ttf" | "otf" | "ttc" | "otc" | "dfont") {
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    families.insert(strip_style_suffix(stem));
+                }
+            }
+        }
+    }
+
+    families.into_iter().collect()
+}
+
+fn font_dirs() -> Vec<std::path::PathBuf> {
+    let mut dirs = Vec::new();
+    #[cfg(target_os = "macos")]
+    {
+        let home = std::env::var("HOME").unwrap_or_default();
+        dirs.push("/System/Library/Fonts".into());
+        dirs.push("/System/Library/Fonts/Supplemental".into());
+        dirs.push("/Library/Fonts".into());
+        dirs.push(std::path::PathBuf::from(&home).join("Library/Fonts"));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into());
+        dirs.push(std::path::PathBuf::from(&windir).join("Fonts"));
+        if let Ok(local) = std::env::var("LOCALAPPDATA") {
+            dirs.push(std::path::PathBuf::from(&local).join("Microsoft\\Windows\\Fonts"));
+        }
+    }
+    dirs
+}
+
+/// Strip common weight/style suffixes so "Helvetica-Bold" → "Helvetica".
+fn strip_style_suffix(stem: &str) -> String {
+    const SUFFIXES: &[&str] = &[
+        "-BoldItalic", "-BoldOblique", "-LightItalic", "-LightOblique",
+        "-SemiBoldItalic", "-MediumItalic", "-BlackItalic",
+        "-Bold", "-Italic", "-Oblique", "-Regular", "-Light",
+        "-Medium", "-Semibold", "-SemiBold", "-Black", "-Thin",
+        "-Heavy", "-ExtraBold", "-ExtraLight", "-UltraLight", "-Condensed",
+        "-Expanded", "-Narrow", "-Display",
+    ];
+    for &suffix in SUFFIXES {
+        if let Some(base) = stem.strip_suffix(suffix) {
+            return base.to_string();
+        }
+    }
+    stem.to_string()
 }
 
 #[tauri::command]

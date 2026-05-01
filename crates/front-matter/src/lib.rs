@@ -251,11 +251,20 @@ fn singularize(word: &str) -> String {
 }
 
 fn parse_value(raw: &str) -> Value {
-    // 1. Explicit bracket-array syntax: ['a', 'b'] or ["a", "b"]
-    if raw.starts_with('[') {
+    // 1. Bracket-array: ['a','b'], ["a","b"], or [a, b, c] (unquoted).
+    //    try_parse_array handles the quoted forms; the unquoted fallback strips
+    //    the brackets and applies the same comma-split used in step 4 below.
+    if raw.starts_with('[') && raw.ends_with(']') {
         if let Some(arr) = try_parse_array(raw) {
             return Value::Array(arr);
         }
+        let inner = raw[1..raw.len() - 1].trim();
+        let items: Vec<String> = inner
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        return Value::Array(items);
     }
 
     // 2. Quoted string: "…" or '…'
@@ -381,12 +390,57 @@ mod tests {
         assert_eq!(fm["date"], date("2024-03-01"));
     }
 
+    // ── bracket-array forms ───────────────────────────────────────────────────
+
     #[test]
-    fn array_bracket_syntax() {
-        // "tags" is singularized to "tag" at parse time.
+    fn array_bracket_single_quoted() {
         let doc = "---\ntags: ['rust', 'tauri', 'markdown']\n---";
         let fm = parse(doc);
         assert_eq!(fm["tag"], array(&["rust", "tauri", "markdown"]));
+    }
+
+    #[test]
+    fn array_bracket_double_quoted() {
+        let doc = "---\ntags: [\"rust\", \"tauri\", \"markdown\"]\n---";
+        let fm = parse(doc);
+        assert_eq!(fm["tag"], array(&["rust", "tauri", "markdown"]));
+    }
+
+    #[test]
+    fn array_bracket_unquoted() {
+        // [one, two, three] — no quotes; brackets stripped, values trimmed.
+        let doc = "---\ntags: [one, two, three]\n---";
+        let fm = parse(doc);
+        assert_eq!(fm["tag"], array(&["one", "two", "three"]));
+    }
+
+    #[test]
+    fn array_bracket_unquoted_no_spaces() {
+        let doc = "---\ntags: [alpha,beta,gamma]\n---";
+        let fm = parse(doc);
+        assert_eq!(fm["tag"], array(&["alpha", "beta", "gamma"]));
+    }
+
+    #[test]
+    fn array_bracket_unquoted_extra_spaces() {
+        let doc = "---\ntags: [ one , two , three ]\n---";
+        let fm = parse(doc);
+        assert_eq!(fm["tag"], array(&["one", "two", "three"]));
+    }
+
+    #[test]
+    fn array_bracket_unquoted_single_item() {
+        // Single-item unquoted bracket: [rust] — no comma, still an array.
+        let doc = "---\ntags: [rust]\n---";
+        let fm = parse(doc);
+        assert_eq!(fm["tag"], array(&["rust"]));
+    }
+
+    #[test]
+    fn array_bracket_empty() {
+        let doc = "---\ntags: []\n---";
+        let fm = parse(doc);
+        assert_eq!(fm["tag"], array(&[]));
     }
 
     #[test]

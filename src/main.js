@@ -2576,7 +2576,18 @@ const allWidgetInstances = {
   calendar:    new CalendarWidget({ onDateSelected: openJournalDate }),
   scratchPad:  new ScratchPadWidget(),
   tasks:       new TasksWidget({ onOpen: openFilePath, onOpenTitle: openWikiPage }),
-  favorites:   new FavoritesWidget({ onOpen: openFilePath }),
+  favorites:   new FavoritesWidget({
+    onOpen: openFilePath,
+    onPreviewShow: (title, el) => {
+      clearTimeout(_wlTimer);
+      _wlTimer = setTimeout(() => _wlShow(title, el), 500);
+    },
+    onPreviewHide: () => {
+      clearTimeout(_wlTimer);
+      _wlTimer = null;
+      _wlScheduleHide();
+    },
+  }),
   tags:        new TagsWidget({ onTag: tag => loadTagView(tag) }),
   references:  new ReferencesWidget({
     onOpen: openFilePath,

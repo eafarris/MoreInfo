@@ -27,6 +27,7 @@ export class PageWidget extends Widget {
     this._currentPath = null;
     this._searchInput = null;
     this._clearBtn    = null;
+    this._hintBar     = null;
     this._contentEl   = null;
   }
 
@@ -53,7 +54,7 @@ export class PageWidget extends Widget {
             <i class="ph ph-x text-xs"></i>
           </button>
         </div>
-        <div class="flex flex-wrap items-center gap-1.5 px-3 py-1.5
+        <div class="pw-hint-bar flex flex-wrap items-center gap-1.5 px-3 py-1.5
                     border-t border-olive-700 bg-olive-900 shrink-0">
           <span class="shrink-0 text-[9px] font-semibold uppercase tracking-wider
                        text-olive-600 select-none pr-0.5">Filters</span>
@@ -67,6 +68,7 @@ export class PageWidget extends Widget {
 
     this._searchInput = this._body.querySelector('#pw-search');
     this._clearBtn    = this._body.querySelector('#pw-clear');
+    this._hintBar     = this._body.querySelector('.pw-hint-bar');
     this._contentEl   = this._body.querySelector('#pw-content');
 
     this._renderEmpty();
@@ -84,6 +86,7 @@ export class PageWidget extends Widget {
     this._searchInput.addEventListener('input', async () => {
       const q = this._searchInput.value.trim();
       this._clearBtn.style.display = q ? '' : 'none';
+      this._hintBar.style.display  = q ? 'none' : '';
       if (q) await this._renderFiltered(q);
       else   this._renderEmpty();
     });
@@ -96,6 +99,7 @@ export class PageWidget extends Widget {
       const sep = cur && !cur.endsWith(' ') ? ' ' : '';
       this._searchInput.value = cur + sep + btn.dataset.hint;
       this._clearBtn.style.display = '';
+      this._hintBar.style.display  = 'none';
       this._searchInput.focus();
       await this._renderFiltered(this._searchInput.value.trim());
     });
@@ -105,6 +109,7 @@ export class PageWidget extends Widget {
         e.preventDefault();
         this._searchInput.value = '';
         this._clearBtn.style.display = 'none';
+        this._hintBar.style.display  = '';
         this._currentPath = null;
         this._renderEmpty();
         this.saveState({ ...(this.loadState() ?? {}), path: null, title: null });
@@ -114,6 +119,7 @@ export class PageWidget extends Widget {
     this._clearBtn.addEventListener('click', () => {
       this._searchInput.value = '';
       this._clearBtn.style.display = 'none';
+      this._hintBar.style.display  = '';
       this._currentPath = null;
       this._renderEmpty();
       const s = this.loadState();

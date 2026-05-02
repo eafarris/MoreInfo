@@ -11,9 +11,11 @@ export class FavoritesWidget extends Widget {
   /**
    * @param {{ onOpen: (path: string, title: string) => void }} opts
    */
-  constructor({ onOpen } = {}) {
+  constructor({ onOpen, onPreviewShow, onPreviewHide } = {}) {
     super({ id: 'favorites', title: 'Favorites', icon: 'ph-star' });
-    this._onOpen = onOpen || (() => {});
+    this._onOpen        = onOpen        || (() => {});
+    this._onPreviewShow = onPreviewShow || (() => {});
+    this._onPreviewHide = onPreviewHide || (() => {});
     this._list   = null;
   }
 
@@ -60,5 +62,10 @@ export class FavoritesWidget extends Widget {
         <i class="ph-fill ph-star text-amber-400 text-xs shrink-0 leading-none"></i>
         <p class="text-xs text-olive-200 truncate leading-snug">${esc(e.title)}</p>
       </div>`).join('');
+
+    this._list.querySelectorAll('[data-path]').forEach(el => {
+      el.addEventListener('mouseover', () => this._onPreviewShow(el.dataset.title, el));
+      el.addEventListener('mouseout',  () => this._onPreviewHide());
+    });
   }
 }

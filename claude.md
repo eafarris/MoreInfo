@@ -144,7 +144,7 @@ To be written. See the task management spec document at "TASK MANAGEMENT.md".
 ## Shipping widgets
 
 Calendar
-: A monthly calendar with prev/next month buttons as well as a year/month picker that shows when clicking the month title. Days with existing journal pages are highlighted with a dot below the date. "Today" is highlighted with a circle around today's date. Clicking on any date will take you to the journal page for that day, creating it if it does not exist. The Calendar widget can be stretched along its Y axis, but cannot be resized in the X axis. Status: FULLY IMPLEMENTED.
+: A monthly calendar with prev/next month buttons as well as a year/month picker that shows when clicking the month title. Days with existing journal pages are highlighted with a dot below the date. "Today" is highlighted with a circle around today's date. Clicking on any date will take you to the journal page for that day, creating it if it does not exist. The Calendar widget is fixed in both axes — it always displays one month at its natural height. It can shrink if the sidebar is made very small (hiding rows at the bottom), but never grows beyond the natural monthly grid. Status: FULLY IMPLEMENTED.
 
 Metadata
 : A list of defined metadata variables and their values existing in the current active document. A checkbox allows the show/hide of built-in variables as described above, if they are not explicitly defined. The Metadata widget is resizable on both axes. Status: FULLY IMPLEMENTED.
@@ -223,10 +223,50 @@ Favorites
 
 ---
 
+## Planned Keyboard Shortcuts
+
+Shortcuts documented as planned in the keyboard-shortcuts doc but not yet implemented.
+Check off each entry here and in the docs when implemented.
+
+Note: `⌘⇧T` (Today's Journal) and `⌘⇧K` (Tasks view) are already taken — the
+editing shortcuts marked with * will need different chords when assigned.
+
+### Navigation
+
+- [ ] `⌘F` — Open search panel
+- [ ] `⌘O` — Open / switch datastore
+- [ ] `⌘⌥←` — Previous journal entry
+- [ ] `⌘⌥→` — Next journal entry
+- [ ] `⌘1` — Focus sidebar
+- [ ] `⌘2` — Focus editor
+
+### Editing
+
+- [ ] `⌘B` — Bold
+- [ ] `⌘I` — Italic
+- [ ] `⌘K` — Insert Markdown link
+- [ ] `⌘⇧K`\* — Insert wiki link `[[` (chord conflicts with Tasks view)
+- [ ] `⌘⇧C` — Toggle fenced code block
+- [ ] `⌘⇧T`\* — Insert task `- [ ]` (chord conflicts with Today's Journal)
+- [ ] `⌘⌥C` — Insert calc block `@calc`
+
+### View
+
+- [ ] `⌘⇧P` — Command palette
+- [ ] `⌘⇧E` — Toggle sidebar
+- [ ] `⌘⇧W` — Toggle widgets panel
+- [ ] `⌘⌥P` — Toggle preview pane
+- [ ] `⌘+` — Increase editor font size
+- [ ] `⌘-` — Decrease editor font size
+- [ ] `⌘0` — Reset editor font size
+- [ ] `⌘⇧F` — Toggle focus mode
+
+---
+
 ## Roadmap
 
 Features planned for future versions but not targeted for v1.0.
 
 - Focus mode (`⌘⇧F` — single document, no sidebars, minimal chrome)
 - Static Site Generator (SSG) — export some or all notes and journals as a complete web site; see SSG.md
-- Task nesting / subtask hierarchies (indented child tasks; parent shows progress indicator, e.g. "2/5"
+- Task nesting / subtask hierarchies (indented child tasks; parent shows progress indicator, e.g. "2/5")

@@ -19,8 +19,9 @@ export class FavoritesWidget extends Widget {
     this._list   = null;
   }
 
-  get wrapperClass() { return 'shrink-0 border-b border-olive-700'; }
-  get fixedSize()    { return true; }
+  get wrapperClass() { return 'border-b border-olive-700'; }
+  get flexGrow()     { return 0.01; }
+  get flexBasis()    { return 'auto'; }
 
   onMount() {
     this._list = document.createElement('div');

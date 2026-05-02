@@ -23,7 +23,7 @@ export class ScratchPadWidget extends Widget {
     this._saveTimer = null;
   }
 
-  get wrapperClass() { return 'flex flex-col flex-1 min-h-0 border-t border-olive-700'; }
+  get wrapperClass() { return 'flex flex-col min-h-0 border-t border-olive-700'; }
 
   onMount() {
     const updateListener = EditorView.updateListener.of(update => {

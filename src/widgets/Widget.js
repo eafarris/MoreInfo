@@ -64,6 +64,21 @@ export class Widget {
   get fixedSize() { return false; }
 
   /**
+   * The flex-grow factor used when this widget is unrolled.
+   * Widgets with a higher value dominate available space over lower-valued siblings.
+   * @returns {number}
+   */
+  get flexGrow() { return 1; }
+
+  /**
+   * The flex-basis used when this widget is unrolled.
+   * 'auto' — start from natural content height, then grow into remaining space.
+   * '0'    — start from nothing, grow proportionally to flexGrow (standard greedy).
+   * @returns {string}
+   */
+  get flexBasis() { return '0'; }
+
+  /**
    * Optional HTML rendered at the trailing edge of the widget header (vertical only).
    * Use for counters, secondary labels, or action buttons.
    * @returns {string}
@@ -91,6 +106,7 @@ export class Widget {
     container.style.display       = 'flex';
     container.style.flexDirection = horiz ? 'row' : 'column';
     container.style.overflow      = 'hidden';
+    container.style.flex = this.fixedSize ? '0 0 auto' : `${this.flexGrow} 1 ${this.flexBasis}`;
 
     if (horiz) {
       // ── Horizontal orientation (top / bottom sidebars) ──────────────────
@@ -233,6 +249,15 @@ export class Widget {
       this._body.style.opacity       = '1';
       this._body.style.pointerEvents = '';
 
+      // Fixed-size widgets snap to natural content height — never participate
+      // in flex-grow so they don't compete with greedy widgets like ScratchPad.
+      if (this.fixedSize) {
+        this._container.style[prop]       = '';
+        this._container.style[marginProp] = '';
+        this._container.style.flex        = '0 0 auto';
+        return;
+      }
+
       // Animate to fill the space currently available in the sidebar, then
       // hand off to flex so the widget stays responsive to future resizes.
       const stack        = this._container.parentElement;
@@ -244,21 +269,22 @@ export class Widget {
         : 0;
       const targetSize = Math.max(this._headerSize * 2, stackSize - siblingsSize);
 
+      const flex = `${this.flexGrow} 1 ${this.flexBasis}`;
       if (stackSize > 0) {
-        this._container.style.flex  = `1 0 ${targetSize}px`;
+        this._container.style.flex  = `${this.flexGrow} 0 ${targetSize}px`;
         this._container.style[prop] = targetSize + 'px';
         this._container.addEventListener('transitionend', () => {
           if (!this._rolled) {
             this._container.style[prop]       = '';
             this._container.style[marginProp] = '';
-            this._container.style.flex        = '1 1 0';
+            this._container.style.flex        = flex;
           }
         }, { once: true });
       } else {
         // Sidebar not yet visible — skip animation, just clear constraints.
         this._container.style[prop]       = '';
         this._container.style[marginProp] = '';
-        this._container.style.flex        = '1 1 0';
+        this._container.style.flex        = flex;
       }
     }
 

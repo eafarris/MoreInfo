@@ -2627,7 +2627,8 @@ pub fn run() {
             let view_tasks    = MenuItem::with_id(handle, "view-tasks",    "Tasks",                 true, Some("CmdOrCtrl+Shift+K"))?;
             let view_render   = MenuItem::with_id(handle, "view-render",   "Render Markdown",       true, Some("CmdOrCtrl+Shift+R"))?;
 
-            let edit_find             = MenuItem::with_id(handle, "edit-find",             "Find\u{2026}",                true, Some("CmdOrCtrl+G"))?;
+            let edit_find             = MenuItem::with_id(handle, "edit-find",             "Find in Page",                true, Some("CmdOrCtrl+G"))?;
+            let edit_search           = MenuItem::with_id(handle, "edit-search",           "Find in Datastore",           true, Some("CmdOrCtrl+F"))?;
 
             let nav_back              = MenuItem::with_id(handle, "nav-back",              "Back",                        true, None::<&str>)?;
             let nav_forward           = MenuItem::with_id(handle, "nav-forward",           "Forward",                     true, None::<&str>)?;
@@ -2686,6 +2687,7 @@ pub fn run() {
                         .select_all()
                         .separator()
                         .item(&edit_find)
+                        .item(&edit_search)
                         .build()?,
                     // ── View ────────────────────────────────────────
                     &SubmenuBuilder::new(handle, "View")

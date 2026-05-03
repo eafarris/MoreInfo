@@ -233,7 +233,7 @@ editing shortcuts marked with * will need different chords when assigned.
 
 ### Navigation
 
-- [ ] `⌘F` — Open search panel
+- [x] `⌘F` — Open search panel
 - [ ] `⌘O` — Open / switch datastore
 - [ ] `⌘⌥←` — Previous journal entry
 - [ ] `⌘⌥→` — Next journal entry

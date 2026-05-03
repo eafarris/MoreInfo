@@ -34,6 +34,8 @@ import { autocompletion, acceptCompletion } from '@codemirror/autocomplete';
 import { tags } from '@lezer/highlight';
 import { scanCalcBlocks } from './calcBlock.js';
 import { isOverdue, isDueToday } from './dateUtils.js';
+import { camelRe, camelToTitle, isCamelEnabled } from './camelLinks.js';
+export { setCamelEnabled } from './camelLinks.js';
 import { priorityPillDOM } from './ui.js';
 
 // ── Theme ──────────────────────────────────────────────────────────────────
@@ -290,14 +292,16 @@ const camelLinkPlugin = ViewPlugin.fromClass(class {
   }
   _build(view) {
     const deco = [];
-    for (const { from, to } of view.visibleRanges) {
-      const text = view.state.doc.sliceString(from, to);
-      CAMELCASE_RE.lastIndex = 0;
-      let m;
-      while ((m = CAMELCASE_RE.exec(text)) !== null) {
-        if (!_pageTitleSet.has(camelToTitle(m[0]))) continue;
-        const start = from + m.index;
-        deco.push(Decoration.mark({ class: 'cm-wikilink-title' }).range(start, start + m[0].length));
+    if (isCamelEnabled()) {
+      const re = camelRe();
+      for (const { from, to } of view.visibleRanges) {
+        const text = view.state.doc.sliceString(from, to);
+        let m;
+        while ((m = re.exec(text)) !== null) {
+          if (!_pageTitleSet.has(camelToTitle(m[0]))) continue;
+          const start = from + m.index;
+          deco.push(Decoration.mark({ class: 'cm-wikilink-title' }).range(start, start + m[0].length));
+        }
       }
     }
     return Decoration.set(deco, true);
@@ -1028,16 +1032,7 @@ export function setEditorJournalDates(dates) {
   _journalDates = [...dates].sort().reverse();
 }
 
-// CamelCase → "Title Case" by splitting on uppercase boundaries.
-// "AndersonContract" → "Anderson Contract"
-function camelToTitle(camel) {
-  return camel.replace(/([A-Z])/g, ' $1').trim();
-}
-
-// Matches CamelCase words: at least two segments, each one uppercase + lowercase+.
-// Only highlights against known page titles, so false positives (WiFi, MacBook)
-// are silently ignored unless a page by that title actually exists.
-const CAMELCASE_RE = /\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b/g;
+// CAMELCASE_RE is now camelRe() from camelLinks.js — imported above.
 
 // ── Module-level click resolvers (shared by createEditor + createTasksEditor) ──
 
@@ -1065,12 +1060,13 @@ function wikiTitleAt(view, pos) {
 // Resolve a CamelCase link at a given document position, or null.
 // Only matches if a page with that title actually exists.
 function camelTitleAt(view, pos) {
+  if (!isCamelEnabled()) return null;
   const line    = view.state.doc.lineAt(pos);
   const text    = line.text;
   const linePos = pos - line.from;
-  CAMELCASE_RE.lastIndex = 0;
+  const re = camelRe();
   let m;
-  while ((m = CAMELCASE_RE.exec(text)) !== null) {
+  while ((m = re.exec(text)) !== null) {
     if (m.index <= linePos && linePos <= m.index + m[0].length) {
       const title = camelToTitle(m[0]);
       if (_pageTitleSet.has(title)) return title;

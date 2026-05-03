@@ -187,6 +187,15 @@ export class SearchWidget extends Widget {
     });
   }
 
+  /** Unroll if needed, then focus the search input and select any existing text. */
+  focusSearch() {
+    if (this._rolled) this.unrollImmediate();
+    if (this._input) {
+      this._input.focus();
+      this._input.select();
+    }
+  }
+
   onDestroy() {
     clearTimeout(this._debounce);
   }

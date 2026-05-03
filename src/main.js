@@ -16,7 +16,8 @@ import { AnnotationsWidget }   from './widgets/AnnotationsWidget.js';
 import { CounterWidget }     from './widgets/CounterWidget.js';
 import { OutlineWidget }     from './widgets/OutlineWidget.js';
 import { SearchWidget }      from './widgets/SearchWidget.js';
-import { createEditor, createReadOnlyEditor, setEditorPages, setEditorJournalDates, placeholderCompartment, doneStamp, searchSetEffect } from './editor.js';
+import { createEditor, createReadOnlyEditor, setEditorPages, setEditorJournalDates, placeholderCompartment, doneStamp, searchSetEffect, setCamelEnabled } from './editor.js';
+import { camelRe, camelToTitle, isCamelEnabled } from './camelLinks.js';
 import { priorityPillHTML } from './ui.js';
 import { parseTaskQuery, applyTaskFilter } from './taskFilter.js';
 import { initWidgetDrag } from './widgetDrag.js';
@@ -32,9 +33,11 @@ let datastorePath = null;  // set during init via get_datastore_path
 // ── User preferences ──────────────────────────────
 await initPrefs();
 // 'page' = open in Page Widget (default), 'editor' = open in main editor
-let searchOpenIn     = getPref('searchOpenIn',     'page');
+let searchOpenIn      = getPref('searchOpenIn',      'page');
+// When true, CamelCase words are never treated as implicit wiki links.
+let camelCaseDisabled = getPref('camelCaseDisabled', false);
 // When true, tasks on future-dated journal pages are hidden from task lists.
-let deferFutureTasks = getPref('deferFutureTasks', false);
+let deferFutureTasks  = getPref('deferFutureTasks',  false);
 
 // ── Four-font system ──────────────────────────────────────────────────────────
 // Each slot has a CSS default in :root (input.css); JS overrides via prefs.
@@ -410,13 +413,8 @@ vDivider.addEventListener('mousedown', e => {
 // fenced code blocks, and @calc blocks. Never creates pages — only expands words
 // whose titles already exist in allPages.
 
-const CAMELCASE_RE_PREVIEW = /\b[A-Z][a-z]+(?:[A-Z][a-z]+)+\b/g;
-
-function camelToTitlePreview(camel) {
-  return camel.replace(/([A-Z])/g, ' $1').trim();
-}
-
 function preprocessCamelLinks(markdown) {
+  if (!isCamelEnabled()) return markdown;
   const titleSet = new Set(allPages.map(p => p.title));
   if (titleSet.size === 0) return markdown;
 
@@ -442,9 +440,8 @@ function preprocessCamelLinks(markdown) {
     const parts = line.split(/(\[\[[^\]]*\]\])/);
     out.push(parts.map((part, i) => {
       if (i % 2 === 1) return part; // inside [[...]] — leave untouched
-      CAMELCASE_RE_PREVIEW.lastIndex = 0;
-      return part.replace(CAMELCASE_RE_PREVIEW, match => {
-        const title = camelToTitlePreview(match);
+      return part.replace(camelRe(), match => {
+        const title = camelToTitle(match);
         return titleSet.has(title) ? `[[${title}]]` : match;
       });
     }).join(''));
@@ -952,11 +949,23 @@ async function navigateForward() {
   renderBreadcrumbs();
 }
 
-// Cmd+[ / Cmd+] — navigate back/forward through the breadcrumb history.
-// Runs at capture phase so it fires before CM6 can handle Mod-] (indentMore).
-// Skips plain <input> and <textarea> elements so typing is unaffected.
+function openSearchWidget() {
+  const wrapper = document.querySelector('[data-widget-id="search"]');
+  if (!wrapper) return;
+  const entry = Object.entries(sbConfig).find(([, { sidebar }]) => sidebar.contains(wrapper));
+  if (entry) {
+    const [name] = entry;
+    if (sbState[name] === 'hidden') setSbState(name, 'flyout');
+  }
+  allWidgetInstances?.search?.focusSearch();
+}
+
+// Global keydown shortcuts (capture phase, fires before CM6).
 window.addEventListener('keydown', e => {
   if (!e.metaKey && !e.ctrlKey) return;
+  // ⌘F — open Search widget; fires even when an input is focused.
+  if (e.code === 'KeyF') { e.preventDefault(); openSearchWidget(); return; }
+  // ⌘[ / ⌘] — back/forward; skip plain inputs so typing is unaffected.
   const tag = document.activeElement?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA') return;
   if (e.code === 'BracketLeft')  { e.preventDefault(); navigateBack();    }
@@ -1185,9 +1194,9 @@ function renderTaskText(raw, titleSet) {
     } else if (atCtx) {
       parts.push(`<span class="mi-tasks-at-ctx">${escapeHtml(full)}</span>`);
     } else {
-      // CamelCase: render as wiki link only if the expanded title exists.
-      const title = camel.replace(/([A-Z])/g, ' $1').trim();
-      if (titleSet?.has(title)) {
+      // CamelCase: render as wiki link only if the expanded title exists and CamelCase is on.
+      const title = camelToTitle(camel);
+      if (isCamelEnabled() && titleSet?.has(title)) {
         parts.push(`<span class="mi-tasks-wiki" data-title="${escapeAttr(title)}">${escapeHtml(camel)}</span>`);
       } else {
         parts.push(escapeHtml(camel));
@@ -1475,13 +1484,11 @@ function _wlPosition(anchorEl) {
 
 const SKIP_META_KEYS = new Set(['title', 'created-date', 'publish-date', 'unpublish-date']);
 
-// Convert CamelCase to spaced title — mirrors camelToTitle() in editor.js.
-function _camelToTitle(s) { return s.replace(/([A-Z])/g, ' $1').trim(); }
-const CAMEL_RE = /^[A-Z][a-z]+(?:[A-Z][a-z]+)+$/;
+const _CAMEL_ANCHOR_RE = /^[A-Z][a-z]+(?:[A-Z][a-z]+)+$/;
 
 async function _wlShow(rawTitle, anchorEl) {
   // CamelCase spans carry the raw CamelCase word; convert it to the page title.
-  const lookupTitle = CAMEL_RE.test(rawTitle) ? _camelToTitle(rawTitle) : rawTitle;
+  const lookupTitle = _CAMEL_ANCHOR_RE.test(rawTitle) ? camelToTitle(rawTitle) : rawTitle;
   const lc   = lookupTitle.toLowerCase();
   const page = allPages.find(p => p.title?.toLowerCase() === lc
                                 || (p.aliases || []).some(a => a.toLowerCase() === lc));
@@ -2256,6 +2263,15 @@ async function showSettingsDialog() {
           <p class="text-xs text-olive-600">When Yes, tasks on future-dated journal pages are hidden from the Tasks Widget and Tasks page.</p>
         </div>
         <div class="flex flex-col gap-1.5">
+          <label class="text-xs text-olive-500 font-mono">Linking</label>
+          <label class="flex items-center gap-2 cursor-pointer text-xs text-olive-200">
+            <input type="checkbox" id="mi-settings-camel-disabled"
+              ${camelCaseDisabled ? 'checked' : ''}
+              class="accent-amber-500 cursor-pointer" />
+            Disable automatic CamelCase linking
+          </label>
+        </div>
+        <div class="flex flex-col gap-1.5">
           <label class="text-xs text-olive-500 font-mono">Fonts</label>
           <datalist id="mi-fonts-list"></datalist>
           <div class="grid items-center gap-x-3 gap-y-1.5 text-xs" style="grid-template-columns:auto 1fr">
@@ -2361,6 +2377,13 @@ async function showSettingsDialog() {
           allWidgetInstances.tasks?.refresh();
           refreshTasksView();
         }
+        const newCamelDisabled = overlay.querySelector('#mi-settings-camel-disabled')?.checked ?? false;
+        if (newCamelDisabled !== camelCaseDisabled) {
+          camelCaseDisabled = newCamelDisabled;
+          setPref('camelCaseDisabled', camelCaseDisabled);
+          setCamelEnabled(!camelCaseDisabled);
+          renderMarkdown();
+        }
         const newEditorFont  = overlay.querySelector('input[name="mi-font-editor"]')?.value.trim()  ?? '';
         const newUiFont      = overlay.querySelector('input[name="mi-font-ui"]')?.value.trim()      ?? '';
         const newContentFont = overlay.querySelector('input[name="mi-font-content"]')?.value.trim() ?? '';
@@ -2418,6 +2441,10 @@ window.__TAURI__.event.listen('menu', async e => {
     case 'edit-find':
       if (editorSearchBar.style.display === 'none') openSearch();
       else searchStep(1);
+      break;
+
+    case 'edit-search':
+      openSearchWidget();
       break;
 
     case 'view-today': {
@@ -2615,6 +2642,7 @@ for (const [id, inst] of Object.entries(allWidgetInstances)) {
 }
 
 setDeferFutureTasks(deferFutureTasks);
+setCamelEnabled(!camelCaseDisabled);
 
 const defaultLayout = {
   left:   ['search', 'page', 'annotations'],

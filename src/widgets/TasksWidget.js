@@ -3,6 +3,7 @@ import { invoke } from '../tauri.js';
 import { isDeferred, isOverdue, isDueToday, computeEffectivePriority, todayIso } from '../dateUtils.js';
 import { priorityPillHTML } from '../ui.js';
 import { parseTaskQuery, applyTaskFilter } from '../taskFilter.js';
+import { camelToTitle, isCamelEnabled } from '../camelLinks.js';
 
 let _deferFutureTasks = false;
 export function setDeferFutureTasks(val) { _deferFutureTasks = val; }
@@ -40,8 +41,8 @@ function renderText(raw, titleSet) {
     } else if (atCtx) {
       parts.push(`<span class="mi-tasks-at-ctx">${esc(full)}</span>`);
     } else {
-      const title = camel.replace(/([A-Z])/g, ' $1').trim();
-      if (titleSet.has(title)) {
+      const title = camelToTitle(camel);
+      if (isCamelEnabled() && titleSet.has(title)) {
         parts.push(`<span class="mi-tasks-wiki" data-title="${esc(title)}">${esc(camel)}</span>`);
       } else {
         parts.push(esc(camel));

@@ -13,7 +13,7 @@ function esc(s) {
 //   op      → amber     infix operator keyword (NEAR)
 //   source  → violet    in: source filters
 //   date    → orange    after: / before: date filters
-//   taxon   → sky       tag: / cat: taxonomy filters
+//   taxon   → sky       tag: / category: taxonomy filters
 //   meta    → zinc      arbitrary key:value metadata
 // cursor: characters to back up from end of final input value (0 = stay at end).
 // wrap:   wrap existing input value in `insert`…`insert` (used for phrase quotes).
@@ -25,7 +25,7 @@ const OPERATORS = [
   { label: 'after:',         insert: 'after:',     color: 'date' },
   { label: 'before:',        insert: 'before:',    color: 'date' },
   { label: 'tag:',           insert: 'tag:',       color: 'taxon' },
-  { label: 'cat:',           insert: 'cat:',       color: 'taxon' },
+  { label: 'category:',      insert: 'category:',  color: 'taxon' },
   { label: 'field:value',    insert: '',           color: 'meta' },
 ];
 

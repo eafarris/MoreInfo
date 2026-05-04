@@ -2213,7 +2213,7 @@ fn apply_known_filter(
             if !vals.is_empty() { *pending_tags = vals; }
             true
         }
-        "cat" | "category" => {
+        "category" => {
             filters.category = Some(val.to_string());
             true
         }

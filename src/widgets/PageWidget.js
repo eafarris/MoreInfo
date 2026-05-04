@@ -58,7 +58,7 @@ export class PageWidget extends Widget {
                     border-t border-olive-700 bg-olive-900 shrink-0">
           <span class="shrink-0 text-[9px] font-semibold uppercase tracking-wider
                        text-olive-600 select-none pr-0.5">Filters</span>
-          ${chip('cat:', 'cat:', 'text-sky-400')}
+          ${chip('category:', 'category:', 'text-sky-400')}
           ${chip('tag:', 'tag:', 'text-sky-400')}
           ${chip('favorite:true', 'favorite:true', 'text-zinc-400')}
         </div>

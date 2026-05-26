@@ -48,6 +48,33 @@ const LEADING_BINOP = /^(\*\*|[-+*/%^])/;
 const CURRENCY_RE = /[$€£¥]/g;
 const CURRENCY_SYMBOLS = { $: '$', '€': '€', '£': '£', '¥': '¥' };
 
+// ── Unicode math normalizer ───────────────────────────────────────────────
+// Replaces common Unicode math characters with their ASCII equivalents so
+// expressions typed with a real keyboard or pasted from typeset text work
+// identically to their plain-ASCII forms.
+
+const SUPERSCRIPT_DIGITS = '⁰¹²³⁴⁵⁶⁷⁸⁹';
+
+export function normalizeUnicodeMath(expr) {
+  return expr
+    // Operator aliases
+    .replace(/×/g,  '*')   // multiplication sign   U+00D7
+    .replace(/÷/g,  '/')   // division sign         U+00F7
+    .replace(/−/g,  '-')   // minus sign            U+2212  (not a hyphen)
+    .replace(/·/g,  '*')   // middle dot            U+00B7
+    // Constants
+    .replace(/π/g,  'pi')  // pi                    U+03C0
+    .replace(/∞/g,  'Infinity') // infinity         U+221E
+    // Comparison operators
+    .replace(/≤/g,  '<=')  // less-than or equal    U+2264
+    .replace(/≥/g,  '>=')  // greater-than or equal U+2265
+    .replace(/≠/g,  '!=')  // not equal             U+2260
+    // Superscript exponents: runs of ⁰–⁹ become ^N (e.g. x² → x^2, x²³ → x^23)
+    .replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹]+/g, m =>
+      '^' + m.split('').map(c => SUPERSCRIPT_DIGITS.indexOf(c)).join('')
+    );
+}
+
 // ── Date math helpers ─────────────────────────────────────────────────────
 
 // Maps singular unit names to Luxon Duration keys.
@@ -214,6 +241,9 @@ export function evalCalcExpr(expr, scope) {
   // Strip [[wiki links]] — page references are decorative, not operands.
   let e = beforeComment.replace(/\[\[[^\]]*\]\]/g, '').trim();
   if (!e) return { value: null };
+
+  // Normalise Unicode math characters to ASCII before any further parsing.
+  e = normalizeUnicodeMath(e);
 
   // Detect and strip currency symbols (e.g. $100, 24 * €50).
   // The symbol is remembered so it can be re-applied to the formatted result.

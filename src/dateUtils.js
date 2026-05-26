@@ -13,6 +13,42 @@ import * as chrono from 'chrono-node';
 
 const MONTH_ABBR = ['Jan','Feb','Mar','Apr','May','Jun',
                     'Jul','Aug','Sep','Oct','Nov','Dec'];
+const MONTH_FULL = ['January','February','March','April','May','June',
+                    'July','August','September','October','November','December'];
+const WEEKDAY_FULL = ['Sunday','Monday','Tuesday','Wednesday',
+                      'Thursday','Friday','Saturday'];
+
+// Controlled by setJournalDateFormat(); default matches the historical format.
+let _journalDateFmt = 'd-mmm-yyyy';
+
+export function setJournalDateFormat(fmt) { _journalDateFmt = fmt || 'd-mmm-yyyy'; }
+
+/** The available journal date display format keys. */
+export const JOURNAL_DATE_FORMATS = [
+  'd-mmm-yyyy',
+  'mmmm-d-yyyy',
+  'd-mmmm-yyyy',
+  'weekday-d-mmm-yyyy',
+  'iso',
+];
+
+/**
+ * Format a YYYY-MM-DD string using an explicit format key, without
+ * reading or modifying the global format setting.  Used to preview
+ * each format option in the settings dialog.
+ */
+export function formatJournalDateAs(iso, fmt) {
+  try {
+    const d = new Date(iso + 'T12:00:00');
+    switch (fmt) {
+      case 'mmmm-d-yyyy':        return `${MONTH_FULL[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+      case 'd-mmmm-yyyy':        return `${d.getDate()} ${MONTH_FULL[d.getMonth()]} ${d.getFullYear()}`;
+      case 'weekday-d-mmm-yyyy': return `${WEEKDAY_FULL[d.getDay()]}, ${d.getDate()} ${MONTH_ABBR[d.getMonth()]} ${d.getFullYear()}`;
+      case 'iso':                return iso;
+      default:                   return `${d.getDate()} ${MONTH_ABBR[d.getMonth()]} ${d.getFullYear()}`;
+    }
+  } catch { return iso; }
+}
 
 /**
  * Attempt to parse `str` as a date.
@@ -54,7 +90,18 @@ export function parseFlexibleDate(str, referenceDate) {
 export function formatJournalDate(iso) {
   try {
     const d = new Date(iso + 'T12:00:00');
-    return `${d.getDate()} ${MONTH_ABBR[d.getMonth()]} ${d.getFullYear()}`;
+    switch (_journalDateFmt) {
+      case 'mmmm-d-yyyy':
+        return `${MONTH_FULL[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+      case 'd-mmmm-yyyy':
+        return `${d.getDate()} ${MONTH_FULL[d.getMonth()]} ${d.getFullYear()}`;
+      case 'weekday-d-mmm-yyyy':
+        return `${WEEKDAY_FULL[d.getDay()]}, ${d.getDate()} ${MONTH_ABBR[d.getMonth()]} ${d.getFullYear()}`;
+      case 'iso':
+        return iso;
+      default:
+        return `${d.getDate()} ${MONTH_ABBR[d.getMonth()]} ${d.getFullYear()}`;
+    }
   } catch {
     return iso;
   }

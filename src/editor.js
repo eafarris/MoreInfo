@@ -859,9 +859,14 @@ export const calcCopyHandler = EditorView.domEventHandlers({
     for (const range of state.selection.ranges) {
       if (range.empty) continue;
       const lineFrom = doc.lineAt(range.from).number;
-      const lineTo   = doc.lineAt(Math.min(range.to, doc.length)).number;
+      // Extend lineTo by one when the selection reaches the document end so
+      // the final calc expression line is processed as a non-terminal line
+      // (slTo = line.to rather than range.to).  This makes the result-append
+      // behaviour identical whether or not the user typed a trailing blank line.
+      let lineTo = doc.lineAt(Math.min(range.to, doc.length)).number;
+      if (range.to >= doc.length) lineTo++;
       const lineTexts = [];
-      for (let ln = lineFrom; ln <= lineTo; ln++) {
+      for (let ln = lineFrom; ln <= Math.min(lineTo, doc.lines); ln++) {
         const line  = doc.line(ln);
         const slFrom = ln === lineFrom ? range.from : line.from;
         const slTo   = ln === lineTo   ? range.to   : line.to;
@@ -1087,20 +1092,36 @@ function wikiLinkSource(context) {
   // this prevents an immediate space from completing the first item.
   const query = match.text.slice(2).trimStart().toLowerCase();
   if (!query) return null;
-  const pageOptions = _allPages
-    .filter(p => p.title.toLowerCase().startsWith(query))
-    .map(p => ({
-      label:  p.title,
-      detail: '[[link]]',
-      apply(view, _completion, _from, to) {
-        const insert = `[[${p.title}]] `;
-        view.dispatch({
-          changes: { from: match.from, to, insert },
-          selection: { anchor: match.from + insert.length },
-          userEvent: 'input.complete',
-        });
-      },
-    }));
+  const seenPaths  = new Set();
+  const pageOptions = [];
+  for (const p of _allPages) {
+    // Title match — primary lookup.
+    if (p.title.toLowerCase().startsWith(query)) {
+      seenPaths.add(p.path);
+      pageOptions.push({
+        label: p.title, detail: '[[link]]',
+        apply(view, _c, _f, to) {
+          const insert = `[[${p.title}]] `;
+          view.dispatch({ changes: { from: match.from, to, insert },
+            selection: { anchor: match.from + insert.length }, userEvent: 'input.complete' });
+        },
+      });
+      continue;
+    }
+    // Alias match — used when the title doesn't match (e.g. journal with explicit title).
+    const aliasMatch = (p.aliases || []).find(a => a.toLowerCase().startsWith(query));
+    if (aliasMatch) {
+      seenPaths.add(p.path);
+      pageOptions.push({
+        label: aliasMatch, detail: '[[link]]',
+        apply(view, _c, _f, to) {
+          const insert = `[[${aliasMatch}]] `;
+          view.dispatch({ changes: { from: match.from, to, insert },
+            selection: { anchor: match.from + insert.length }, userEvent: 'input.complete' });
+        },
+      });
+    }
+  }
 
   const journalOptions = _journalDates
     .filter(d => d.startsWith(query))

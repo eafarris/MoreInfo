@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { evalCalcExpr, scanCalcBlocks } from '../calcBlock.js';
+import { evalCalcExpr, scanCalcBlocks, normalizeUnicodeMath } from '../calcBlock.js';
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
@@ -182,5 +182,182 @@ describe('scanCalcBlocks – list-delimiter operators', () => {
     expect(results.get(3)?.formatted).toBe('40');   // 50 - 10, first block
     expect(results.get(6)?.formatted).toBe('200');
     expect(results.get(7)?.formatted).toBe('208');  // 200 + 8, second block (fresh _last)
+  });
+});
+
+// ── normalizeUnicodeMath ───────────────────────────────────────────────────
+
+describe('normalizeUnicodeMath – operator substitution', () => {
+  it('replaces × with *', () => {
+    expect(normalizeUnicodeMath('3 × 4')).toBe('3 * 4');
+  });
+
+  it('replaces ÷ with /', () => {
+    expect(normalizeUnicodeMath('10 ÷ 2')).toBe('10 / 2');
+  });
+
+  it('replaces Unicode minus sign − with ASCII -', () => {
+    expect(normalizeUnicodeMath('10 − 3')).toBe('10 - 3');
+  });
+
+  it('replaces middle dot · with *', () => {
+    expect(normalizeUnicodeMath('5 · 6')).toBe('5 * 6');
+  });
+
+  it('replaces π with pi', () => {
+    expect(normalizeUnicodeMath('2 * π')).toBe('2 * pi');
+  });
+
+  it('replaces ∞ with Infinity', () => {
+    expect(normalizeUnicodeMath('∞')).toBe('Infinity');
+  });
+
+  it('replaces ≤ with <=', () => {
+    expect(normalizeUnicodeMath('x ≤ 5')).toBe('x <= 5');
+  });
+
+  it('replaces ≥ with >=', () => {
+    expect(normalizeUnicodeMath('x ≥ 5')).toBe('x >= 5');
+  });
+
+  it('replaces ≠ with !=', () => {
+    expect(normalizeUnicodeMath('x ≠ 0')).toBe('x != 0');
+  });
+});
+
+describe('normalizeUnicodeMath – superscript exponents', () => {
+  it('² becomes ^2', () => {
+    expect(normalizeUnicodeMath('x²')).toBe('x^2');
+  });
+
+  it('³ becomes ^3', () => {
+    expect(normalizeUnicodeMath('x³')).toBe('x^3');
+  });
+
+  it('⁰ becomes ^0', () => {
+    expect(normalizeUnicodeMath('x⁰')).toBe('x^0');
+  });
+
+  it('consecutive superscripts form a multi-digit exponent', () => {
+    expect(normalizeUnicodeMath('x²³')).toBe('x^23');
+  });
+
+  it('handles all digits ⁰–⁹', () => {
+    expect(normalizeUnicodeMath('x⁰¹²³⁴⁵⁶⁷⁸⁹')).toBe('x^0123456789');
+  });
+});
+
+describe('normalizeUnicodeMath – mixed expressions', () => {
+  it('handles × and ÷ together', () => {
+    expect(normalizeUnicodeMath('6 × 4 ÷ 2')).toBe('6 * 4 / 2');
+  });
+
+  it('handles superscript in a full expression', () => {
+    expect(normalizeUnicodeMath('3² + 4²')).toBe('3^2 + 4^2');
+  });
+
+  it('leaves plain ASCII expressions unchanged', () => {
+    expect(normalizeUnicodeMath('3 * 4 + 1')).toBe('3 * 4 + 1');
+  });
+});
+
+describe('evalCalcExpr – Unicode operators evaluate correctly', () => {
+  it('3 × 4 evaluates to 12', () => {
+    const r = evalCalcExpr('3 × 4', freshScope());
+    expect(r.error).toBeUndefined();
+    expect(r.formatted).toBe('12');
+  });
+
+  it('10 ÷ 2 evaluates to 5', () => {
+    const r = evalCalcExpr('10 ÷ 2', freshScope());
+    expect(r.error).toBeUndefined();
+    expect(r.formatted).toBe('5');
+  });
+
+  it('100 − 37 evaluates to 63', () => {
+    // Uses values that cannot be parsed as a date by chrono-node.
+    const r = evalCalcExpr('100 − 37', freshScope());
+    expect(r.error).toBeUndefined();
+    expect(r.formatted).toBe('63');
+  });
+
+  it('3² evaluates to 9', () => {
+    const r = evalCalcExpr('3²', freshScope());
+    expect(r.error).toBeUndefined();
+    expect(r.formatted).toBe('9');
+  });
+
+  it('2³ evaluates to 8', () => {
+    const r = evalCalcExpr('2³', freshScope());
+    expect(r.error).toBeUndefined();
+    expect(r.formatted).toBe('8');
+  });
+
+  it('3² + 4² evaluates to 25', () => {
+    const r = evalCalcExpr('3² + 4²', freshScope());
+    expect(r.error).toBeUndefined();
+    expect(r.formatted).toBe('25');
+  });
+});
+
+// ── calcCopyHandler logic – last-line without trailing blank ─────────────────
+// Extracted copy logic (mirrors calcCopyHandler in editor.js) so it can be
+// exercised without a real EditorView / DOM clipboard event.
+
+import { EditorState } from '@codemirror/state';
+
+function simulateCopy(docText, rangeFrom, rangeTo) {
+  const state = EditorState.create({ doc: docText });
+  const doc   = state.doc;
+  const { results } = scanCalcBlocks(docText);
+  if (!results.size) return null;
+
+  let lineTo = doc.lineAt(Math.min(rangeTo, doc.length)).number;
+  if (rangeTo >= doc.length) lineTo++;
+
+  const lineFrom   = doc.lineAt(rangeFrom).number;
+  const lineTexts  = [];
+  for (let ln = lineFrom; ln <= Math.min(lineTo, doc.lines); ln++) {
+    const line   = doc.line(ln);
+    const slFrom = ln === lineFrom ? rangeFrom : line.from;
+    const slTo   = ln === lineTo   ? rangeTo   : line.to;
+    let t = doc.sliceString(slFrom, Math.min(slTo, doc.length));
+    const res = results.get(ln);
+    if (res && !res.error && res.formatted && slTo >= line.to) {
+      t = t.trimEnd() + '  = ' + res.formatted;
+    }
+    lineTexts.push(t);
+  }
+  return lineTexts.join('\n');
+}
+
+describe('calcCopyHandler – final expression without trailing blank line', () => {
+  const doc = '@calc\n5 + 3';
+
+  it('appends result when full selection reaches doc end', () => {
+    const output = simulateCopy(doc, 0, doc.length);
+    expect(output).toContain('= 8');
+    expect(output).toBe('@calc\n5 + 3  = 8');
+  });
+
+  it('appends result when selecting just the expression line to doc end', () => {
+    const from = EditorState.create({ doc }).doc.line(2).from;
+    const output = simulateCopy(doc, from, doc.length);
+    expect(output).toBe('5 + 3  = 8');
+  });
+
+  it('does NOT append result when selection stops short of line end', () => {
+    const from = EditorState.create({ doc }).doc.line(2).from;
+    const output = simulateCopy(doc, from, from + 3); // selects "5 +"
+    expect(output).not.toContain('= 8');
+  });
+
+  it('appends result equivalently with a trailing blank line', () => {
+    const docWithBlank = '@calc\n5 + 3\n';
+    const outNoBlank   = simulateCopy(doc,          0, doc.length);
+    const outBlank     = simulateCopy(docWithBlank, 0, docWithBlank.length);
+    // Both should include the result; only differ by trailing newline.
+    expect(outNoBlank).toContain('= 8');
+    expect(outBlank).toContain('= 8');
   });
 });

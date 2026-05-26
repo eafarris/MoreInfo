@@ -352,6 +352,7 @@
           <!-- Metadata pseudo-page CM container -->
           <div id="metadata-view" class="flex-1 min-h-0 overflow-hidden" style="display:none"></div>
           <div id="tag-view" class="flex-1 min-h-0 overflow-hidden" style="display:none"></div>
+          <div id="health-view" class="flex-1 min-h-0 overflow-y-auto p-6" style="display:none"></div>
 
           <!-- Editor pane -->
           <div id="editor-pane" class="flex-1 min-h-0 flex flex-col overflow-hidden">
@@ -461,6 +462,12 @@
     <span id="file-name">Untitled</span>
     <span id="modified-indicator" class="text-yellow-300 text-sm leading-none"></span>
     <span id="index-status" class="ml-auto flex items-center gap-1 tabular-nums opacity-70"></span>
+    <button id="health-badge" style="display:none"
+      class="flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium
+             bg-yellow-500/20 text-yellow-200 hover:bg-yellow-500/30 transition-colors border-0 cursor-pointer">
+      <i class="ph ph-warning leading-none"></i>
+      <span id="health-badge-count"></span>
+    </button>
     <span id="cursor-info" class="tabular-nums"></span>
   </footer>
 

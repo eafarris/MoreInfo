@@ -22,7 +22,7 @@ import { priorityPillHTML } from './ui.js';
 import { parseTaskQuery, applyTaskFilter } from './taskFilter.js';
 import { initWidgetDrag } from './widgetDrag.js';
 import { placeholder } from '@codemirror/view';
-import { formatJournalDate, isDeferred, isDueToday, isOverdue, todayIso, computeEffectivePriority } from './dateUtils.js';
+import { formatJournalDate, setJournalDateFormat, formatJournalDateAs, JOURNAL_DATE_FORMATS, isDeferred, isDueToday, isOverdue, todayIso, computeEffectivePriority } from './dateUtils.js';
 
 // ── State ─────────────────────────────────────────
 
@@ -36,6 +36,8 @@ await initPrefs();
 let searchOpenIn      = getPref('searchOpenIn',      'page');
 // When true, CamelCase words are never treated as implicit wiki links.
 let camelCaseDisabled = getPref('camelCaseDisabled', false);
+// Format key for journal date display; see JOURNAL_DATE_FORMATS in dateUtils.js.
+let journalDateFormat = getPref('journalDateFormat', 'd-mmm-yyyy');
 // When true, tasks on future-dated journal pages are hidden from task lists.
 let deferFutureTasks  = getPref('deferFutureTasks',  false);
 
@@ -86,6 +88,7 @@ let mdTimer       = null;
 const TASKS_PSEUDO_PAGE    = '::tasks::';
 const METADATA_PSEUDO_PAGE = '::metadata::';
 const TAG_PSEUDO_PAGE      = '::tag::';
+const HEALTH_PSEUDO_PAGE   = '::health::';
 
 // Tasks pseudo-page state.
 const tasksContextFilter = new Set(); // active @context toggles; empty = show all
@@ -119,6 +122,7 @@ const tasksSearchClear    = document.getElementById('tasks-search-clear');
 const tasksEditorContainer= document.getElementById('tasks-editor-container');
 const metadataView    = document.getElementById('metadata-view');
 const tagView         = document.getElementById('tag-view');
+const healthView      = document.getElementById('health-view');
 const vDivider        = document.getElementById('v-divider');
 const markdownPane    = document.getElementById('markdown-pane');
 const markdownContent = document.getElementById('markdown-content');
@@ -127,6 +131,8 @@ const breadcrumbsEl   = document.getElementById('breadcrumbs');
 const fileNameEl      = document.getElementById('file-name');
 const modifiedEl      = document.getElementById('modified-indicator');
 const indexStatusEl   = document.getElementById('index-status');
+const healthBadgeEl   = document.getElementById('health-badge');
+const healthBadgeCountEl = document.getElementById('health-badge-count');
 const cursorEl        = document.getElementById('cursor-info');
 
 // Resize containers (used to cap sidebar sizes)
@@ -262,12 +268,26 @@ let currentFav = false;
 
 function updateDocTitle(fm, content) {
   let title = '';
-  if (fm.title) {
+  let titleHtml = '';
+  const isJournal = isJournalFile(currentFile);
+
+  if (isJournal) {
+    const dateTitle = formatDateLong(basename(currentFile).slice(0, 10));
+    if (fm.title) {
+      const explicitTitle = fm.title.type === 'date'
+        ? formatDateLong(fm.title.value)
+        : String(fm.title.value);
+      title    = `${dateTitle} — ${explicitTitle}`;
+      titleHtml = `${escapeHtml(dateTitle)}<span class="text-olive-400 font-normal"> — ${escapeHtml(explicitTitle)}</span>`;
+    } else {
+      title    = dateTitle;
+      titleHtml = escapeHtml(dateTitle);
+    }
+  } else if (fm.title) {
     title = fm.title.type === 'date'
       ? formatDateLong(fm.title.value)
       : String(fm.title.value);
-  } else if (isJournalFile(currentFile)) {
-    title = formatDateLong(basename(currentFile).slice(0, 10));
+    titleHtml = escapeHtml(title);
   } else {
     const tagMatch = content.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
     if (tagMatch) {
@@ -280,18 +300,19 @@ function updateDocTitle(fm, content) {
         title = basename(currentFile).replace(/\.[^.]+$/, '');
       }
     }
+    titleHtml = escapeHtml(title);
   }
 
   currentTitle = title || (currentFile ? basename(currentFile).replace(/\.[^.]+$/, '') : '');
   currentFav = isFavoritePage(fm);
-  const icon    = isJournalFile(currentFile) ? 'ph-calendar-dot' : 'ph-file-text';
+  const icon    = isJournal ? 'ph-calendar-dot' : 'ph-file-text';
   const starCls = currentFav
     ? 'ph-fill ph-star text-amber-400'
     : 'ph ph-star text-olive-600 hover:text-olive-400';
 
   docTitle.innerHTML = `
     <div class="flex items-start justify-between gap-2 w-full">
-      <span><i class="ph-bold ${icon} leading-none mr-2"></i>${escapeHtml(title)}</span>
+      <span><i class="ph-bold ${icon} leading-none mr-2"></i>${titleHtml}</span>
       <button id="btn-favorite" title="${currentFav ? 'Remove from favorites' : 'Add to favorites'}"
         class="shrink-0 mt-0.5 transition-colors" style="pointer-events:auto">
         <i class="${starCls} text-base leading-none"></i>
@@ -328,8 +349,11 @@ function updateDocTitle(fm, content) {
 
 // ── CodeMirror editor ─────────────────────────────────────────────────────
 
-let cmDocChangeTimer = null;
-let cmAutoSaveTimer  = null;
+let cmDocChangeTimer  = null;
+let cmAutoSaveTimer   = null;
+// Cached so newly-mounted widgets can be seeded with the current document state.
+let currentContent   = '';
+let currentMetadata  = {};
 
 const cmView = createEditor({
   parent: editorDiv,
@@ -474,6 +498,8 @@ function scheduleMarkdown() {
 async function handleDocumentChange(content) {
   try {
     const metadata = await invoke('get_metadata', { content });
+    currentContent  = content;
+    currentMetadata = metadata;
     updateDocTitle(metadata, content);
     mountedWidgets.forEach(w => w.onDocumentChange(content, metadata));
   } catch (e) {
@@ -635,6 +661,9 @@ function loadUiState() {
 // ─────────────────────────────────────────────────
 
 const sbState = { left: 'hidden', right: 'pinned', top: 'hidden', bottom: 'hidden' };
+
+// State snapshot used by ⌘⇧W to restore sidebars after hiding them.
+let _sbHideSnapshot = null;
 
 const flyoutTimers = {};
 let   isResizing   = false;
@@ -855,6 +884,12 @@ function mountWidgets(sidebarName, widgets) {
       if (!widgetLayout[sidebarName].includes(widget.id)) {
         widgetLayout[sidebarName].push(widget.id);
       }
+      // Seed the widget with the current document state so it isn't blank
+      // when mounted after a file is already open (e.g. added via picker or
+      // remounted after a sidebar rebuild).
+      if (currentFile) {
+        try { widget.onFileOpen(currentFile, currentContent, currentMetadata); } catch(e) {}
+      }
     } catch (err) {
       console.error(`[mountWidgets] widget "${widget.id}" mount() threw:`, err);
       stack.removeChild(wrapper);
@@ -926,6 +961,8 @@ async function _loadHistoryEntry(entry) {
       await loadMetadataView(metadataQuery.key, metadataQuery.value, false);
     } else if (entry.path === TAG_PSEUDO_PAGE && tagQuery) {
       await loadTagView(tagQuery, false);
+    } else if (entry.path === HEALTH_PSEUDO_PAGE) {
+      await showHealthPage(false);
     } else {
       const content = await invoke('read_file', { path: entry.path });
       await loadFile(entry.path, content);
@@ -960,11 +997,33 @@ function openSearchWidget() {
   allWidgetInstances?.search?.focusSearch();
 }
 
+// ⌘⇧W — toggle all non-empty sidebars.
+// First press hides every sidebar that has widgets; second press restores them.
+function toggleAllSidebars() {
+  const sides = ['left', 'right', 'top', 'bottom'];
+  const nonEmpty = sides.filter(s => widgetLayout[s]?.length > 0);
+  const anyVisible = nonEmpty.some(s => sbState[s] !== 'hidden');
+  if (anyVisible) {
+    _sbHideSnapshot = {};
+    for (const s of nonEmpty) {
+      _sbHideSnapshot[s] = sbState[s];
+      setSbState(s, 'hidden');
+    }
+  } else {
+    for (const s of nonEmpty) {
+      setSbState(s, _sbHideSnapshot?.[s] ?? 'pinned');
+    }
+    _sbHideSnapshot = null;
+  }
+}
+
 // Global keydown shortcuts (capture phase, fires before CM6).
 window.addEventListener('keydown', e => {
   if (!e.metaKey && !e.ctrlKey) return;
   // ⌘F — open Search widget; fires even when an input is focused.
   if (e.code === 'KeyF') { e.preventDefault(); openSearchWidget(); return; }
+  // ⌘⇧W — toggle all non-empty sidebars.
+  if (e.code === 'KeyW' && e.shiftKey) { e.preventDefault(); toggleAllSidebars(); return; }
   // ⌘[ / ⌘] — back/forward; skip plain inputs so typing is unaffected.
   const tag = document.activeElement?.tagName;
   if (tag === 'INPUT' || tag === 'TEXTAREA') return;
@@ -1014,6 +1073,11 @@ async function loadFile(path, content) {
     editorPane.style.display   = '';
     vDivider.style.display     = '';
     markdownPane.style.display = '';
+  } else if (currentFile === HEALTH_PSEUDO_PAGE) {
+    healthView.style.display   = 'none';
+    editorPane.style.display   = '';
+    vDivider.style.display     = '';
+    markdownPane.style.display = '';
   }
 
   const journalPlaceholder = JOURNAL_RE.test(path) && content.length === 0
@@ -1026,7 +1090,12 @@ async function loadFile(path, content) {
   });
   setCurrentFile(path);
   setModified(false);
-  const metadata = await invoke('get_metadata', { content });
+  const metadata = await invoke('get_metadata', { content }).catch(e => {
+    console.error('[loadFile] get_metadata failed:', e);
+    return {};
+  });
+  currentContent  = content;
+  currentMetadata = metadata;
   updateDocTitle(metadata, content);
   mountedWidgets.forEach(w => { try { w.onFileOpen(path, content, metadata); } catch(e) { console.error(`Widget ${w.id} onFileOpen failed:`, e); } });
   if (editorArea.dataset.mode === 'render') await renderMarkdown();
@@ -1042,7 +1111,7 @@ async function navigateTo(path, content) {
   if (currentFile) {
     navHistory.push({
       path:  currentFile,
-      title: currentTitle || (currentFile === TASKS_PSEUDO_PAGE ? 'Tasks' : currentFile === METADATA_PSEUDO_PAGE ? (metadataQuery ? `${metadataQuery.key}` : 'Metadata') : currentFile === TAG_PSEUDO_PAGE ? (tagQuery ? `#${tagQuery}` : 'Tags') : basename(currentFile).replace(/\.[^.]+$/, '')),
+      title: currentTitle || (currentFile === TASKS_PSEUDO_PAGE ? 'Tasks' : currentFile === METADATA_PSEUDO_PAGE ? (metadataQuery ? `${metadataQuery.key}` : 'Metadata') : currentFile === TAG_PSEUDO_PAGE ? (tagQuery ? `#${tagQuery}` : 'Tags') : currentFile === HEALTH_PSEUDO_PAGE ? 'Datastore Health' : basename(currentFile).replace(/\.[^.]+$/, '')),
     });
     navFuture.length = 0;
   }
@@ -1058,7 +1127,7 @@ async function openWikiPage(title, coords) {
   const lc = title.toLowerCase();
   const existing = allPages.find(
     p => p.title.toLowerCase() === lc ||
-         (p.aliases || []).some(a => a === lc)
+         (p.aliases || []).some(a => a.toLowerCase() === lc)
   );
   if (existing) {
     try {
@@ -1885,6 +1954,135 @@ function buildTagDoc(hits, tag) {
   return lines.join('\n');
 }
 
+// ── Datastore Health pseudo-page ──────────────────
+
+async function showHealthPage(pushHistory = true) {
+  if (pushHistory && currentFile && currentFile !== HEALTH_PSEUDO_PAGE) {
+    navHistory.push({
+      path:  currentFile,
+      title: currentTitle || basename(currentFile).replace(/\.[^.]+$/, ''),
+    });
+    navFuture.length = 0;
+  }
+
+  editorPane.style.display   = 'none';
+  vDivider.style.display     = 'none';
+  markdownPane.style.display = 'none';
+  tasksView.style.display    = 'none';
+  metadataView.style.display = 'none';
+  tagView.style.display      = 'none';
+  healthView.style.display   = 'block';
+
+  currentFile  = HEALTH_PSEUDO_PAGE;
+  currentTitle = 'Datastore Health';
+  fileNameEl.textContent = 'Datastore Health';
+  document.title = 'MoreInfo — Datastore Health';
+  docTitle.textContent = 'Datastore Health';
+  mountedWidgets.forEach(w => { try { w.onFileOpen(HEALTH_PSEUDO_PAGE, '', {}); } catch(e) {} });
+
+  healthView.innerHTML = `
+    <div class="flex items-center gap-2 text-olive-500 text-sm">
+      <i class="ph ph-circle-notch animate-spin leading-none"></i>
+      <span>Scanning datastore…</span>
+    </div>`;
+
+  try {
+    const issues = await invoke('check_datastore_health');
+    renderHealthView(issues);
+  } catch (err) {
+    console.error('[MI] check_datastore_health failed:', err);
+    healthView.innerHTML = `<p class="text-red-400 text-sm">Health check failed: ${escapeHtml(String(err))}</p>`;
+  }
+}
+
+function renderHealthView(issues) {
+  const esc = escapeHtml;
+
+  const groups = {
+    broken_link:     { label: 'Broken wiki links',    icon: 'ph-link-break',    issues: [] },
+    orphan:          { label: 'Unlinked pages',        icon: 'ph-file-dashed',   issues: [] },
+    duplicate_title: { label: 'Duplicate page titles', icon: 'ph-copy',          issues: [] },
+    duplicate_alias: { label: 'Duplicate aliases',     icon: 'ph-tag',           issues: [] },
+  };
+  for (const issue of issues) {
+    if (groups[issue.kind]) groups[issue.kind].issues.push(issue);
+  }
+
+  if (!issues.length) {
+    healthView.innerHTML = `
+      <div class="flex items-center gap-2 text-olive-500">
+        <i class="ph ph-check-circle text-xl leading-none text-green-400"></i>
+        <span class="text-sm">No issues found.</span>
+      </div>`;
+    return;
+  }
+
+  const sections = Object.values(groups)
+    .filter(g => g.issues.length > 0)
+    .map(g => {
+      const rows = g.issues.map(issue => {
+        if (issue.kind === 'broken_link') {
+          return `<div class="health-row flex items-start gap-2 py-1.5 border-b border-olive-800 cursor-pointer hover:bg-olive-800/40 rounded px-2"
+                       data-path="${esc(issue.path)}">
+            <i class="ph ph-file-text text-olive-600 shrink-0 text-xs mt-0.5 leading-none"></i>
+            <div class="min-w-0">
+              <span class="text-xs text-olive-300">${esc(issue.title)}</span>
+              <span class="text-xs text-olive-600 ml-1">links to missing page</span>
+              <span class="text-xs text-amber-500 ml-1 font-mono">[[${esc(issue.detail)}]]</span>
+            </div>
+          </div>`;
+        }
+        if (issue.kind === 'orphan') {
+          return `<div class="health-row flex items-center gap-2 py-1.5 border-b border-olive-800 cursor-pointer hover:bg-olive-800/40 rounded px-2"
+                       data-path="${esc(issue.path)}">
+            <i class="ph ph-file-dashed text-olive-600 shrink-0 text-xs leading-none"></i>
+            <span class="text-xs text-olive-300">${esc(issue.title)}</span>
+            <span class="text-xs text-olive-600 ml-auto">no inbound links</span>
+          </div>`;
+        }
+        // duplicate_title / duplicate_alias
+        return `<div class="health-row flex items-start gap-2 py-1.5 border-b border-olive-800 cursor-pointer hover:bg-olive-800/40 rounded px-2"
+                     data-path="${esc(issue.path)}">
+          <i class="ph ph-copy text-olive-600 shrink-0 text-xs mt-0.5 leading-none"></i>
+          <div class="min-w-0">
+            <span class="text-xs text-olive-300 font-mono">${esc(issue.title)}</span>
+            <span class="text-xs text-olive-600 ml-1">shared by multiple pages</span>
+          </div>
+        </div>`;
+      }).join('');
+
+      return `<section class="mb-6">
+        <h2 class="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wider text-olive-500 mb-2">
+          <i class="ph ${g.icon} leading-none"></i>${esc(g.label)}
+          <span class="ml-1 font-normal text-olive-600">(${g.issues.length})</span>
+        </h2>
+        ${rows}
+      </section>`;
+    }).join('');
+
+  healthView.innerHTML = `<div class="max-w-2xl">${sections}</div>`;
+
+  healthView.querySelectorAll('.health-row[data-path]').forEach(row => {
+    row.addEventListener('click', () => openFilePath(row.dataset.path));
+  });
+}
+
+// Update the status-bar health badge.  Called after reindex and health check.
+function updateHealthBadge(issues) {
+  const important = issues.filter(i => i.kind === 'broken_link' || i.kind === 'duplicate_title' || i.kind === 'duplicate_alias');
+  const orphans   = issues.filter(i => i.kind === 'orphan');
+  const count = important.length + orphans.length;
+  if (count === 0) {
+    healthBadgeEl.style.display = 'none';
+    return;
+  }
+  healthBadgeEl.style.display = '';
+  const parts = [];
+  if (important.length) parts.push(`${important.length} issue${important.length !== 1 ? 's' : ''}`);
+  if (orphans.length)   parts.push(`${orphans.length} unlinked`);
+  healthBadgeCountEl.textContent = parts.join(', ');
+}
+
 // ── Wiki link navigation ──────────────────────────
 
 // Render mode: click on a rendered wiki-link anchor
@@ -2263,6 +2461,15 @@ async function showSettingsDialog() {
           <p class="text-xs text-olive-600">When Yes, tasks on future-dated journal pages are hidden from the Tasks Widget and Tasks page.</p>
         </div>
         <div class="flex flex-col gap-1.5">
+          <label class="text-xs text-olive-500 font-mono">Show dates as</label>
+          <select name="mi-journal-date-fmt"
+            class="bg-olive-800 border border-olive-600 rounded px-2 py-1 text-olive-200 focus:outline-none cursor-pointer text-xs w-fit">
+            ${JOURNAL_DATE_FORMATS.map(fmt =>
+              `<option value="${fmt}"${journalDateFormat === fmt ? ' selected' : ''}>${formatJournalDateAs(todayIso(), fmt)}</option>`
+            ).join('')}
+          </select>
+        </div>
+        <div class="flex flex-col gap-1.5">
           <label class="text-xs text-olive-500 font-mono">Linking</label>
           <label class="flex items-center gap-2 cursor-pointer text-xs text-olive-200">
             <input type="checkbox" id="mi-settings-camel-disabled"
@@ -2376,6 +2583,13 @@ async function showSettingsDialog() {
           setPref('deferFutureTasks', deferFutureTasks);
           allWidgetInstances.tasks?.refresh();
           refreshTasksView();
+        }
+        const newDateFmt = overlay.querySelector('select[name="mi-journal-date-fmt"]')?.value ?? 'd-mmm-yyyy';
+        if (newDateFmt !== journalDateFormat) {
+          journalDateFormat = newDateFmt;
+          setPref('journalDateFormat', journalDateFormat);
+          setJournalDateFormat(journalDateFormat);
+          if (currentFile) updateDocTitle(currentMetadata, cmView.state.doc.toString());
         }
         const newCamelDisabled = overlay.querySelector('#mi-settings-camel-disabled')?.checked ?? false;
         if (newCamelDisabled !== camelCaseDisabled) {
@@ -2599,7 +2813,21 @@ const allWidgetInstances = {
     if (cmView) cmView.dispatch({ effects: EditorView.scrollIntoView(pos, { y: 'start', yMargin: 32 }) });
   }}),
   counter:     new CounterWidget(),
-  annotations: new AnnotationsWidget({ onOpen: openFilePath }),
+  annotations: new AnnotationsWidget({
+    onOpen: async (path, line) => {
+      await openFilePath(path);
+      if (line > 0) {
+        const doc = cmView.state.doc;
+        if (line <= doc.lines) {
+          const pos = doc.line(line).from;
+          cmView.dispatch({
+            selection: { anchor: pos },
+            effects:   EditorView.scrollIntoView(pos, { y: 'center', yMargin: 64 }),
+          });
+        }
+      }
+    },
+  }),
   calendar:    new CalendarWidget({ onDateSelected: openJournalDate }),
   scratchPad:  new ScratchPadWidget(),
   tasks:       new TasksWidget({ onOpen: openFilePath, onOpenTitle: openWikiPage }),
@@ -2643,6 +2871,7 @@ for (const [id, inst] of Object.entries(allWidgetInstances)) {
 
 setDeferFutureTasks(deferFutureTasks);
 setCamelEnabled(!camelCaseDisabled);
+setJournalDateFormat(journalDateFormat);
 
 const defaultLayout = {
   left:   ['search', 'page', 'annotations'],
@@ -2746,6 +2975,10 @@ openJournalDate(_todayStr).then(() => {
         } else {
           setIndexStatus('<i class="ph ph-check leading-none"></i><span>Index up to date</span>');
         }
+        // Run health check after every reindex (cheap SQL queries).
+        invoke('check_datastore_health')
+          .then(updateHealthBadge)
+          .catch(err => console.warn('[MI] health check failed:', err));
       })
       .catch(err => {
         unlisten();
@@ -2754,3 +2987,5 @@ openJournalDate(_todayStr).then(() => {
       });
   }());
 });
+
+healthBadgeEl.addEventListener('click', () => showHealthPage());

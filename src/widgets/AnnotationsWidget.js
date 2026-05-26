@@ -64,7 +64,7 @@ export class AnnotationsWidget extends Widget {
 
     this._list.addEventListener('click', e => {
       const item = e.target.closest('[data-path]');
-      if (item) this._onOpen(item.dataset.path);
+      if (item) this._onOpen(item.dataset.path, Number(item.dataset.line) || 0);
     });
 
     this.refresh();
@@ -123,7 +123,7 @@ export class AnnotationsWidget extends Widget {
       const title = esc(a.title || a.path.split('/').pop().replace(/\.md$/, ''));
       const body  = esc(a.text || a.keyword);
       return `
-        <div data-path="${esc(a.path)}"
+        <div data-path="${esc(a.path)}" data-line="${a.line_number || 0}"
           class="flex items-start gap-2 px-3 py-1.5 cursor-pointer hover:bg-olive-800/50 transition-colors">
           <span class="mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${dot}"></span>
           <div class="min-w-0">

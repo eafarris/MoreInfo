@@ -74,14 +74,21 @@ export class MetadataWidget extends Widget {
   _render(metadata, content = '') {
     if (!this._body || !metadata) return;
 
-    // Merge inline #hashtags into tags entry.
+    // Normalise the `tag` entry: strip any leading '#' from each value
+    // (users write "tag: #work" by inertia; index it the same as "tag: work").
+    // Then merge inline #hashtags from the body into the same entry.
     const inlineTags = [...content.matchAll(/(^|[ \t])(#[a-zA-Z][a-zA-Z0-9_-]*)/gm)]
       .map(m => m[2].slice(1).toLowerCase());
 
-    if (inlineTags.length > 0) {
-      const existing = metadata.tags?.value ?? [];
-      const merged   = [...new Set([...existing.map(t => t.toLowerCase()), ...inlineTags])].sort();
-      metadata = { ...metadata, tags: { type: 'array', value: merged } };
+    const rawTagVal = metadata.tag;
+    const fmTags = rawTagVal
+      ? (rawTagVal.type === 'array' ? rawTagVal.value : [rawTagVal.value])
+          .map(t => t.replace(/^#/, '').toLowerCase()).filter(Boolean)
+      : [];
+
+    if (fmTags.length > 0 || inlineTags.length > 0) {
+      const merged = [...new Set([...fmTags, ...inlineTags])].sort();
+      metadata = { ...metadata, tag: { type: 'array', value: merged } };
     }
 
     const entries = Object.entries(metadata)

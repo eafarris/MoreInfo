@@ -598,16 +598,19 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
     let mut tag_set: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
 
     if let Some(val) = fm.get("tag") {
+        // Strip a leading '#' so "tag: #work" and "tag: work" index identically,
+        // matching the behaviour of extract_hashtags() for inline #hashtags.
+        let normalize = |s: &str| s.trim().trim_start_matches('#').to_lowercase();
         match val {
             front_matter::Value::Array(arr) => {
                 for t in arr {
-                    let n = t.trim().to_lowercase();
+                    let n = normalize(t);
                     if !n.is_empty() { tag_set.insert(n); }
                 }
             }
             front_matter::Value::Text(s) | front_matter::Value::Date(s) => {
                 for t in s.split(',') {
-                    let n = t.trim().to_lowercase();
+                    let n = normalize(t);
                     if !n.is_empty() { tag_set.insert(n); }
                 }
             }
@@ -645,6 +648,25 @@ fn index_file(conn: &Connection, path_str: &str) -> Result<(), String> {
                 }
             }
             front_matter::Value::Bool(_) => {}
+        }
+    }
+
+    // Journal pages: if an explicit title: is set, also register it as an alias
+    // so [[Title]] wiki links can navigate to the entry in addition to [[YYYY-MM-DD]].
+    let is_journal = path.parent()
+        .and_then(|d| d.file_name())
+        .and_then(|n| n.to_str())
+        .map(|n| n == "journal")
+        .unwrap_or(false);
+    if is_journal {
+        if let Some(val) = fm.get("title") {
+            let t = match val {
+                front_matter::Value::Text(t) | front_matter::Value::Date(t) => t.trim(),
+                _ => "",
+            };
+            if !t.is_empty() {
+                alias_set.insert(t.to_string()); // preserve original casing for autocomplete display
+            }
         }
     }
 
@@ -1404,10 +1426,11 @@ fn write_task_line(
 /// date (most recently changed files first), then by line number within each file.
 #[derive(serde::Serialize)]
 struct AnnotationEntry {
-    path:    String,
-    title:   String,
-    keyword: String,
-    text:    String,
+    path:        String,
+    title:       String,
+    keyword:     String,
+    text:        String,
+    line_number: i64,
 }
 
 #[tauri::command]
@@ -1415,17 +1438,18 @@ fn list_annotations() -> Result<Vec<AnnotationEntry>, String> {
     let conn = open_db()?;
     init_schema(&conn)?;
     let mut stmt = conn.prepare(
-        "SELECT a.path, COALESCE(f.title, ''), a.keyword, a.text
+        "SELECT a.path, COALESCE(f.title, ''), a.keyword, a.text, a.line_number
          FROM annotations a
          JOIN files f ON f.path = a.path
          ORDER BY f.modified DESC, a.path, a.line_number",
     ).map_err(|e| e.to_string())?;
     let entries: Vec<AnnotationEntry> = stmt
         .query_map([], |row| Ok(AnnotationEntry {
-            path:    row.get(0)?,
-            title:   row.get(1)?,
-            keyword: row.get(2)?,
-            text:    row.get(3)?,
+            path:        row.get(0)?,
+            title:       row.get(1)?,
+            keyword:     row.get(2)?,
+            text:        row.get(3)?,
+            line_number: row.get(4)?,
         }))
         .map_err(|e| e.to_string())?
         .filter_map(|r| r.ok())
@@ -1728,12 +1752,14 @@ fn index_datastore(app: tauri::AppHandle) -> Result<u32, String> {
         index_file(&conn, path_str)?;
     }
 
-    // Remove rows for files deleted from disk
+    // Remove rows for files deleted from disk, then cascade-clean all child
+    // tables.  We delete from `files` first (per deleted path), then sweep
+    // every child table once with a NOT IN (SELECT path FROM files) query to
+    // catch any orphaned rows that crept in through other code paths.
     let db_paths: Vec<String> = {
         let mut stmt = conn.prepare("SELECT path FROM files").map_err(|e| e.to_string())?;
         let rows = stmt.query_map([], |row| row.get(0)).map_err(|e| e.to_string())?;
-        let paths: Vec<String> = rows.filter_map(|r| r.ok()).collect();
-        paths
+        rows.filter_map(|r| r.ok()).collect()
     };
     for path_str in db_paths {
         if !disk_paths.contains(&path_str) {
@@ -1746,7 +1772,155 @@ fn index_datastore(app: tauri::AppHandle) -> Result<u32, String> {
         }
     }
 
+    // Sweep child tables for any rows whose path is no longer in `files`.
+    // This catches tags/aliases/tasks/etc. that were not cleaned up during
+    // file-watch saves (e.g. files deleted while the app was not running).
+    for tbl in &[
+        "file_tags", "file_aliases", "file_metadata",
+        "tasks", "future_tasks", "task_contexts",
+        "annotations",
+    ] {
+        conn.execute(
+            &format!("DELETE FROM {tbl} WHERE path NOT IN (SELECT path FROM files)"),
+            [],
+        ).map_err(|e| e.to_string())?;
+    }
+
     Ok(count)
+}
+
+/// A single finding from `check_datastore_health`.
+#[derive(serde::Serialize)]
+struct HealthIssue {
+    /// "broken_link" | "orphan" | "duplicate_title" | "duplicate_alias"
+    kind:   String,
+    /// Primary path (source of a broken link, or the affected page).
+    path:   String,
+    title:  String,
+    /// Human-readable detail: the unresolved target, duplicate peers, etc.
+    detail: String,
+}
+
+/// Scan the database for content-level issues that warrant user attention.
+///
+/// Returns a (possibly empty) list of findings.  Does NOT auto-fix anything —
+/// fixes are the user's responsibility.  Filesystem-drift cleanup is handled
+/// silently by `index_datastore`.
+#[tauri::command]
+fn check_datastore_health() -> Result<Vec<HealthIssue>, String> {
+    let conn = open_db()?;
+    init_schema(&conn)?;
+    let mut issues: Vec<HealthIssue> = Vec::new();
+
+    // ── 1. Broken wiki links ────────────────────────────────────────────────
+    // A link is broken when its target_title doesn't match any page title or alias.
+    {
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT wl.source_path, COALESCE(f.title, wl.source_path), wl.target_title \
+             FROM wiki_links wl \
+             LEFT JOIN files f ON f.path = wl.source_path \
+             WHERE NOT EXISTS ( \
+               SELECT 1 FROM files tf WHERE lower(tf.title) = lower(wl.target_title) \
+             ) \
+             AND NOT EXISTS ( \
+               SELECT 1 FROM file_aliases fa WHERE lower(fa.alias) = lower(wl.target_title) \
+             ) \
+             ORDER BY 2",
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?, row.get::<_,String>(2)?))
+        }).map_err(|e| e.to_string())?;
+        for r in rows.filter_map(|r| r.ok()) {
+            issues.push(HealthIssue {
+                kind:   "broken_link".into(),
+                path:   r.0,
+                title:  r.1,
+                detail: r.2,
+            });
+        }
+    }
+
+    // ── 2. Orphaned pages ───────────────────────────────────────────────────
+    // Wiki pages (not journals, not templates) that no other page links to.
+    {
+        let mut stmt = conn.prepare(
+            "SELECT f.path, COALESCE(f.title, '') \
+             FROM files f \
+             WHERE f.path NOT LIKE '%/journal/%' \
+               AND f.path NOT LIKE '%/templates/%' \
+               AND NOT EXISTS ( \
+                 SELECT 1 FROM wiki_links wl \
+                 WHERE lower(wl.target_title) = lower(f.title) \
+               ) \
+               AND NOT EXISTS ( \
+                 SELECT 1 FROM wiki_links wl \
+                 JOIN file_aliases fa \
+                   ON lower(fa.alias) = lower(wl.target_title) AND fa.path = f.path \
+               ) \
+             ORDER BY 2",
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?))
+        }).map_err(|e| e.to_string())?;
+        for r in rows.filter_map(|r| r.ok()) {
+            issues.push(HealthIssue {
+                kind:   "orphan".into(),
+                path:   r.0,
+                title:  r.1,
+                detail: String::new(),
+            });
+        }
+    }
+
+    // ── 3. Duplicate page titles ────────────────────────────────────────────
+    {
+        let mut stmt = conn.prepare(
+            "SELECT lower(title), GROUP_CONCAT(path, '|||') \
+             FROM files WHERE title != '' \
+             GROUP BY lower(title) HAVING COUNT(*) > 1",
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?))
+        }).map_err(|e| e.to_string())?;
+        for r in rows.filter_map(|r| r.ok()) {
+            let (title, paths_raw) = r;
+            for path in paths_raw.split("|||") {
+                issues.push(HealthIssue {
+                    kind:   "duplicate_title".into(),
+                    path:   path.to_string(),
+                    title:  title.clone(),
+                    detail: paths_raw.replace("|||", ", "),
+                });
+            }
+        }
+    }
+
+    // ── 4. Duplicate aliases ────────────────────────────────────────────────
+    {
+        let mut stmt = conn.prepare(
+            "SELECT lower(fa.alias), GROUP_CONCAT(fa.path, '|||'), \
+                    MAX(COALESCE(f.title, fa.path)) \
+             FROM file_aliases fa \
+             LEFT JOIN files f ON f.path = fa.path \
+             GROUP BY lower(fa.alias) HAVING COUNT(*) > 1",
+        ).map_err(|e| e.to_string())?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?, row.get::<_,String>(2)?))
+        }).map_err(|e| e.to_string())?;
+        for r in rows.filter_map(|r| r.ok()) {
+            let (alias, paths_raw, _) = r;
+            for path in paths_raw.split("|||") {
+                issues.push(HealthIssue {
+                    kind:   "duplicate_alias".into(),
+                    path:   path.to_string(),
+                    title:  alias.clone(),
+                    detail: paths_raw.replace("|||", ", "),
+                });
+            }
+        }
+    }
+
+    Ok(issues)
 }
 
 /// Return all pages that contain a wiki link pointing at `slug`.
@@ -1800,6 +1974,7 @@ struct PageEntry {
     path:     String,
     aliases:  Vec<String>,
     favorite: bool,
+    category: Option<String>,
 }
 
 #[tauri::command]
@@ -1807,20 +1982,23 @@ fn list_pages() -> Result<Vec<PageEntry>, String> {
     let conn = open_db()?;
     init_schema(&conn)?;
     let mut stmt = conn.prepare(
-        "SELECT f.path, f.title, COALESCE(GROUP_CONCAT(fa.alias, '|||'), '') AS aliases, f.favorite
+        "SELECT f.path, f.title, COALESCE(GROUP_CONCAT(fa.alias, '|||'), '') AS aliases, f.favorite,
+                MAX(CASE WHEN lower(fm.key) = 'category' THEN fm.value END) AS category
          FROM files f
          LEFT JOIN file_aliases fa ON fa.path = f.path
+         LEFT JOIN file_metadata fm ON fm.path = f.path
          GROUP BY f.path"
     ).map_err(|e| e.to_string())?;
     let rows = stmt.query_map([], |row| {
-        let path:        String = row.get(0)?;
-        let title:       String = row.get(1)?;
-        let aliases_raw: String = row.get(2)?;
-        let favorite:    bool   = row.get::<_, i64>(3).unwrap_or(0) != 0;
-        Ok((path, title, aliases_raw, favorite))
+        let path:        String        = row.get(0)?;
+        let title:       String        = row.get(1)?;
+        let aliases_raw: String        = row.get(2)?;
+        let favorite:    bool          = row.get::<_, i64>(3).unwrap_or(0) != 0;
+        let category:    Option<String> = row.get(4)?;
+        Ok((path, title, aliases_raw, favorite, category))
     }).map_err(|e| e.to_string())?;
 
-    let mut entries: Vec<PageEntry> = rows.filter_map(|r| r.ok()).map(|(path, title, aliases_raw, favorite)| {
+    let mut entries: Vec<PageEntry> = rows.filter_map(|r| r.ok()).map(|(path, title, aliases_raw, favorite, category)| {
         let display = if title.trim().is_empty() {
             std::path::Path::new(&path)
                 .file_stem()
@@ -1836,7 +2014,7 @@ fn list_pages() -> Result<Vec<PageEntry>, String> {
         } else {
             aliases_raw.split("|||").map(|s| s.to_string()).collect()
         };
-        PageEntry { path, title: display, aliases, favorite }
+        PageEntry { path, title: display, aliases, favorite, category }
     }).collect();
 
     entries.sort_by(|a, b| a.title.to_lowercase().cmp(&b.title.to_lowercase()));
@@ -2770,6 +2948,7 @@ pub fn run() {
             restore_window_size,
             list_tags,
             list_pages_for_tag,
+            check_datastore_health,
             get_ui_prefs,
             save_ui_prefs,
             list_system_fonts,

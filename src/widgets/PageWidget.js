@@ -8,6 +8,29 @@ function esc(s) {
     .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+// Renders a single page row. Category (if present) sits between the title and
+// the star. It shrinks toward zero before the title is touched — achieved by
+// giving the category a 10× higher flex-shrink than the title's basis-0 grow.
+function pageRow(p) {
+  const star = p.favorite
+    ? `<i class="ph-fill ph-star text-amber-700 shrink-0 leading-none text-xs"></i>`
+    : '';
+  const cat = p.category
+    ? `<span class="ml-auto min-w-0 truncate text-[10px] text-olive-500 leading-none"
+             style="flex:0 10 auto;max-width:4rem">${esc(p.category)}</span>`
+    : '';
+  return `<div class="pw-page-item flex items-center gap-2 px-3 py-1.5 cursor-pointer
+                       hover:bg-olive-800 transition-colors border-b border-olive-800 last:border-0"
+               data-path="${esc(p.path)}" data-title="${esc(p.title)}">
+    <i class="ph ph-file-text text-olive-700 shrink-0 leading-none text-xs"></i>
+    <span class="flex-1 flex min-w-0 items-center gap-1">
+      <span class="pw-page-title min-w-0 truncate text-xs text-olive-600">${esc(p.title)}</span>
+      ${cat}
+    </span>
+    ${star}
+  </div>`;
+}
+
 export class PageWidget extends Widget {
   /**
    * @param {{ onOpenInEditor: (title:string)=>void,
@@ -219,12 +242,16 @@ export class PageWidget extends Widget {
     const { filters, text } = this._parseQuery(q);
     const lq = text.toLowerCase();
 
-    // Only show journal shortcut when there are no key:value filters.
-    const parsedDate = !filters.length && parseFlexibleDate(text || q);
+    // Only show journal shortcut when there is no query at all.
+    const parsedDate = !filters.length && !text && parseFlexibleDate(q);
 
-    // Start from all non-journal pages.
-    let pages = this._allPages
-      .filter(p => !p.path.replace(/\\/g, '/').includes('/journal/'));
+    // Any query (text or key:value) searches all pages including journals.
+    // The default "show all" view omits journals — they're numerous and are
+    // better navigated via the Calendar widget or by typing a date.
+    const isQuery = filters.length > 0 || !!lq;
+    let pages = isQuery
+      ? [...this._allPages]
+      : this._allPages.filter(p => !p.path.replace(/\\/g, '/').includes('/journal/'));
 
     // Apply each key:value filter; intersect the results.
     // tag: routes through file_tags (covers metadata tags + inline #hashtags,
@@ -272,15 +299,7 @@ export class PageWidget extends Widget {
     }
 
     for (const p of pages) {
-      const star = p.favorite
-        ? `<i class="ph-fill ph-star text-amber-700 shrink-0 leading-none text-xs"></i>` : '';
-      rows.push(`<div class="pw-page-item flex items-center gap-2 px-3 py-1.5 cursor-pointer
-                              hover:bg-olive-800 transition-colors border-b border-olive-800 last:border-0"
-                     data-path="${esc(p.path)}" data-title="${esc(p.title)}">
-        <i class="ph ph-file-text text-olive-700 shrink-0 leading-none text-xs"></i>
-        <span class="flex-1 text-xs text-olive-600 truncate">${esc(p.title)}</span>
-        ${star}
-      </div>`);
+      rows.push(pageRow(p));
     }
 
     // "New page" only for plain-text queries with no key:value filters.
@@ -308,9 +327,11 @@ export class PageWidget extends Widget {
   }
 
   _wireListHovers() {
-    this._contentEl.querySelectorAll('.pw-page-item[data-path]').forEach(el => {
-      el.addEventListener('mouseover', () => this._onPreviewShow(el.dataset.title, el));
-      el.addEventListener('mouseout',  () => this._onPreviewHide());
+    this._contentEl.querySelectorAll('.pw-page-item[data-path]').forEach(row => {
+      const titleEl = row.querySelector('.pw-page-title');
+      if (!titleEl) return;
+      titleEl.addEventListener('mouseenter', () => this._onPreviewShow(row.dataset.title, row));
+      titleEl.addEventListener('mouseleave', () => this._onPreviewHide());
     });
   }
 
@@ -426,18 +447,7 @@ export class PageWidget extends Widget {
       return;
     }
 
-    this._contentEl.innerHTML = pages.map(p => {
-      const star = p.favorite
-        ? `<i class="ph-fill ph-star text-amber-700 shrink-0 leading-none text-xs"></i>`
-        : '';
-      return `<div class="pw-page-item flex items-center gap-2 px-3 py-1.5 cursor-pointer
-                          hover:bg-olive-800 transition-colors border-b border-olive-800 last:border-0"
-                   data-path="${esc(p.path)}" data-title="${esc(p.title)}">
-        <i class="ph ph-file-text text-olive-700 shrink-0 leading-none text-xs"></i>
-        <span class="flex-1 text-xs text-olive-600 truncate">${esc(p.title)}</span>
-        ${star}
-      </div>`;
-    }).join('');
+    this._contentEl.innerHTML = pages.map(pageRow).join('');
 
     this._wireListClicks();
     this._wireListHovers();

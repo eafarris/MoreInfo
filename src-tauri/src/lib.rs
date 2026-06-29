@@ -158,16 +158,91 @@ fn html_attr_escape(s: &str) -> String {
      .replace('>', "&gt;")
 }
 
+/// Returns a boolean mask where `true` means the byte is inside a fenced code
+/// block or inline code span — positions where `[[...]]` must not be parsed.
+fn code_mask(text: &str) -> Vec<bool> {
+    let bytes = text.as_bytes();
+    let n     = bytes.len();
+    let mut mask = vec![false; n];
+    let mut i = 0;
+
+    while i < n {
+        let at_bol = i == 0 || bytes[i - 1] == b'\n';
+
+        // ── Fenced code block: 3+ identical ` or ~ chars at start of line ──
+        if at_bol && (bytes[i] == b'`' || bytes[i] == b'~') {
+            let fc = bytes[i];
+            let block_start = i;
+            let mut fence_len = 0;
+            while i < n && bytes[i] == fc { fence_len += 1; i += 1; }
+            if fence_len >= 3 {
+                // Consume info string (rest of opening fence line).
+                while i < n && bytes[i] != b'\n' { i += 1; }
+                if i < n { i += 1; }
+                // Scan for the closing fence.
+                loop {
+                    if i >= n {
+                        for k in block_start..n { mask[k] = true; }
+                        i = n;
+                        break;
+                    }
+                    let mut cnt = 0;
+                    while i < n && bytes[i] == fc { cnt += 1; i += 1; }
+                    if cnt >= fence_len {
+                        while i < n && bytes[i] != b'\n' { i += 1; }
+                        if i < n { i += 1; }
+                        for k in block_start..i { if k < n { mask[k] = true; } }
+                        break;
+                    }
+                    // Not the closing fence — skip to end of this line.
+                    while i < n && bytes[i] != b'\n' { i += 1; }
+                    if i < n { i += 1; }
+                }
+                continue;
+            }
+            // Fewer than 3 chars — not a fence; rewind and fall through.
+            i = block_start;
+        }
+
+        // ── Inline code span: one or more backticks ─────────────────────────
+        if i < n && bytes[i] == b'`' {
+            let span_start = i;
+            let mut ticks = 0;
+            while i < n && bytes[i] == b'`' { ticks += 1; i += 1; }
+            let mut found = false;
+            while i < n {
+                if bytes[i] == b'`' {
+                    let mut ct = 0;
+                    while i < n && bytes[i] == b'`' { ct += 1; i += 1; }
+                    if ct == ticks {
+                        for k in span_start..i { mask[k] = true; }
+                        found = true;
+                        break;
+                    }
+                } else {
+                    i += utf8_char_len(bytes[i]);
+                }
+            }
+            if !found { i = span_start + ticks; }
+            continue;
+        }
+
+        i += utf8_char_len(bytes[i]);
+    }
+    mask
+}
+
 /// Pre-process a markdown string, converting `[[title]]` wiki links into
 /// inline HTML anchor tags that the JS layer can intercept and route.
 fn process_wiki_links(text: &str) -> String {
     let mut result = String::new();
     let bytes = text.as_bytes();
     let len   = bytes.len();
+    let mask  = code_mask(text);
     let mut i = 0;
 
     while i < len {
-        if i + 1 < len && bytes[i] == b'[' && bytes[i + 1] == b'[' {
+        if i + 1 < len && bytes[i] == b'[' && bytes[i + 1] == b'[' && !mask[i] {
             i += 2;
             let title_start = i;
 
@@ -228,10 +303,11 @@ fn extract_wiki_links(text: &str) -> Vec<(String, String, String)> {
     let mut links = Vec::new();
     let bytes = text.as_bytes();
     let len   = bytes.len();
+    let mask  = code_mask(text);
     let mut i = 0;
 
     while i < len {
-        if i + 1 < len && bytes[i] == b'[' && bytes[i + 1] == b'[' {
+        if i + 1 < len && bytes[i] == b'[' && bytes[i + 1] == b'[' && !mask[i] {
             let bracket_start = i;
             i += 2;
             let title_start = i;
@@ -1812,78 +1888,132 @@ fn check_datastore_health() -> Result<Vec<HealthIssue>, String> {
     init_schema(&conn)?;
     let mut issues: Vec<HealthIssue> = Vec::new();
 
+    // Helper: collect all rows from a prepared statement into a Vec, consuming
+    // the statement before returning.  This avoids the borrow-past-drop error
+    // that occurs when `stmt.query_map()?...collect()` is a block's tail expr.
+    macro_rules! collect_rows {
+        ($conn:expr, $sql:expr, $map:expr) => {{
+            let mut s = $conn.prepare($sql).map_err(|e: rusqlite::Error| e.to_string())?;
+            let mapped = s.query_map([], $map).map_err(|e| e.to_string())?;
+            let rows: Vec<_> = mapped.filter_map(|r| r.ok()).collect();
+            rows
+        }};
+    }
+
     // ── 1. Broken wiki links ────────────────────────────────────────────────
-    // A link is broken when its target_title doesn't match any page title or alias.
+    // Build the set of valid slugs (title slugs + alias slugs) in Rust so we
+    // use the same slugify() logic as the rest of the app.
     {
-        let mut stmt = conn.prepare(
-            "SELECT DISTINCT wl.source_path, COALESCE(f.title, wl.source_path), wl.target_title \
+        let title_slugs: std::collections::HashSet<String> =
+            collect_rows!(&conn, "SELECT title FROM files WHERE title != ''",
+                |row| row.get::<_, String>(0))
+            .into_iter().map(|t| slugify(&t)).collect();
+
+        let alias_slugs: std::collections::HashSet<String> =
+            collect_rows!(&conn, "SELECT alias_slug FROM file_aliases",
+                |row| row.get::<_, String>(0))
+            .into_iter().collect();
+
+        let valid_slugs: std::collections::HashSet<String> =
+            title_slugs.into_iter().chain(alias_slugs).collect();
+
+        let links = collect_rows!(&conn,
+            "SELECT DISTINCT wl.source_path, COALESCE(f.title, wl.source_path), \
+                    wl.target_title, wl.target_slug \
              FROM wiki_links wl \
              LEFT JOIN files f ON f.path = wl.source_path \
-             WHERE NOT EXISTS ( \
-               SELECT 1 FROM files tf WHERE lower(tf.title) = lower(wl.target_title) \
-             ) \
-             AND NOT EXISTS ( \
-               SELECT 1 FROM file_aliases fa WHERE lower(fa.alias) = lower(wl.target_title) \
-             ) \
              ORDER BY 2",
-        ).map_err(|e| e.to_string())?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?, row.get::<_,String>(2)?))
-        }).map_err(|e| e.to_string())?;
-        for r in rows.filter_map(|r| r.ok()) {
-            issues.push(HealthIssue {
-                kind:   "broken_link".into(),
-                path:   r.0,
-                title:  r.1,
-                detail: r.2,
-            });
+            |row| Ok((
+                row.get::<_,String>(0)?,
+                row.get::<_,String>(1)?,
+                row.get::<_,String>(2)?,
+                row.get::<_,String>(3)?,
+            )));
+
+        for (path, title, target_title, target_slug) in links {
+            if !valid_slugs.contains(&target_slug) {
+                issues.push(HealthIssue {
+                    kind:   "broken_link".into(),
+                    path,
+                    title,
+                    detail: target_title,
+                });
+            }
         }
     }
 
     // ── 2. Orphaned pages ───────────────────────────────────────────────────
-    // Wiki pages (not journals, not templates) that no other page links to.
+    // Wiki pages with no inbound connections — neither an explicit [[link]]
+    // (by title slug or alias slug) nor an unlinked reference (FTS match on
+    // title or any alias in another document).
     {
-        let mut stmt = conn.prepare(
-            "SELECT f.path, COALESCE(f.title, '') \
+        let pages = collect_rows!(&conn,
+            "SELECT f.path, COALESCE(f.title, ''), \
+                    COALESCE(GROUP_CONCAT(fa.alias, '|||'), '') \
              FROM files f \
+             LEFT JOIN file_aliases fa ON fa.path = f.path \
              WHERE f.path NOT LIKE '%/journal/%' \
                AND f.path NOT LIKE '%/templates/%' \
-               AND NOT EXISTS ( \
-                 SELECT 1 FROM wiki_links wl \
-                 WHERE lower(wl.target_title) = lower(f.title) \
-               ) \
-               AND NOT EXISTS ( \
-                 SELECT 1 FROM wiki_links wl \
-                 JOIN file_aliases fa \
-                   ON lower(fa.alias) = lower(wl.target_title) AND fa.path = f.path \
-               ) \
-             ORDER BY 2",
-        ).map_err(|e| e.to_string())?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?))
-        }).map_err(|e| e.to_string())?;
-        for r in rows.filter_map(|r| r.ok()) {
-            issues.push(HealthIssue {
-                kind:   "orphan".into(),
-                path:   r.0,
-                title:  r.1,
-                detail: String::new(),
+             GROUP BY f.path ORDER BY 2",
+            |row| Ok((
+                row.get::<_,String>(0)?,
+                row.get::<_,String>(1)?,
+                row.get::<_,String>(2)?,
+            )));
+
+        for (path, title, aliases_raw) in pages {
+            // 1. Explicit inbound [[link]] by title slug or alias slug.
+            let title_slug = slugify(&title);
+            let has_explicit: bool = conn.query_row(
+                "SELECT EXISTS(\
+                   SELECT 1 FROM wiki_links wl \
+                   WHERE wl.source_path != ?1 \
+                     AND (wl.target_slug = ?2 \
+                          OR wl.target_slug IN \
+                             (SELECT alias_slug FROM file_aliases WHERE path = ?1)))",
+                rusqlite::params![&path, &title_slug],
+                |row| row.get::<_, bool>(0),
+            ).unwrap_or(false);
+
+            if has_explicit { continue; }
+
+            // 2. Unlinked reference: FTS phrase match on title or any alias
+            //    in any other document (mirrors get_unlinked_references).
+            let mut terms: Vec<String> = Vec::new();
+            if !title.trim().is_empty() { terms.push(title.clone()); }
+            for alias in aliases_raw.split("|||").filter(|s| !s.is_empty()) {
+                terms.push(alias.to_string());
+            }
+
+            let has_unlinked = terms.iter().any(|term| {
+                let fts_query = format!("\"{}\"", term.replace('"', "\"\""));
+                conn.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM fts WHERE fts MATCH ?1 AND path != ?2)",
+                    rusqlite::params![fts_query, &path],
+                    |row| row.get::<_, bool>(0),
+                ).unwrap_or(false)
             });
+
+            if !has_unlinked {
+                issues.push(HealthIssue {
+                    kind:   "orphan".into(),
+                    path,
+                    title,
+                    detail: String::new(),
+                });
+            }
         }
     }
 
     // ── 3. Duplicate page titles ────────────────────────────────────────────
     {
-        let mut stmt = conn.prepare(
+        let rows = collect_rows!(&conn,
             "SELECT lower(title), GROUP_CONCAT(path, '|||') \
              FROM files WHERE title != '' \
              GROUP BY lower(title) HAVING COUNT(*) > 1",
-        ).map_err(|e| e.to_string())?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?))
-        }).map_err(|e| e.to_string())?;
-        for r in rows.filter_map(|r| r.ok()) {
-            let (title, paths_raw) = r;
+            |row| Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?)));
+
+        for (title, paths_raw) in rows {
             for path in paths_raw.split("|||") {
                 issues.push(HealthIssue {
                     kind:   "duplicate_title".into(),
@@ -1897,18 +2027,19 @@ fn check_datastore_health() -> Result<Vec<HealthIssue>, String> {
 
     // ── 4. Duplicate aliases ────────────────────────────────────────────────
     {
-        let mut stmt = conn.prepare(
+        let rows = collect_rows!(&conn,
             "SELECT lower(fa.alias), GROUP_CONCAT(fa.path, '|||'), \
                     MAX(COALESCE(f.title, fa.path)) \
              FROM file_aliases fa \
              LEFT JOIN files f ON f.path = fa.path \
              GROUP BY lower(fa.alias) HAVING COUNT(*) > 1",
-        ).map_err(|e| e.to_string())?;
-        let rows = stmt.query_map([], |row| {
-            Ok((row.get::<_,String>(0)?, row.get::<_,String>(1)?, row.get::<_,String>(2)?))
-        }).map_err(|e| e.to_string())?;
-        for r in rows.filter_map(|r| r.ok()) {
-            let (alias, paths_raw, _) = r;
+            |row| Ok((
+                row.get::<_,String>(0)?,
+                row.get::<_,String>(1)?,
+                row.get::<_,String>(2)?,
+            )));
+
+        for (alias, paths_raw, _) in rows {
             for path in paths_raw.split("|||") {
                 issues.push(HealthIssue {
                     kind:   "duplicate_alias".into(),

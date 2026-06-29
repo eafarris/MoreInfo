@@ -249,6 +249,19 @@ const tasksHighlightStyle = HighlightStyle.define([
 ]);
 
 // ── Wiki-link decoration ───────────────────────────────────────────────────
+// Returns true if `pos` (document offset) falls inside a fenced code block,
+// indented code block, or inline code span in the CM syntax tree.
+function isInCode(tree, pos) {
+  let node = tree.resolveInner(pos, 1);
+  while (node) {
+    const name = node.type.name;
+    if (name === 'FencedCode' || name === 'CodeBlock' ||
+        name === 'InlineCode' || name === 'Code') return true;
+    node = node.parent;
+  }
+  return false;
+}
+
 // Applies precise per-segment classes to [[title]] patterns so both bracket
 // pairs render in the dim bracket colour and the title renders in amber.
 // Using !important in CSS ensures these override whatever the Markdown parser
@@ -263,6 +276,7 @@ const wikilinkPlugin = ViewPlugin.fromClass(class {
   }
   _build(view) {
     const deco = [];
+    const tree = syntaxTree(view.state);
     for (const { from, to } of view.visibleRanges) {
       const text = view.state.doc.sliceString(from, to);
       WIKILINK_RE.lastIndex = 0;
@@ -270,6 +284,7 @@ const wikilinkPlugin = ViewPlugin.fromClass(class {
       while ((m = WIKILINK_RE.exec(text)) !== null) {
         const start = from + m.index;
         const end   = start + m[0].length;
+        if (isInCode(tree, start)) continue;
         deco.push(Decoration.mark({ class: 'cm-wikilink-bracket' }).range(start,     start + 2));
         deco.push(Decoration.mark({ class: 'cm-wikilink-title'   }).range(start + 2, end   - 2));
         deco.push(Decoration.mark({ class: 'cm-wikilink-bracket' }).range(end   - 2, end      ));
@@ -1044,6 +1059,7 @@ export function setEditorJournalDates(dates) {
 // Resolve a [[wiki link]] title at a given document position, or null.
 // Constrained to the current line so cross-line false positives are impossible.
 function wikiTitleAt(view, pos) {
+  if (isInCode(syntaxTree(view.state), pos)) return null;
   const line    = view.state.doc.lineAt(pos);
   const text    = line.text;
   const linePos = pos - line.from;
@@ -1087,6 +1103,7 @@ export const placeholderCompartment = new Compartment();
 function wikiLinkSource(context) {
   const match = context.matchBefore(/\[\[[^\]]*$/);
   if (!match) return null;
+  if (isInCode(syntaxTree(context.state), context.pos)) return null;
   // Trim leading spaces so "[[ foo" matches pages starting with "foo".
   // If nothing remains after trimming (e.g. "[[" or "[[ "), don't suggest —
   // this prevents an immediate space from completing the first item.
@@ -1288,7 +1305,7 @@ export function createEditor({ parent, onDocChange, onCursorChange, onPageClick,
           return true;
         }
       }
-      return acceptCompletion(view);
+      return false;
     },
   };
 

@@ -16,6 +16,80 @@ import {
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { miTheme, miHighlightStyle, calcBlockPlugin, calcCopyHandler, specialBlockEnterKey } from '../editor.js';
 
+// ── Dialog helper ─────────────────────────────────────────────────────────
+
+function showAddTextDialog() {
+  return new Promise(resolve => {
+    const overlay = document.createElement('div');
+    overlay.className =
+      'fixed inset-0 z-[10000] flex items-center justify-center bg-black/50';
+
+    const card = document.createElement('div');
+    card.className =
+      'bg-olive-900 border border-olive-700 rounded-lg shadow-2xl p-5 w-80 flex flex-col gap-4';
+
+    const title = document.createElement('h3');
+    title.className = 'text-sm font-semibold text-olive-100 m-0';
+    title.textContent = 'Add Text to Each Row';
+
+    const makeField = (labelText, placeholder) => {
+      const wrap = document.createElement('div');
+      wrap.className = 'flex flex-col gap-1';
+      const lbl = document.createElement('label');
+      lbl.className = 'text-xs text-olive-400';
+      lbl.textContent = labelText;
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.placeholder = placeholder;
+      input.className =
+        'bg-olive-800 border border-olive-600 rounded px-2 py-1 text-xs ' +
+        'text-olive-100 placeholder-olive-600 outline-none ' +
+        'focus:border-amber-500 focus:ring-1 focus:ring-amber-500';
+      wrap.appendChild(lbl);
+      wrap.appendChild(input);
+      return { wrap, input };
+    };
+
+    const { wrap: beginWrap, input: beginInput } = makeField('Add to the Beginning', 'Prefix…');
+    const { wrap: endWrap,   input: endInput   } = makeField('Add to the End',       'Suffix…');
+
+    const buttons = document.createElement('div');
+    buttons.className = 'flex justify-end gap-2';
+
+    const cancel = document.createElement('button');
+    cancel.textContent = 'Cancel';
+    cancel.className =
+      'px-3 py-1 text-xs rounded bg-olive-700 text-olive-300 ' +
+      'hover:bg-olive-600 border-none cursor-pointer';
+
+    const ok = document.createElement('button');
+    ok.textContent = 'Apply';
+    ok.className =
+      'px-3 py-1 text-xs rounded bg-amber-600 text-white ' +
+      'hover:bg-amber-500 border-none cursor-pointer';
+
+    const close = result => { overlay.remove(); resolve(result); };
+
+    cancel.addEventListener('click', () => close(null));
+    ok.addEventListener('click',     () => close({ prefix: beginInput.value, suffix: endInput.value }));
+
+    overlay.addEventListener('keydown', e => {
+      if (e.key === 'Enter')  { e.preventDefault(); close({ prefix: beginInput.value, suffix: endInput.value }); }
+      if (e.key === 'Escape') { e.preventDefault(); close(null); }
+    });
+
+    buttons.appendChild(cancel);
+    buttons.appendChild(ok);
+    card.appendChild(title);
+    card.appendChild(beginWrap);
+    card.appendChild(endWrap);
+    card.appendChild(buttons);
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+    beginInput.focus();
+  });
+}
+
 // ── Text transforms ────────────────────────────────────────────────────────
 
 const TRANSFORMS = [
@@ -66,6 +140,16 @@ const TRANSFORMS = [
     fn: async text => {
       const html = await invoke('parse_markdown', { markdown: text });
       return html;
+    },
+  },
+  null, // separator
+  {
+    label: 'Add text to each row',
+    fn: async text => {
+      const result = await showAddTextDialog();
+      if (result === null) return text;
+      const { prefix, suffix } = result;
+      return text.split('\n').map(line => prefix + line + suffix).join('\n');
     },
   },
 ];

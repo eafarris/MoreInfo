@@ -4,7 +4,7 @@ use chrono::Datelike;
 use pulldown_cmark::{html, Options, Parser};
 use rusqlite::Connection;
 use tauri::menu::{AboutMetadata, MenuBuilder, MenuItem, SubmenuBuilder};
-use tauri::Emitter;
+use tauri::{Emitter, WebviewUrl, WebviewWindowBuilder};
 
 // ── Preferences ─────────────────────────────────────────────────────────────
 
@@ -2926,6 +2926,29 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
             let handle = app.handle();
+
+            // Build the main window ourselves (rather than declaring it in
+            // tauri.conf.json) so we can install a navigation handler: links
+            // clicked or opened via the webview's native "Open Link" context
+            // menu must open in the system browser, not navigate the app.
+            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+                .title("MoreInfo")
+                .inner_size(1280.0, 800.0)
+                .min_inner_size(640.0, 400.0)
+                .decorations(true)
+                .on_navigation(|url| {
+                    let is_internal = url.scheme() == "tauri"
+                        || (url.scheme() == "https" && url.host_str() == Some("tauri.localhost"))
+                        || (cfg!(debug_assertions) && url.host_str() == Some("localhost"));
+                    if is_internal {
+                        return true;
+                    }
+                    if let Err(err) = tauri_plugin_opener::open_url(url.to_string(), None::<&str>) {
+                        eprintln!("failed to open external link {url}: {err}");
+                    }
+                    false
+                })
+                .build()?;
 
             let toggle_left   = MenuItem::with_id(handle, "toggle-left",   "Toggle Left Sidebar",   true, None::<&str>)?;
             let toggle_right  = MenuItem::with_id(handle, "toggle-right",  "Toggle Right Sidebar",  true, None::<&str>)?;

@@ -11,21 +11,7 @@ hover preview cards, Settings panel, drag-and-drop widget reordering) turned
 out to already be implemented in the code. CLAUDE.md's checklist should be
 refreshed separately from this list — see the note at the bottom.
 
-## 1. Search: `-word` negation operator is broken, not just missing
-
-`/docs/full-text-search` explicitly documents `-draft` as excluding results
-("Negation: `-draft` excludes results"). In reality, `tokenize_search_query`
-/ `extract_search_filters` (`src-tauri/src/lib.rs:2434-2642`) have no
-negation handling at all — the leading `-` is stripped by
-`fts_prefix_tokens`'s alphanumeric filter, so `-draft` is silently treated
-as a **positive** search term for "draft" instead of excluding it. This is
-worse than a missing feature: it produces the opposite of the documented
-result.
-
-- [ ] Implement `-word` / `-"phrase"` negation in the search query parser
-      and wire it into the FTS query builder (exclude matching rows).
-
-## 2. Search: no dedicated `title:` filter
+## 1. Search: no dedicated `title:` filter
 
 `/docs/full-text-search` documents `title:roadmap` as searching "only note
 titles." `apply_known_filter` (`src-tauri/src/lib.rs:2508-2548`) only
@@ -39,7 +25,7 @@ title field."
       to the title column only, and confirm it doesn't silently rely on
       `title` happening to exist as a metadata row.
 
-## 3. Wiki-link autocomplete is prefix matching, not fuzzy
+## 2. Wiki-link autocomplete is prefix matching, not fuzzy
 
 `/docs/wiki-links` claims "MoreInfo shows a **fuzzy-search** autocomplete of
 all note titles." `wikiLinkSource()` (`src/editor.js:1103-1160`) only does
@@ -52,33 +38,6 @@ the start of the title (or a scattered-letters fuzzy match, e.g. "prjrd" for
       scoring) in `wikiLinkSource`, or narrow the docs' wording to "prefix
       search" if fuzzy matching isn't planned. Since the instruction is to
       list app work, default to implementing fuzzy matching.
-
-## 4. Metadata Widget: no single-click-to-rename on keys
-
-`/docs/metadata` says of the Metadata Widget: "Single-click keys to edit
-them" (renaming the metadata key), in addition to double-click-to-see-all-
-matching-pages. In `MetadataWidget.js`, the key label
-(`[data-meta-key-label]`) only has a `dblclick` handler (`:134-138`) for the
-grouped-by-value lookup — there is no `click` handler and no rename-key
-logic anywhere in the file. Only *value* cells are click-to-edit
-(`:113`/`:124`).
-
-- [ ] Add a single-click handler on the key label that lets the user rename
-      the metadata key in place (and update the key across front/sig block
-      per the existing in-place-edit vs sig-block-append rule).
-
-## 5. `⌘[` / `⌘]` navigate back/forward aren't real menu accelerators
-
-Functionally these work today, but only via a global JS `keydown` listener
-(`src/main.js:1021-1032`, checking `e.code === 'BracketLeft'/'BracketRight'`).
-The native `nav_back` / `nav_forward` menu items (`src-tauri/src/lib.rs:2965-2966`)
-are registered with `None::<&str>` for their accelerator, so the OS menu bar
-never displays the shortcut next to "Back"/"Forward" the way it does for
-every other documented shortcut (`⌘N`, `⌘⇧R`, etc.).
-
-- [ ] Register `CmdOrCtrl+[` / `CmdOrCtrl+]` as the native menu accelerators
-      for `nav_back` / `nav_forward` so the shortcut is discoverable from
-      the menu, matching how the rest of the documented shortcuts are wired.
 
 ---
 

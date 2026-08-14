@@ -3059,8 +3059,8 @@ pub fn run() {
             let edit_find             = MenuItem::with_id(handle, "edit-find",             "Find in Page",                true, Some("CmdOrCtrl+G"))?;
             let edit_search           = MenuItem::with_id(handle, "edit-search",           "Find in Datastore",           true, Some("CmdOrCtrl+F"))?;
 
-            let nav_back              = MenuItem::with_id(handle, "nav-back",              "Back",                        true, None::<&str>)?;
-            let nav_forward           = MenuItem::with_id(handle, "nav-forward",           "Forward",                     true, None::<&str>)?;
+            let nav_back              = MenuItem::with_id(handle, "nav-back",              "Back",                        true, Some("CmdOrCtrl+["))?;
+            let nav_forward           = MenuItem::with_id(handle, "nav-forward",           "Forward",                     true, Some("CmdOrCtrl+]"))?;
 
             let file_new              = MenuItem::with_id(handle, "file-new",              "New Page\u{2026}",          true, Some("CmdOrCtrl+N"))?;
             let file_new_template     = MenuItem::with_id(handle, "file-new-template",     "New Template\u{2026}",      true, None::<&str>)?;

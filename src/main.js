@@ -1,5 +1,6 @@
 import './input.css';
 import { preprocessCalcBlocks } from './calcBlock.js';
+import { popBack, popForward } from './navHistory.js';
 import { invoke } from './tauri.js';
 import { initPrefs, getPref, setPref, setPrefs } from './prefs.js';
 import { EditorView } from '@codemirror/view';
@@ -986,16 +987,18 @@ async function _loadHistoryEntry(entry) {
 }
 
 async function navigateBack() {
-  if (!navHistory.length) return;
-  navFuture.push({ path: currentFile, title: currentTitle });
-  await _loadHistoryEntry(navHistory.pop());
+  const current = currentFile ? { path: currentFile, title: currentTitle } : null;
+  const entry   = popBack(navHistory, navFuture, current);
+  if (!entry) return;   // already at the oldest visited page
+  await _loadHistoryEntry(entry);
   renderBreadcrumbs();
 }
 
 async function navigateForward() {
-  if (!navFuture.length) return;
-  navHistory.push({ path: currentFile, title: currentTitle });
-  await _loadHistoryEntry(navFuture.pop());
+  const current = currentFile ? { path: currentFile, title: currentTitle } : null;
+  const entry   = popForward(navHistory, navFuture, current);
+  if (!entry) return;   // already at the newest visited page
+  await _loadHistoryEntry(entry);
   renderBreadcrumbs();
 }
 

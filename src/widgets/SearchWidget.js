@@ -10,7 +10,7 @@ function esc(s) {
 // Operator tokens shown in the always-visible hint strip.
 // color key → Tailwind text class
 //   phrase  → emerald   exact phrase search
-//   op      → amber     infix operator keyword (NEAR)
+//   op      → amber     infix operator keyword (NEAR) / negation prefix (-)
 //   source  → violet    in: source filters
 //   date    → orange    after: / before: date filters
 //   taxon   → sky       tag: / category: taxonomy filters
@@ -20,6 +20,7 @@ function esc(s) {
 const OPERATORS = [
   { label: '"exact phrase"', insert: '"',          color: 'phrase', wrap: true, cursor: 1 },
   { label: 'NEAR',           insert: ' NEAR ',     color: 'op' },
+  { label: '-exclude',       insert: '-',          color: 'op' },
   { label: 'in:journal',     insert: 'in:journal', color: 'source' },
   { label: 'in:wiki',        insert: 'in:wiki',    color: 'source' },
   { label: 'after:',         insert: 'after:',     color: 'date' },

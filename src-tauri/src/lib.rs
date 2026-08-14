@@ -2478,54 +2478,82 @@ fn fts_prefix_tokens(s: &str) -> String {
 struct SearchFilters {
     /// Each inner Vec is an OR group; multiple groups are AND'd together.
     tag_groups:   Vec<Vec<String>>,
-    category:     Option<String>,
+    /// Tag groups from a `-tag:` filter: notes carrying ANY tag in a group
+    /// are excluded. Each token contributes its own group.
+    excluded_tag_groups: Vec<Vec<String>>,
+    category:          Option<String>,
+    excluded_category: Option<String>,
     in_journal:   bool,
     in_wiki:      bool,
     after:        Option<String>,  // YYYY-MM-DD; implies in_journal
     before:       Option<String>,  // YYYY-MM-DD; implies in_journal
     /// Arbitrary metadata key/value filters.  Value "*" means "key exists".
     meta_filters: Vec<(String, String)>,
+    /// Arbitrary metadata key/value filters negated with a leading "-".
+    excluded_meta_filters: Vec<(String, String)>,
+    /// Bare words / quoted phrases negated with a leading "-"; each is
+    /// excluded independently (notes matching ANY of them are dropped).
+    fts_exclude: Vec<String>,
 }
 
 impl SearchFilters {
     fn new() -> Self {
-        Self { tag_groups: Vec::new(), category: None,
+        Self { tag_groups: Vec::new(), excluded_tag_groups: Vec::new(),
+               category: None, excluded_category: None,
                in_journal: false, in_wiki: false,
                after: None, before: None,
-               meta_filters: Vec::new() }
+               meta_filters: Vec::new(), excluded_meta_filters: Vec::new(),
+               fts_exclude: Vec::new() }
     }
     fn is_empty(&self) -> bool {
-        self.tag_groups.is_empty() && self.category.is_none()
+        self.tag_groups.is_empty() && self.excluded_tag_groups.is_empty()
+            && self.category.is_none() && self.excluded_category.is_none()
             && !self.in_journal && !self.in_wiki
             && self.after.is_none() && self.before.is_none()
-            && self.meta_filters.is_empty()
+            && self.meta_filters.is_empty() && self.excluded_meta_filters.is_empty()
+            && self.fts_exclude.is_empty()
     }
 }
 
 /// Apply a recognised filter key/value. Returns true if the key was handled.
 /// `pending_tags` accumulates the current OR-group of tag values; it is
 /// committed into `filters.tag_groups` when AND or another filter is seen.
+/// `negated` is true when the token carried a leading "-". Negation is
+/// supported for the metadata-backed filters (`tag`/`tags`, `category`);
+/// `in`/`after`/`before` describe page *source*/*date*, not metadata, so a
+/// negated form of those is left unhandled (falls through to the caller,
+/// which routes it to `excluded_meta_filters` as a harmless no-op).
 fn apply_known_filter(
-    key: &str, val: &str,
+    key: &str, val: &str, negated: bool,
     filters: &mut SearchFilters,
     pending_tags: &mut Vec<String>,
 ) -> bool {
     match key {
         "tag" | "tags" => {
-            if !pending_tags.is_empty() {
-                filters.tag_groups.push(std::mem::take(pending_tags));
-            }
             let vals: Vec<String> = val.split(',')
                 .map(|v| v.trim().to_lowercase())
                 .filter(|v| !v.is_empty())
                 .collect();
-            if !vals.is_empty() { *pending_tags = vals; }
+            if vals.is_empty() { return true; }
+            if negated {
+                filters.excluded_tag_groups.push(vals);
+            } else {
+                if !pending_tags.is_empty() {
+                    filters.tag_groups.push(std::mem::take(pending_tags));
+                }
+                *pending_tags = vals;
+            }
             true
         }
         "category" => {
-            filters.category = Some(val.to_string());
+            if negated {
+                filters.excluded_category = Some(val.to_string());
+            } else {
+                filters.category = Some(val.to_string());
+            }
             true
         }
+        "in" | "after" | "before" if negated => false,
         "in" => {
             match val.to_lowercase().as_str() {
                 "journal"       => filters.in_journal = true,
@@ -2590,29 +2618,43 @@ fn build_fts_query(parts: &[String]) -> Option<String> {
 
 /// Tokenise `query` and split into FTS terms and structured filters.
 /// Extracted so the logic can be unit-tested without a database.
+///
+/// A leading "-" on any token negates it — `-draft` excludes notes
+/// containing "draft", `-tag:archived` excludes notes tagged "archived",
+/// `-status:done` excludes notes with that metadata value. A bare "-"
+/// (nothing following it) is not treated as negation.
 fn extract_search_filters(query: &str) -> (Vec<String>, SearchFilters) {
     let mut filters      = SearchFilters::new();
     let mut pending_tags: Vec<String> = Vec::new();
     let mut fts_parts:    Vec<String> = Vec::new();
 
-    for token in tokenize_search_query(query) {
+    for raw_token in tokenize_search_query(query) {
+        let (negated, token) = match raw_token.strip_prefix('-') {
+            Some(rest) if !rest.is_empty() => (true, rest.to_string()),
+            _ => (false, raw_token),
+        };
+
         // Quoted token — may be "key: multi word value" filter or a phrase search.
         if token.starts_with('"') && token.ends_with('"') && token.len() > 2 {
             let inner = &token[1..token.len() - 1];
             if let Some((key, val)) = parse_filter_token(inner) {
-                if apply_known_filter(&key, &val, &mut filters, &mut pending_tags) {
+                if apply_known_filter(&key, &val, negated, &mut filters, &mut pending_tags) {
                     continue;
                 }
                 // Unknown quoted key:value → metadata filter.
-                filters.meta_filters.push((key, val));
+                if negated {
+                    filters.excluded_meta_filters.push((key, val));
+                } else {
+                    filters.meta_filters.push((key, val));
+                }
                 continue;
             }
-            fts_parts.push(token);
+            if negated { filters.fts_exclude.push(token); } else { fts_parts.push(token); }
             continue;
         }
 
         // Explicit AND between tag filters — commit pending tag group.
-        if token == "AND" {
+        if !negated && token == "AND" {
             if !pending_tags.is_empty() {
                 filters.tag_groups.push(std::mem::take(&mut pending_tags));
             }
@@ -2621,16 +2663,20 @@ fn extract_search_filters(query: &str) -> (Vec<String>, SearchFilters) {
 
         // Bare key:value — try known filters first, then metadata JOIN.
         if let Some((key, val)) = parse_filter_token(&token) {
-            if apply_known_filter(&key, &val, &mut filters, &mut pending_tags) {
+            if apply_known_filter(&key, &val, negated, &mut filters, &mut pending_tags) {
                 continue;
             }
             // Unknown key → arbitrary metadata filter.
             // value "*" means "key exists with any value".
-            filters.meta_filters.push((key, val));
+            if negated {
+                filters.excluded_meta_filters.push((key, val));
+            } else {
+                filters.meta_filters.push((key, val));
+            }
             continue;
         }
 
-        fts_parts.push(token);
+        if negated { filters.fts_exclude.push(token); } else { fts_parts.push(token); }
     }
 
     // Commit any trailing tag group.
@@ -2669,6 +2715,17 @@ fn search_pages(query: String) -> Result<Vec<SearchResult>, String> {
         bind_vals.push(fq.clone());
     }
 
+    // Negated bare words / phrases (`-draft`) — each excluded independently,
+    // so a note dropped by any one of them is dropped from the results.
+    for term in &filters.fts_exclude {
+        if let Some(mq) = build_fts_query(std::slice::from_ref(term)) {
+            conditions.push(format!(
+                "{path_col} NOT IN (SELECT path FROM fts WHERE fts MATCH ?)"
+            ));
+            bind_vals.push(mq);
+        }
+    }
+
     // Source filter (in_journal takes precedence over in_wiki).
     if filters.in_journal {
         conditions.push("f.path LIKE ?".to_string());
@@ -2701,10 +2758,31 @@ fn search_pages(query: String) -> Result<Vec<SearchResult>, String> {
         bind_vals.extend(group.iter().cloned());
     }
 
+    // Negated tag filters (`-tag:x,y`) — notes carrying any tag in the
+    // group are excluded; one NOT EXISTS per group.
+    for group in &filters.excluded_tag_groups {
+        let phs = group.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        conditions.push(format!(
+            "NOT EXISTS (SELECT 1 FROM file_tags ft \
+             WHERE ft.path = {path_col} AND lower(ft.tag) IN ({phs}))"
+        ));
+        bind_vals.extend(group.iter().cloned());
+    }
+
     // Category filter.
     if let Some(ref cat) = filters.category {
         conditions.push(format!(
             "EXISTS (SELECT 1 FROM file_metadata fm \
+             WHERE fm.path = {path_col} \
+             AND lower(fm.key) = 'category' AND lower(fm.value) = lower(?))"
+        ));
+        bind_vals.push(cat.clone());
+    }
+
+    // Negated category filter (`-category:x`).
+    if let Some(ref cat) = filters.excluded_category {
+        conditions.push(format!(
+            "NOT EXISTS (SELECT 1 FROM file_metadata fm \
              WHERE fm.path = {path_col} \
              AND lower(fm.key) = 'category' AND lower(fm.value) = lower(?))"
         ));
@@ -2722,6 +2800,25 @@ fn search_pages(query: String) -> Result<Vec<SearchResult>, String> {
         } else {
             conditions.push(format!(
                 "EXISTS (SELECT 1 FROM file_metadata fm \
+                 WHERE fm.path = {path_col} \
+                 AND lower(fm.key) = lower(?) AND lower(fm.value) = lower(?))"
+            ));
+            bind_vals.push(key.clone());
+            bind_vals.push(val.clone());
+        }
+    }
+
+    // Negated arbitrary metadata filters (`-key:value` / `-key:*`).
+    for (key, val) in &filters.excluded_meta_filters {
+        if val == "*" {
+            conditions.push(format!(
+                "NOT EXISTS (SELECT 1 FROM file_metadata fm \
+                 WHERE fm.path = {path_col} AND lower(fm.key) = lower(?))"
+            ));
+            bind_vals.push(key.clone());
+        } else {
+            conditions.push(format!(
+                "NOT EXISTS (SELECT 1 FROM file_metadata fm \
                  WHERE fm.path = {path_col} \
                  AND lower(fm.key) = lower(?) AND lower(fm.value) = lower(?))"
             ));
@@ -3402,5 +3499,98 @@ mod search_tests {
         // becomes "hello* world*".
         let got = build_fts_query(&["hello world".into()]);
         assert_eq!(got, Some("hello* world*".into()));
+    }
+
+    // ── negation ("-" prefix) ────────────────────────────────────────────────
+
+    #[test]
+    fn extract_negated_bare_word_goes_to_fts_exclude() {
+        let (fts, filters) = extract_search_filters("-draft");
+        assert!(fts.is_empty());
+        assert_eq!(filters.fts_exclude, vec!["draft".to_string()]);
+    }
+
+    #[test]
+    fn extract_negated_word_combined_with_positive_terms() {
+        let (fts, filters) = extract_search_filters("meeting -draft notes");
+        assert_eq!(fts, vec!["meeting".to_string(), "notes".to_string()]);
+        assert_eq!(filters.fts_exclude, vec!["draft".to_string()]);
+    }
+
+    #[test]
+    fn extract_negated_quoted_phrase_goes_to_fts_exclude() {
+        let (fts, filters) = extract_search_filters(r#"-"exact phrase""#);
+        assert!(fts.is_empty());
+        assert_eq!(filters.fts_exclude, vec![r#""exact phrase""#.to_string()]);
+    }
+
+    #[test]
+    fn extract_negated_tag_goes_to_excluded_tag_groups() {
+        let (_, filters) = extract_search_filters("-tag:archived");
+        assert!(filters.tag_groups.is_empty());
+        assert_eq!(filters.excluded_tag_groups, vec![vec!["archived".to_string()]]);
+    }
+
+    #[test]
+    fn extract_negated_tag_list_is_one_or_group() {
+        let (_, filters) = extract_search_filters("-tag:archived,old");
+        assert_eq!(
+            filters.excluded_tag_groups,
+            vec![vec!["archived".to_string(), "old".to_string()]],
+        );
+    }
+
+    #[test]
+    fn extract_negated_category_goes_to_excluded_category() {
+        let (_, filters) = extract_search_filters("-category:meeting");
+        assert_eq!(filters.category, None);
+        assert_eq!(filters.excluded_category, Some("meeting".to_string()));
+    }
+
+    #[test]
+    fn extract_negated_unknown_key_value_goes_to_excluded_meta_filters() {
+        let (fts, filters) = extract_search_filters("-status:done");
+        assert!(fts.is_empty());
+        assert!(filters.meta_filters.is_empty());
+        assert_eq!(
+            filters.excluded_meta_filters,
+            vec![("status".to_string(), "done".to_string())],
+        );
+    }
+
+    #[test]
+    fn extract_negated_quoted_unknown_key_value_goes_to_excluded_meta_filters() {
+        let (_, filters) = extract_search_filters(r#"-"author:Jane Doe""#);
+        assert_eq!(
+            filters.excluded_meta_filters,
+            vec![("author".to_string(), "Jane Doe".to_string())],
+        );
+    }
+
+    #[test]
+    fn extract_bare_minus_alone_is_not_negation() {
+        // A lone "-" has nothing to negate, so it's treated as a literal
+        // (harmless) bare token rather than triggering negation.
+        let (fts, filters) = extract_search_filters("-");
+        assert!(filters.fts_exclude.is_empty());
+        assert_eq!(fts, vec!["-".to_string()]);
+    }
+
+    #[test]
+    fn extract_negation_combined_example_from_docs() {
+        // title:Q2 "revenue targets" -draft tag:finance
+        let (fts, filters) = extract_search_filters(
+            r#"title:Q2 "revenue targets" -draft tag:finance"#,
+        );
+        assert_eq!(fts, vec![r#""revenue targets""#.to_string()]);
+        assert_eq!(filters.meta_filters, vec![("title".to_string(), "Q2".to_string())]);
+        assert_eq!(filters.fts_exclude, vec!["draft".to_string()]);
+        assert_eq!(filters.tag_groups, vec![vec!["finance".to_string()]]);
+    }
+
+    #[test]
+    fn filters_is_empty_false_when_only_negation_present() {
+        let (_, filters) = extract_search_filters("-draft");
+        assert!(!filters.is_empty());
     }
 }

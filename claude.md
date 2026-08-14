@@ -186,7 +186,7 @@ Favorites
 - [x] Full-text search
 - [x] @calc blocks (math.js, unit math, `_last`, `in`/`to` conversion, selectable results)
 - [x] @calc date math (chrono-node + Luxon: natural-language dates, date arithmetic, date differences, date carry-forward)
-- [x] Operators, filters for full-text search (`"phrase"`, NEAR, `in:`, `after:`, `before:`, `tag:`, `cat:`, arbitrary `key:value` / `key:*`) — 35 Rust unit tests covering tokenizer, filter parser, FTS query builder, and filter extraction
+- [x] Operators, filters for full-text search (`"phrase"`, NEAR, `in:`, `after:`, `before:`, `tag:`, `cat:`, arbitrary `key:value` / `key:*`, `-` negation prefix on FTS terms/phrases and metadata filters) — 46 Rust unit tests covering tokenizer, filter parser, FTS query builder, and filter extraction
 - [x] SQLite database as cache for linked references
 - [x] SQLite database as cache for full-text search
 - [x] SQLite database as cache for unlinked references

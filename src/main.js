@@ -252,6 +252,19 @@ function setMetadataInContent(content, key, rawValue) {
   return `${content}${trailing}\n-- \n${key}: ${rawValue}\n`;
 }
 
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/**
+ * Rename a metadata key in `content` in place, preserving its value and the
+ * line's existing whitespace/colon formatting. No-op if the key isn't found.
+ */
+function renameMetadataKeyInContent(content, oldKey, newKey) {
+  const existingRe = new RegExp(`^(\\s*)${escapeRegExp(oldKey)}(\\s*:\\s*.*)$`, 'mi');
+  return content.replace(existingRe, `$1${newKey}$2`);
+}
+
 // ── Title derivation ──────────────────────────────
 
 function isJournalFile(path) {
@@ -2861,6 +2874,16 @@ const allWidgetInstances = {
       }
     },
     onNavigate: (key, value) => loadMetadataView(key, value),
+    onRename: (oldKey, newKey) => {
+      const newContent = renameMetadataKeyInContent(cmView.state.doc.toString(), oldKey, newKey);
+      cmView.dispatch({
+        changes: { from: 0, to: cmView.state.doc.length, insert: newContent },
+        userEvent: 'metadata.rename',
+      });
+      if (currentFile) {
+        invoke('write_file', { path: currentFile, content: newContent }).catch(console.error);
+      }
+    },
   }),
 };
 

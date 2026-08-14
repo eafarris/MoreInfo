@@ -35,11 +35,12 @@ export class MetadataWidget extends Widget {
   /**
    * @param {{ onStateChange: (hasContent: boolean) => void, onEdit?: (key: string, rawValue: string) => void }} config
    */
-  constructor({ onStateChange, onEdit, onNavigate } = {}) {
+  constructor({ onStateChange, onEdit, onNavigate, onRename } = {}) {
     super({ id: 'metadata', title: 'Metadata', icon: 'ph-list-dashes' });
     this._onStateChange = onStateChange || (() => {});
     this._onEdit        = onEdit || null;
     this._onNavigate    = onNavigate || null;
+    this._onRename      = onRename || null;
     this._hasContent    = false;
     this._countEl       = null;
     this._lastMetadata  = null;
@@ -129,9 +130,17 @@ export class MetadataWidget extends Widget {
           });
         }
       }
-      // Double-click on the key label → navigate to all values for that key.
-      if (this._onNavigate) {
-        for (const dt of this._body.querySelectorAll('[data-meta-key-label]')) {
+      // Click on the key label → rename it. Double-click → navigate to all
+      // values for that key (mirrors the value cells' click-edit /
+      // dblclick-navigate split above).
+      for (const dt of this._body.querySelectorAll('[data-meta-key-label]')) {
+        if (this._onRename) {
+          dt.addEventListener('click', e => {
+            if (dt.querySelector('input')) return;
+            this._startKeyRename(dt.dataset.metaKeyLabel, dt);
+          });
+        }
+        if (this._onNavigate) {
           dt.addEventListener('dblclick', e => {
             e.preventDefault();
             this._onNavigate(dt.dataset.metaKeyLabel, undefined);
@@ -185,6 +194,41 @@ export class MetadataWidget extends Widget {
     input.addEventListener('keydown', e => {
       if (e.key === 'Enter') { e.preventDefault(); commit(); }
       if (e.key === 'Escape') { e.preventDefault(); this._editingKey = null; this._render(this._lastMetadata, this._lastContent); }
+    });
+    input.addEventListener('blur', commit);
+  }
+
+  _startKeyRename(oldKey, dtEl) {
+    const meta = this._lastMetadata;
+    if (!meta || !meta[oldKey]) return;
+
+    dtEl.innerHTML = `<input type="text"
+      class="w-full bg-olive-900 text-olive-300 text-xs font-mono border border-amber-600 rounded px-1 outline-none"
+      value="${esc(oldKey)}" />`;
+
+    const input = dtEl.querySelector('input');
+    input.focus();
+    input.select();
+
+    const cancel = () => this._render(this._lastMetadata, this._lastContent);
+
+    const commit = () => {
+      const newKey = input.value.trim();
+      // Refuse: empty, unchanged, a colon (would break key:value parsing),
+      // or a collision with another key already on the page.
+      const otherKeys = new Set(
+        Object.keys(meta).filter(k => k !== oldKey).map(k => k.toLowerCase())
+      );
+      if (!newKey || newKey === oldKey || newKey.includes(':') || otherKeys.has(newKey.toLowerCase())) {
+        cancel();
+        return;
+      }
+      this._onRename(oldKey, newKey);
+    };
+
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Enter')  { e.preventDefault(); commit(); }
+      if (e.key === 'Escape') { e.preventDefault(); cancel(); }
     });
     input.addEventListener('blur', commit);
   }
@@ -283,10 +327,13 @@ export class MetadataWidget extends Widget {
         valueHtml = `<div data-meta-key="${esc(key)}" data-meta-value="${esc(rawValue)}" class="mt-1 px-1 py-0.5 ${editable}"><p class="text-olive-200 text-sm wrap-break-word leading-snug">${esc(val.value)}</p></div>`;
       }
     }
-    const navCls = this._onNavigate ? 'cursor-pointer' : '';
+    const keyCls = [
+      this._onRename || this._onNavigate ? 'cursor-pointer' : '',
+      this._onRename ? 'hover:bg-olive-700/50 rounded px-0.5 -mx-0.5 transition-colors' : '',
+    ].filter(Boolean).join(' ');
     return `
       <div class="rounded-md px-3 py-2 bg-olive-800/60 border border-olive-700/50">
-        <dt data-meta-key-label="${esc(key)}" class="text-xs font-mono text-olive-500 truncate ${navCls}">${esc(key)}</dt>
+        <dt data-meta-key-label="${esc(key)}" title="${this._onRename ? 'Click to rename' : ''}" class="text-xs font-mono text-olive-500 truncate ${keyCls}">${esc(key)}</dt>
         ${valueHtml}
       </div>`;
   }

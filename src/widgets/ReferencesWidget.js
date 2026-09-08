@@ -116,7 +116,7 @@ export class ReferencesWidget extends Widget {
         : '';
       return `
         <div class="px-3 py-2 border-b border-olive-800/60 last:border-0">
-          <a class="text-amber-400 text-xs underline decoration-dotted underline-offset-2
+          <a class="text-amber-400 underline decoration-dotted underline-offset-2
                     hover:text-amber-300 hover:decoration-solid cursor-pointer"
              data-path="${esc(e.source_path)}">${esc(title)}</a>
           ${ctx}
@@ -148,14 +148,14 @@ export class ReferencesWidget extends Widget {
           return `
             <div class="flex items-start gap-2 px-3 py-1 hover:bg-olive-800/50 transition-colors">
               <span class="${checkboxClass} shrink-0 mt-px" style="pointer-events:none"></span>
-              <span class="text-xs ${t.checked ? 'text-olive-600 line-through' : 'text-olive-300'} leading-snug">
+              <span class="${t.checked ? 'text-olive-600 line-through' : 'text-olive-300'} leading-snug">
                 ${esc(t.task_text || '…')}
               </span>
             </div>`;
         }).join('');
         return `
           <div class="border-b border-olive-800/60 last:border-0">
-            <a class="flex items-center gap-1.5 px-3 py-1.5 text-amber-400 text-xs underline
+            <a class="flex items-center gap-1.5 px-3 py-1.5 text-amber-400 underline
                       decoration-dotted underline-offset-2 hover:text-amber-300
                       hover:decoration-solid cursor-pointer"
                data-path="${esc(pagePath)}">${esc(pageTitle)}</a>

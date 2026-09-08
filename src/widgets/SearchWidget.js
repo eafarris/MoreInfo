@@ -231,7 +231,7 @@ export class SearchWidget extends Widget {
       <div data-path="${esc(h.path)}" data-title="${esc(h.title)}"
         class="px-3 py-2 border-b border-olive-800 last:border-0 cursor-pointer
                hover:bg-olive-800 transition-colors">
-        <p class="text-xs font-medium text-olive-100 truncate leading-snug">${esc(h.title)}</p>
+        <p class="font-medium text-olive-100 truncate leading-snug">${esc(h.title)}</p>
         <p class="text-[10px] text-olive-500 mt-0.5 leading-snug line-clamp-2">${esc(h.snippet)}</p>
       </div>`).join('');
   }

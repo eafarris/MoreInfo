@@ -309,7 +309,7 @@ export class TasksWidget extends Widget {
           const overdue  = taskIsOverdue(t);
           const dueToday = !overdue && isDueToday(t.due_date, t.first_seen);
           const rowCls  = 'flex items-start gap-2 px-3 py-1 hover:bg-olive-800/50 transition-colors';
-          const textCls = 'text-xs text-olive-300 leading-snug';
+          const textCls = 'text-olive-300 leading-snug';
           const cbCls   = overdue
             ? 'cm-task-checkbox cm-task-cb-overdue shrink-0 mt-px'
             : 'cm-task-checkbox shrink-0 mt-px';

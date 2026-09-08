@@ -93,7 +93,7 @@ export class CounterWidget extends Widget {
 
   _render({ paragraphs, sentences, words, chars }, hadMeta) {
     this._body.innerHTML = `
-      <table class="w-full text-xs tabular-nums">
+      <table class="w-full tabular-nums">
         <tbody>
           ${this._row('Paragraphs', paragraphs)}
           ${this._row('Sentences',  sentences)}

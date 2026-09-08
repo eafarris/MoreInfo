@@ -127,7 +127,7 @@ export class AnnotationsWidget extends Widget {
           class="flex items-start gap-2 px-3 py-1.5 cursor-pointer hover:bg-olive-800/50 transition-colors">
           <span class="mt-1.5 w-1.5 h-1.5 rounded-full shrink-0 ${dot}"></span>
           <div class="min-w-0">
-            <p class="text-xs text-olive-300 leading-snug">${body}</p>
+            <p class="text-olive-300 leading-snug">${body}</p>
             <p class="text-[10px] text-olive-600 truncate mt-0.5">${title}</p>
           </div>
         </div>`;

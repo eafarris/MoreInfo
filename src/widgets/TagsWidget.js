@@ -101,7 +101,7 @@ export class TagsWidget extends Widget {
         ${tags.map(({ tag, count }) => `
           <button data-tag="${esc(tag)}"
             class="flex items-center gap-1 px-2 py-0.5 rounded-full bg-olive-700 hover:bg-amber-700
-                   text-olive-200 hover:text-white text-xs transition-colors cursor-pointer leading-snug">
+                   text-olive-200 hover:text-white transition-colors cursor-pointer leading-snug">
             <span class="ph ph-hash text-[10px] leading-none opacity-60"></span>
             <span>${esc(tag)}</span>
             <span class="text-[10px] opacity-50">${count}</span>

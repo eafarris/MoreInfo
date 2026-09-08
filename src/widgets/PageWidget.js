@@ -381,7 +381,7 @@ export class PageWidget extends Widget {
         + ' bg-amber-700/80 hover:bg-amber-600 text-white cursor-pointer border-0 leading-none';
 
       this._contentEl.innerHTML =
-        `<div class="prose prose-invert prose-sm max-w-none px-4 pt-3 pb-1 relative">` +
+        `<div class="prose prose-invert max-w-none px-4 pt-3 pb-1 relative">` +
           `<button class="${btnClass} absolute top-3 right-4 z-10" data-pw-edit>` +
             `<i class="ph ph-note-pencil leading-none"></i>Edit` +
           `</button>` +

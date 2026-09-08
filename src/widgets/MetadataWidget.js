@@ -174,7 +174,7 @@ export class MetadataWidget extends Widget {
     const raw = String(val.value);
 
     el.innerHTML = `<input type="text"
-      class="w-full bg-olive-900 text-olive-200 text-sm border border-amber-600 rounded px-2 py-1 font-mono outline-none"
+      class="w-full bg-olive-900 text-olive-200 border border-amber-600 rounded px-2 py-1 font-mono outline-none"
       value="${esc(raw)}" />`;
 
     const input = el.querySelector('input');
@@ -247,7 +247,7 @@ export class MetadataWidget extends Widget {
     const input = document.createElement('input');
     input.type = 'text';
     input.value = orig;
-    input.className = 'bg-olive-900 text-olive-200 text-xs border border-amber-600 rounded px-1.5 font-mono outline-none w-24';
+    input.className = 'bg-olive-900 text-olive-200 border border-amber-600 rounded px-1.5 font-mono outline-none w-24';
     chipEl.appendChild(input);
     input.focus();
     input.select();
@@ -297,7 +297,7 @@ export class MetadataWidget extends Widget {
         valueHtml = `
           <div data-meta-key="${esc(key)}" data-meta-value="${esc(rawValue)}" class="flex items-center gap-1.5 mt-1 px-1 py-0.5 ${editable}">
             <i class="ph ph-calendar-blank text-amber-500 text-xs leading-none shrink-0"></i>
-            <span class="text-olive-200 text-sm leading-snug" title="${esc(val.value)}">${esc(human)}</span>
+            <span class="text-olive-200 leading-snug" title="${esc(val.value)}">${esc(human)}</span>
           </div>`;
         break;
       }
@@ -308,7 +308,7 @@ export class MetadataWidget extends Widget {
         valueHtml = `
           <div data-meta-key="${esc(key)}" data-meta-value="${esc(rawValue)}" class="flex items-center gap-1.5 mt-1 px-1 py-0.5 ${editable}">
             <i class="ph ${icon} ${color} text-base leading-none shrink-0"></i>
-            <span class="${color} text-sm leading-snug">${label}</span>
+            <span class="${color} leading-snug">${label}</span>
           </div>`;
         break;
       }
@@ -317,14 +317,14 @@ export class MetadataWidget extends Widget {
           valueHtml = `<div data-meta-key="${esc(key)}" data-meta-value="" class="mt-1 px-1 py-0.5 ${editable}"><p class="text-olive-600 text-xs italic">empty</p></div>`;
         } else {
           const chips = val.value.map((item, i) =>
-            `<span data-meta-chip-value="${esc(item)}" data-meta-chip-index="${i}" class="inline-flex px-1.5 py-px rounded bg-olive-700 border border-olive-600 text-olive-300 text-xs font-mono hover:bg-olive-600 hover:text-olive-100 transition-colors cursor-pointer">${esc(item)}</span>`
+            `<span data-meta-chip-value="${esc(item)}" data-meta-chip-index="${i}" class="inline-flex px-1.5 py-px rounded bg-olive-700 border border-olive-600 text-olive-300 font-mono hover:bg-olive-600 hover:text-olive-100 transition-colors cursor-pointer">${esc(item)}</span>`
           ).join('');
           valueHtml = `<div data-meta-key="${esc(key)}" data-meta-value="${esc(rawValue)}" class="flex flex-wrap gap-1 mt-1 px-1 py-0.5 ${editable}">${chips}</div>`;
         }
         break;
       }
       default: {
-        valueHtml = `<div data-meta-key="${esc(key)}" data-meta-value="${esc(rawValue)}" class="mt-1 px-1 py-0.5 ${editable}"><p class="text-olive-200 text-sm wrap-break-word leading-snug">${esc(val.value)}</p></div>`;
+        valueHtml = `<div data-meta-key="${esc(key)}" data-meta-value="${esc(rawValue)}" class="mt-1 px-1 py-0.5 ${editable}"><p class="text-olive-200 wrap-break-word leading-snug">${esc(val.value)}</p></div>`;
       }
     }
     const keyCls = [

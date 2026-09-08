@@ -41,6 +41,8 @@ let camelCaseDisabled = getPref('camelCaseDisabled', false);
 let journalDateFormat = getPref('journalDateFormat', 'd-mmm-yyyy');
 // When true, tasks on future-dated journal pages are hidden from task lists.
 let deferFutureTasks  = getPref('deferFutureTasks',  false);
+// Widget content text size: 'small' | 'medium' | 'large'.
+let widgetFontSize    = getPref('widgetFontSize',   'medium');
 
 // ── Four-font system ──────────────────────────────────────────────────────────
 // Each slot has a CSS default in :root (input.css); JS overrides via prefs.
@@ -72,6 +74,14 @@ function applyEditorFontSize(px) {
   document.documentElement.style.setProperty('--editor-font-size', `${px}px`);
 }
 
+// Widget content text size: Small/Medium/Large, anchored so that today's
+// Tasks/Annotations row text (12px) sits below Small, and today's Page
+// widget content (14px, prose-sm) sits between Small and Medium.
+const WIDGET_FONT_SIZES = { small: '13px', medium: '16px', large: '19px' };
+function applyWidgetFontSize(size) {
+  document.documentElement.style.setProperty('--widget-font-size', WIDGET_FONT_SIZES[size] || WIDGET_FONT_SIZES.medium);
+}
+
 let systemFonts = [];
 invoke('list_system_fonts').then(f => { systemFonts = f; }).catch(() => {});
 
@@ -80,6 +90,7 @@ applyUiFont(getPref('uiFont', ''));
 applyContentFont(getPref('contentFont', ''));
 applyMonoFont(getPref('monoFont', ''));
 applyEditorFontSize(getPref('editorFontSize', 14));
+applyWidgetFontSize(widgetFontSize);
 
 let changeTimer   = null;
 let saveTimer     = null;
@@ -2496,6 +2507,7 @@ async function showSettingsDialog() {
         </div>
         <div class="flex flex-col gap-1.5">
           <label class="text-xs text-olive-500 font-mono">Fonts</label>
+          <p class="text-xs text-olive-600">Type a font name or click &hellip; to browse installed fonts. Leave blank for the system default.</p>
           <datalist id="mi-fonts-list"></datalist>
           <div class="grid items-center gap-x-3 gap-y-1.5 text-xs" style="grid-template-columns:auto 1fr">
             <span class="text-olive-500 whitespace-nowrap">Editor</span>
@@ -2536,8 +2548,13 @@ async function showSettingsDialog() {
               ${[11,12,13,14,15,16,18,20].map(s => `<option value="${s}"
                 ${getPref('editorFontSize', 14) === s ? 'selected' : ''}>${s}px</option>`).join('')}
             </select>
+            <span class="text-olive-500 whitespace-nowrap">Widget text</span>
+            <select name="mi-widget-font-size"
+              class="bg-olive-800 border border-olive-600 rounded px-2 py-1 text-olive-200 focus:outline-none cursor-pointer text-xs">
+              ${[['small','Small'],['medium','Medium'],['large','Large']].map(([v, label]) => `<option value="${v}"
+                ${widgetFontSize === v ? 'selected' : ''}>${label}</option>`).join('')}
+            </select>
           </div>
-          <p class="text-xs text-olive-600">Type a font name or click &hellip; to browse installed fonts. Leave blank for the system default.</p>
         </div>
         <div class="flex justify-end gap-2 pt-1">
           <button id="mi-settings-cancel"
@@ -2626,6 +2643,12 @@ async function showSettingsDialog() {
         if (newSize !== getPref('editorFontSize', 14)) {
           setPref('editorFontSize', newSize);
           applyEditorFontSize(newSize);
+        }
+        const newWidgetFontSize = overlay.querySelector('select[name="mi-widget-font-size"]')?.value ?? 'medium';
+        if (newWidgetFontSize !== widgetFontSize) {
+          widgetFontSize = newWidgetFontSize;
+          setPref('widgetFontSize', widgetFontSize);
+          applyWidgetFontSize(widgetFontSize);
         }
       }
       if (!save || !pendingPath || pendingPath === datastorePath) { resolve(); return; }

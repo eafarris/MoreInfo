@@ -17,6 +17,9 @@
   --font-mono:    ui-monospace, "Cascadia Code", "SF Mono", Consolas, Menlo, monospace;
   /* Wire Tailwind's font-mono class through the user's choice. */
   --font-family-mono: var(--font-mono);
+  /* Widget content text size (Small/Medium/Large). JS overrides this on
+     startup from the widgetFontSize pref; default here is Medium (16px). */
+  --widget-font-size: 1rem;
 }
 
 body { font-family: var(--font-ui); }
@@ -78,8 +81,10 @@ body { font-family: var(--font-ui); }
    Typography uses :where() (zero specificity) for all its selectors,
    so plain element rules here will always win.               ── */
 /* Apply content font to all rendered/content areas */
-.prose                                           { font-family:      var(--font-content); }
-.widget-body                                     { font-family:      var(--font-content); }
+.prose                                           { font-family:      var(--font-content);
+                                                    font-size:        var(--widget-font-size); }
+.widget-body                                     { font-family:      var(--font-content);
+                                                    font-size:        var(--widget-font-size); }
 #markdown-content                                { color:            var(--color-olive-200); }
 #markdown-content h1,
 #markdown-content h2,

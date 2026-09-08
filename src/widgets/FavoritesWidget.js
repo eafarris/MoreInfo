@@ -61,7 +61,7 @@ export class FavoritesWidget extends Widget {
         class="flex items-center gap-2 px-3 py-2 border-b border-olive-800 last:border-0
                cursor-pointer hover:bg-olive-800 transition-colors">
         <i class="ph-fill ph-star text-amber-400 text-xs shrink-0 leading-none"></i>
-        <p class="text-xs text-olive-200 truncate leading-snug">${esc(e.title)}</p>
+        <p class="text-olive-200 truncate leading-snug">${esc(e.title)}</p>
       </div>`).join('');
 
     this._list.querySelectorAll('[data-path]').forEach(el => {

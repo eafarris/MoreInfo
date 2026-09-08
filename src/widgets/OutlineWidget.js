@@ -83,7 +83,7 @@ export class OutlineWidget extends Widget {
         return `<li data-pos="${pos}"
           style="padding-left: ${8 + indent}px"
           class="flex items-baseline gap-1.5 py-0.5 pr-3 cursor-pointer
-                 text-xs text-olive-200 hover:text-amber-300 hover:bg-olive-800
+                 text-olive-200 hover:text-amber-300 hover:bg-olive-800
                  rounded select-none truncate ${size}"
           title="${esc(text)}">
           <span class="shrink-0 text-olive-600" style="font-size:0.6rem">

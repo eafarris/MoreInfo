@@ -20,9 +20,9 @@ jobs:
     runs-on: macos-14   # GitHub-hosted arm64 runner
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -32,6 +32,8 @@ jobs:
 
       # Cache the Cargo registry + compiled deps across runs.
       # workspaces tells rust-cache where the Cargo.toml lives.
+      # @v2 is a floating major tag already updated to the Node 24 runtime,
+      # so it doesn't need a version bump like the actions/* actions above.
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
@@ -46,7 +48,7 @@ jobs:
         run: npx tauri build --bundles dmg --config '{"bundle":{"active":true}}'
 
       - name: Upload DMG artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: MoreInfo-macOS-arm64
           path: src-tauri/target/release/bundle/dmg/*.dmg
@@ -59,9 +61,9 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -83,7 +85,7 @@ jobs:
         run: npx tauri build --bundles nsis --config '{"bundle":{"active":true}}'
 
       - name: Upload NSIS artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: MoreInfo-Windows-x64
           path: src-tauri/target/release/bundle/nsis/*.exe
@@ -99,12 +101,12 @@ jobs:
     steps:
       # Download both artifacts into subdirectories named after the artifact.
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           path: artifacts
 
       - name: Create draft release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           draft: true
           generate_release_notes: true

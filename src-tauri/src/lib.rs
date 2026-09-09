@@ -3086,90 +3086,108 @@ pub fn run() {
             let file_reindex          = MenuItem::with_id(handle, "file-reindex",          "Reindex Database",          true, None::<&str>)?;
             let file_settings         = MenuItem::with_id(handle, "file-settings",         "Settings\u{2026}",          true, Some("CmdOrCtrl+,"))?;
 
-            let menu = MenuBuilder::new(handle)
-                .items(&[
-                    // ── App menu (macOS convention) ──────────────────
-                    &SubmenuBuilder::new(handle, "MoreInfo")
-                        .about(Some(AboutMetadata {
-                            name:      Some("MoreInfo".to_string()),
-                            version:   Some(env!("CARGO_PKG_VERSION").to_string()),
-                            copyright: Some("\u{00a9} 2026 Eric A. Farris".to_string()),
-                            license:   Some("MIT License".to_string()),
-                            comments:  Some("A markdown-based personal knowledge base.".to_string()),
-                            ..Default::default()
-                        }))
-                        .separator()
-                        .item(&file_settings)
-                        .separator()
-                        .services()
-                        .separator()
-                        .hide()
-                        .hide_others()
-                        .show_all()
-                        .separator()
-                        .quit()
-                        .build()?,
-                    // ── File ────────────────────────────────────────
-                    &SubmenuBuilder::new(handle, "File")
-                        .item(&file_new)
-                        .separator()
-                        .item(&file_new_template)
-                        .item(&file_from_template)
-                        .item(&file_edit_template)
-                        .separator()
-                        .item(&file_reindex)
-                        .separator()
-                        .item(&file_settings)
-                        .build()?,
-                    // ── Edit ────────────────────────────────────────
-                    &SubmenuBuilder::new(handle, "Edit")
-                        .undo()
-                        .redo()
-                        .separator()
-                        .cut()
-                        .copy()
-                        .paste()
-                        .separator()
-                        .select_all()
-                        .separator()
-                        .item(&edit_find)
-                        .item(&edit_search)
-                        .build()?,
-                    // ── View ────────────────────────────────────────
-                    &SubmenuBuilder::new(handle, "View")
-                        .item(&nav_back)
-                        .item(&nav_forward)
-                        .separator()
-                        .item(&view_today)
-                        .item(&view_tasks)
-                        .item(&view_render)
-                        .separator()
-                        .item(&toggle_left)
-                        .item(&toggle_right)
-                        .separator()
-                        .item(&toggle_top)
-                        .item(&toggle_bottom)
-                        .build()?,
-                    // ── Window ──────────────────────────────────────
-                    &SubmenuBuilder::new(handle, "Window")
-                        .minimize()
-                        .maximize()
-                        .separator()
-                        .close_window()
-                        .build()?,
-                    // ── Help (Windows convention; macOS uses app menu) ──
-                    &SubmenuBuilder::new(handle, "Help")
-                        .about(Some(AboutMetadata {
-                            name:      Some("MoreInfo".to_string()),
-                            version:   Some(env!("CARGO_PKG_VERSION").to_string()),
-                            copyright: Some("\u{00a9} 2026 Eric A. Farris".to_string()),
-                            license:   Some("MIT License".to_string()),
-                            comments:  Some("A markdown-based personal knowledge base.".to_string()),
-                            ..Default::default()
-                        }))
-                        .build()?,
-                ])
+            // The "MoreInfo" app menu (leftmost, before File) is a macOS convention —
+            // it merges into the system menu bar there. Windows/Linux have no such
+            // concept: Quit moves into File instead, and About lives in a Help menu.
+            let mut file_menu_builder = SubmenuBuilder::new(handle, "File")
+                .item(&file_new)
+                .separator()
+                .item(&file_new_template)
+                .item(&file_from_template)
+                .item(&file_edit_template)
+                .separator()
+                .item(&file_reindex)
+                .separator()
+                .item(&file_settings);
+            if !cfg!(target_os = "macos") {
+                file_menu_builder = file_menu_builder.separator().quit_with_text("Exit");
+            }
+            let file_menu = file_menu_builder.build()?;
+
+            let edit_menu = SubmenuBuilder::new(handle, "Edit")
+                .undo()
+                .redo()
+                .separator()
+                .cut()
+                .copy()
+                .paste()
+                .separator()
+                .select_all()
+                .separator()
+                .item(&edit_find)
+                .item(&edit_search)
                 .build()?;
+
+            let view_menu = SubmenuBuilder::new(handle, "View")
+                .item(&nav_back)
+                .item(&nav_forward)
+                .separator()
+                .item(&view_today)
+                .item(&view_tasks)
+                .item(&view_render)
+                .separator()
+                .item(&toggle_left)
+                .item(&toggle_right)
+                .separator()
+                .item(&toggle_top)
+                .item(&toggle_bottom)
+                .build()?;
+
+            let window_menu = SubmenuBuilder::new(handle, "Window")
+                .minimize()
+                .maximize()
+                .separator()
+                .close_window()
+                .build()?;
+
+            let mut menu_builder = MenuBuilder::new(handle);
+
+            if cfg!(target_os = "macos") {
+                let macos_app_menu = SubmenuBuilder::new(handle, "MoreInfo")
+                    .about(Some(AboutMetadata {
+                        name:      Some("MoreInfo".to_string()),
+                        version:   Some(env!("CARGO_PKG_VERSION").to_string()),
+                        copyright: Some("\u{00a9} 2026 Eric A. Farris".to_string()),
+                        license:   Some("MIT License".to_string()),
+                        comments:  Some("A markdown-based personal knowledge base.".to_string()),
+                        ..Default::default()
+                    }))
+                    .separator()
+                    .item(&file_settings)
+                    .separator()
+                    .services()
+                    .separator()
+                    .hide()
+                    .hide_others()
+                    .show_all()
+                    .separator()
+                    .quit()
+                    .build()?;
+                menu_builder = menu_builder.item(&macos_app_menu);
+            }
+
+            menu_builder = menu_builder
+                .item(&file_menu)
+                .item(&edit_menu)
+                .item(&view_menu)
+                .item(&window_menu);
+
+            if !cfg!(target_os = "macos") {
+                // Help (Windows/Linux convention; macOS uses the app menu's About).
+                let help_menu = SubmenuBuilder::new(handle, "Help")
+                    .about(Some(AboutMetadata {
+                        name:      Some("MoreInfo".to_string()),
+                        version:   Some(env!("CARGO_PKG_VERSION").to_string()),
+                        copyright: Some("\u{00a9} 2026 Eric A. Farris".to_string()),
+                        license:   Some("MIT License".to_string()),
+                        comments:  Some("A markdown-based personal knowledge base.".to_string()),
+                        ..Default::default()
+                    }))
+                    .build()?;
+                menu_builder = menu_builder.item(&help_menu);
+            }
+
+            let menu = menu_builder.build()?;
 
             app.set_menu(menu)?;
 

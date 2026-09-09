@@ -16,7 +16,9 @@ export default defineConfig({
     },
   },
   build: {
-    target: ['es2021', 'chrome105', 'safari13'],
+    // es2022 + safari15 (Chrome already clears this at 105): main.js uses a
+    // top-level await (initPrefs()), which needs a target that supports it.
+    target: ['es2022', 'chrome105', 'safari15'],
     minify: process.env.TAURI_ENV_DEBUG !== 'true',
     outDir: 'dist',
   },

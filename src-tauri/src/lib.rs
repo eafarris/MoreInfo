@@ -3033,17 +3033,34 @@ pub fn run() {
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(640.0, 400.0)
                 .decorations(true)
-                .on_navigation(|url| {
-                    let is_internal = url.scheme() == "tauri"
-                        || (url.scheme() == "https" && url.host_str() == Some("tauri.localhost"))
-                        || (cfg!(debug_assertions) && url.host_str() == Some("localhost"));
-                    if is_internal {
-                        return true;
+                .on_navigation({
+                    // The window's own initial load into "index.html" also
+                    // fires this hook. On Windows that first call was
+                    // misclassified as external — cancelled (blank window)
+                    // and bounced to the system browser as
+                    // https://tauri.localhost, which fails there since that
+                    // host only resolves inside the webview's virtual host —
+                    // so unconditionally allow whatever the very first call
+                    // reports, rather than trust URL matching to recognize
+                    // our own window's starting page.
+                    let first_nav = std::sync::atomic::AtomicBool::new(true);
+                    move |url| {
+                        if first_nav.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                            return true;
+                        }
+                        // Match on host alone, not scheme, for the same reason:
+                        // don't assume https is what Windows reports here.
+                        let is_internal = url.scheme() == "tauri"
+                            || matches!(url.host_str(), Some("tauri.localhost"))
+                            || (cfg!(debug_assertions) && matches!(url.host_str(), Some("localhost")));
+                        if is_internal {
+                            return true;
+                        }
+                        if let Err(err) = tauri_plugin_opener::open_url(url.to_string(), None::<&str>) {
+                            eprintln!("failed to open external link {url}: {err}");
+                        }
+                        false
                     }
-                    if let Err(err) = tauri_plugin_opener::open_url(url.to_string(), None::<&str>) {
-                        eprintln!("failed to open external link {url}: {err}");
-                    }
-                    false
                 })
                 .build()?;
 

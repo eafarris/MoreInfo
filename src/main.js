@@ -2799,21 +2799,12 @@ Object.keys(sbConfig).forEach(name => {
 });
 
 // Plugin handles maximised/fullscreen only; we own size+position.
+// Saving is now handled natively (Rust `on_window_event`, flushed on close)
+// rather than from here — see WINDOWS.md for why a JS-debounced
+// save_window_size command used to deadlock the app on Windows.
 restoreStateCurrent(StateFlags.MAXIMIZED | StateFlags.FULLSCREEN)
   .then(() => invoke('restore_window_size'))
   .catch(() => {});
-
-// Save size+position on a 1-second debounce after any resize or move.
-// Saving is skipped by the Rust side when the window is maximised.
-{
-  let _winSaveTimer = null;
-  const scheduleWinSave = () => {
-    clearTimeout(_winSaveTimer);
-    _winSaveTimer = setTimeout(() => invoke('save_window_size').catch(() => {}), 1000);
-  };
-  window.__TAURI__.event.listen('tauri://resize', scheduleWinSave);
-  window.__TAURI__.event.listen('tauri://move',   scheduleWinSave);
-}
 
 invoke('get_datastore_path').then(p => { datastorePath = p; }).catch(console.error);
 

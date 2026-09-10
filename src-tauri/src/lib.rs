@@ -4,7 +4,7 @@ use chrono::Datelike;
 use pulldown_cmark::{html, Options, Parser};
 use rusqlite::Connection;
 use tauri::menu::{AboutMetadata, MenuBuilder, MenuItem, SubmenuBuilder};
-use tauri::{Emitter, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Emitter, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
 // ── Preferences ─────────────────────────────────────────────────────────────
 
@@ -1199,10 +1199,28 @@ fn get_unlinked_references(path: String) -> Result<Vec<UnlinkedEntry>, String> {
 //
 // tauri-plugin-window-state's exit-time save races with window teardown on
 // macOS, so the plugin can write stale (large-monitor) dimensions back to disk
-// on quit. We take over size/position management: JS saves on every
-// resize/move event (debounced) via `save_window_size`, and restores via
-// `restore_window_size` which also clamps to the current monitor.
+// on quit. We take over size/position management, restoring at startup via
+// `restore_window_size` (which also clamps to the current monitor) — see
+// `install_window_geometry_persistence` (in `run()`) for how saving works.
 // The plugin is kept only for MAXIMIZED / FULLSCREEN state.
+//
+// Saving used to be driven from JS: on a debounced `tauri://resize`/
+// `tauri://move` event, it invoked a `save_window_size` command that queried
+// `window.outer_size()`/`outer_position()`/`is_maximized()`. On Windows,
+// those queries block waiting for the native UI thread — and if that thread
+// was still inside the nested, blocking message loop Windows runs while a
+// resize/move is in progress (or has only just finished), the query could
+// deadlock the whole app (a known, unresolved upstream issue: see
+// tauri-apps/tao#381 / tauri-apps/tauri#3990, "Application freezes when
+// resized via a tauri command (Windows only)"; WINDOWS.md has the trail that
+// led here). `tauri_plugin_window_state` never hits this because it captures
+// size/position straight off the `WindowEvent::Resized`/`Moved` payload
+// (no query) and only calls `is_maximized()`/`is_minimized()` synchronously
+// from within its own `on_window_event` callback — safe, since that runs
+// in-thread as part of the same native event dispatch, not a cross-thread
+// round-trip. We do the same below, just persisting into the datastore's
+// preferences.json instead of the plugin's separate OS-level file, so window
+// geometry travels with the datastore.
 
 // ── Per-datastore user preferences ──────────────────────────────────────────
 // Stored at <datastore>/preferences.json.  Distinct from the app-level
@@ -1264,19 +1282,51 @@ fn write_user_prefs(prefs: &UserPrefs) -> Result<(), String> {
     Ok(())
 }
 
-/// Persist the current (non-maximised) window size and position to
-/// the `window` key in `<datastore>/preferences.json`.
-/// Called from JS on a debounced resize/move event.
-#[tauri::command]
-async fn save_window_size(window: tauri::WebviewWindow) -> Result<(), String> {
-    if window.is_maximized().map_err(|e| e.to_string())? {
-        return Ok(()); // don't overwrite good dimensions with maximised ones
-    }
-    let size = window.outer_size().map_err(|e| e.to_string())?;
-    let pos  = window.outer_position().map_err(|e| e.to_string())?;
-    let mut prefs = read_user_prefs();
-    prefs.window  = Some(WinState { width: size.width, height: size.height, x: pos.x, y: pos.y });
-    write_user_prefs(&prefs)
+/// Track window geometry via native window events and flush it to the
+/// datastore's `preferences.json` on close — see the comment above this
+/// section for why this replaced a JS-invoked `save_window_size` command.
+///
+/// `Resized`/`Moved` update an in-memory cache from the event payload alone
+/// (no window query) and are cheap enough to run on every event, even many
+/// times per second during an active drag. Skipping the write to disk until
+/// `CloseRequested` avoids both the Windows deadlock risk (no query, ever,
+/// from a cross-thread async context) and the macOS exit-teardown race
+/// (nothing is queried at close time either — we just flush what's already
+/// cached).
+fn install_window_geometry_persistence(window: &tauri::WebviewWindow) {
+    let initial = window.outer_size().ok().zip(window.outer_position().ok())
+        .map(|(size, pos)| WinState { width: size.width, height: size.height, x: pos.x, y: pos.y });
+    let pending = std::sync::Mutex::new(initial);
+    let w = window.clone();
+
+    window.on_window_event(move |event| {
+        match event {
+            WindowEvent::Resized(size) => {
+                if w.is_minimized().unwrap_or(false) || w.is_maximized().unwrap_or(false) {
+                    return; // don't overwrite good dimensions with minimised/maximised ones
+                }
+                let mut pending = pending.lock().unwrap();
+                let (x, y) = pending.as_ref().map(|s| (s.x, s.y)).unwrap_or((0, 0));
+                *pending = Some(WinState { width: size.width, height: size.height, x, y });
+            }
+            WindowEvent::Moved(position) => {
+                if w.is_minimized().unwrap_or(false) || w.is_maximized().unwrap_or(false) {
+                    return;
+                }
+                let mut pending = pending.lock().unwrap();
+                let (width, height) = pending.as_ref().map(|s| (s.width, s.height)).unwrap_or((0, 0));
+                *pending = Some(WinState { width, height, x: position.x, y: position.y });
+            }
+            WindowEvent::CloseRequested { .. } => {
+                if let Some(state) = pending.lock().unwrap().clone() {
+                    let mut prefs = read_user_prefs();
+                    prefs.window = Some(state);
+                    let _ = write_user_prefs(&prefs);
+                }
+            }
+            _ => {}
+        }
+    });
 }
 
 /// Read the saved window size/position from `preferences.json`, clamp it to
@@ -3062,7 +3112,7 @@ pub fn run() {
             // tauri.conf.json) so we can install a navigation handler: links
             // clicked or opened via the webview's native "Open Link" context
             // menu must open in the system browser, not navigate the app.
-            WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            let main_window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                 .title("MoreInfo")
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(640.0, 400.0)
@@ -3097,6 +3147,8 @@ pub fn run() {
                     }
                 })
                 .build()?;
+
+            install_window_geometry_persistence(&main_window);
 
             let toggle_left   = MenuItem::with_id(handle, "toggle-left",   "Toggle Left Sidebar",   true, None::<&str>)?;
             let toggle_right  = MenuItem::with_id(handle, "toggle-right",  "Toggle Right Sidebar",  true, None::<&str>)?;
@@ -3264,7 +3316,6 @@ pub fn run() {
             search_metadata,
             write_task_line,
             get_linked_tasks,
-            save_window_size,
             restore_window_size,
             list_tags,
             list_pages_for_tag,

@@ -17,6 +17,8 @@ Everything else — linking, indexing, search, recurrence ideas, context inferen
 
 MI is built using Rust and Tauri. Styling of the front-end is done with TailwindCSS and is themeable, and the Phosphor Icon set is used as glyphs. Where possible, MI defaults to OS-native API calls, forms, and styling. While being developed as an app for macOS, the toolset has been selected because of its ability to be recompiled as near-native apps for other operating systems. At least macOS, iOS, iPadOS, and Windows binaries are planned.
 
+Most development happens on macOS; platform-specific findings, workarounds, and open issues from building and debugging on Windows are tracked separately in "WINDOWS.md" rather than here.
+
 Its datastore is a structured folder hierarchy consisting of plain text files in markdown format as its source of truth. While a 'moreinfo.sqlite' SQLite database exists, it is created and updated based on the contents of the markdown files. The database exists to speed up things like searching and linking, and other routines that would be easier to create and cache rather than build from the filesystem. A file watch mechanism exists to allow MI to automatically keep the database in sync with the filesystem, including a journal within the database keeping track of the last time the database was updated, which would trigger an update with newer files on launch or reindex.
 
 To wit, the SQLite database is *derived* from the content of the markdown files in the datastore. The database is *not authoritative*, and only reflects the truth as it exists in the MD files on disk. No functionality or data is lost should the SQLite database be destroyed or corrupted. It can always be reconstructed by parsing the Markdown files on disk.

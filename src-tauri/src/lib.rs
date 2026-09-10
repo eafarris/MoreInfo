@@ -1451,19 +1451,47 @@ fn search_metadata(key: String, value: Option<String>) -> Result<Vec<MetadataHit
     Ok(hits)
 }
 
+/// Locate the byte range of the `[ ]`/`[x]`/`[X]`/`[]` checkbox marker at the
+/// start of a task line (after any leading whitespace/list marker). Mirrors
+/// `parse_task_line`'s marker recognition but returns the span so callers can
+/// rewrite just the bracket in place.
+fn checkbox_span(line: &str) -> Option<(usize, usize)> {
+    let after_ws     = line.trim_start();
+    let ws_len       = line.len() - after_ws.len();
+    let after_marker = skip_list_marker(after_ws);
+    let start        = ws_len + (after_ws.len() - after_marker.len());
+
+    if !after_marker.starts_with('[') { return None; }
+    let b = after_marker.as_bytes();
+    let len = if b.len() >= 2 && b[1] == b']' {
+        2                                         // []
+    } else if b.len() >= 3 && b[1] == b' ' && b[2] == b']' {
+        3                                         // [ ]
+    } else if b.len() >= 3 && (b[1] == b'X' || b[1] == b'x') && b[2] == b']' {
+        3                                         // [X] or [x]
+    } else {
+        return None;
+    };
+    Some((start, start + len))
+}
+
 /// Rewrite one task line in a source file.
 ///
 /// `original_text` is the task text as stored in the DB (the content after
 /// the checkbox).  The command locates the source line by searching near
 /// `line_number` (1-based) for a line that contains `original_text`, then
-/// replaces the first occurrence with `new_text`.  After writing, the file
-/// is re-indexed so the DB stays in sync.
+/// replaces the first occurrence with `new_text`.  When `mark_checked` is
+/// given, the checkbox marker itself is also rewritten to `[X]`/`[ ]` — the
+/// text substitution alone never touches it, since the checkbox precedes
+/// `original_text` on the line.  After writing, the file is re-indexed so
+/// the DB stays in sync.
 #[tauri::command]
 fn write_task_line(
     path:          String,
     line_number:   i64,
     original_text: String,
     new_text:      String,
+    mark_checked:  Option<bool>,
 ) -> Result<(), String> {
     let content = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
     let lines: Vec<&str> = content.lines().collect();
@@ -1481,7 +1509,13 @@ fn write_task_line(
         .find(|&i| lines[i].contains(original_text.as_str()))
         .ok_or_else(|| "Task line not found in source file".to_string())?;
 
-    let new_line = lines[target].replacen(original_text.as_str(), new_text.as_str(), 1);
+    let mut new_line = lines[target].replacen(original_text.as_str(), new_text.as_str(), 1);
+    if let Some(want_checked) = mark_checked {
+        if let Some((start, end)) = checkbox_span(&new_line) {
+            let marker = if want_checked { "[X]" } else { "[ ]" };
+            new_line = format!("{}{}{}", &new_line[..start], marker, &new_line[end..]);
+        }
+    }
     let mut new_lines: Vec<String> = lines.iter().map(|l| l.to_string()).collect();
     new_lines[target] = new_line;
 
@@ -3627,5 +3661,45 @@ mod search_tests {
     fn filters_is_empty_false_when_only_negation_present() {
         let (_, filters) = extract_search_filters("-draft");
         assert!(!filters.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod checkbox_span_tests {
+    use super::*;
+
+    #[test]
+    fn bare_brackets() {
+        assert_eq!(checkbox_span("[] Buy milk"), Some((0, 2)));
+    }
+
+    #[test]
+    fn empty_unchecked() {
+        assert_eq!(checkbox_span("[ ] Buy milk"), Some((0, 3)));
+    }
+
+    #[test]
+    fn checked_uppercase_and_lowercase() {
+        assert_eq!(checkbox_span("[X] Buy milk"), Some((0, 3)));
+        assert_eq!(checkbox_span("[x] Buy milk"), Some((0, 3)));
+    }
+
+    #[test]
+    fn after_list_marker_and_indentation() {
+        assert_eq!(checkbox_span("  - [ ] Buy milk"), Some((4, 7)));
+        assert_eq!(checkbox_span("1. [x] Buy milk"), Some((3, 6)));
+    }
+
+    #[test]
+    fn not_a_task_line() {
+        assert_eq!(checkbox_span("Just a regular line"), None);
+    }
+
+    #[test]
+    fn rewrite_in_place_preserves_rest_of_line() {
+        let line = "  - [ ] Buy milk @home";
+        let (start, end) = checkbox_span(line).unwrap();
+        let rewritten = format!("{}{}{}", &line[..start], "[X]", &line[end..]);
+        assert_eq!(rewritten, "  - [X] Buy milk @home");
     }
 }

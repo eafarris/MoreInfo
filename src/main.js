@@ -1747,6 +1747,7 @@ tasksEditorContainer.addEventListener('click', async e => {
         lineNumber:   parseInt(row.dataset.line, 10),
         originalText: row.dataset.text,
         newText:      row.dataset.text + ' ' + doneStamp(),
+        markChecked:  true,
       });
       await refreshTasksView();
     } catch(err) { console.error('write_task_line failed:', err); }

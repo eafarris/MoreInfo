@@ -1,13 +1,19 @@
 name: Release
 
 # Fires on any tag matching v*, e.g. v0.9.0 or v1.0.0-beta.1, or manually
-# from the Actions tab / `gh workflow run` — useful for CI-only changes
-# (like a runtime bump) that don't warrant a new app version.
+# from the Actions tab / `gh workflow run` (pass an existing tag via the
+# `tag` input) — useful for re-running a release build for a tag that's
+# already pushed, without needing a new app version.
 on:
   push:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to release (e.g. v0.9.0)'
+        required: true
+        type: string
 
 # Needed for creating/uploading the draft release.
 permissions:
@@ -21,6 +27,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: actions/setup-node@v5
         with:
@@ -64,6 +72,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ inputs.tag || github.ref }}
 
       - uses: actions/setup-node@v5
         with:
@@ -110,10 +120,11 @@ jobs:
       - name: Create draft release
         uses: softprops/action-gh-release@v3
         with:
-          # Explicit rather than relying on tag auto-detection. Empty (not
-          # "main") on a workflow_dispatch run, so it still fails loudly
-          # there instead of creating a bogus release tagged "main".
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || '' }}
+          # Explicit rather than relying on tag auto-detection. On a
+          # workflow_dispatch run this comes from the required `tag` input
+          # (the checkout step above already fails loudly if it doesn't
+          # exist); a tag push already carries it in github.ref_name.
+          tag_name: ${{ inputs.tag || github.ref_name }}
           draft: true
           generate_release_notes: true
           files: |

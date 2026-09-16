@@ -2,8 +2,7 @@ nimbalyst-local/
 node_modules/
 dist/
 docs
-/target/debug/
-/target/release/
+/target/
 src-tauri/target/
 src-tauri/gen/
 .DS_Store

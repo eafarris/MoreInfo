@@ -8,6 +8,7 @@
     "build:vite": "vite build",
     "dev": "tauri dev",
     "build": "tauri build",
+    "build:release": "vite build && cargo build --release --features tauri/custom-protocol --manifest-path src-tauri/Cargo.toml",
     "test": "vitest run",
     "test:watch": "vitest"
   },

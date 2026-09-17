@@ -128,13 +128,19 @@ worth treating as a new bug, not this one recurring.
 
 `npm run build` runs the full `tauri build`, including installer bundling
 (not verified to work in this environment — untested). To just check launch
-performance without bundling:
+performance without bundling, use the `build:release` script (added
+2026-09-16 specifically to make this one command instead of a hand-typed
+sequence):
 
 ```powershell
-cd C:\MoreInfo\src-tauri
-cargo build --release --features tauri/custom-protocol
+npm run build:release
+# runs `vite build` then `cargo build --release --features tauri/custom-protocol`
 # binary lands at C:\MoreInfo\target\release\MoreInfo.exe
 ```
+
+Given how slow `npm run dev` is on this hardware (see above), this is now
+the recommended day-to-day way to run MoreInfo on this machine — launching
+the release binary directly is faster than living in the dev server.
 
 **The `--features tauri/custom-protocol` is not optional.** Tauri v2
 decides whether a build loads `devUrl` or the embedded `frontendDist` at
@@ -146,6 +152,16 @@ feature is enabled (`tauri-2.10.3/build.rs`: `dev = !custom_protocol`) —
 binary will still try to load `http://localhost:5173` and fail with
 "can't reach this page" the moment the dev server isn't running. Learned
 this the hard way mid-investigation — cost a full rebuild cycle.
+
+This bit again on 2026-09-16: a stale `target/release/MoreInfo.exe` from
+2026-09-10, built with a bare `cargo build --release` before this gotcha
+was documented, was still around and launching it reproduced the
+"blank window + bounce to tauri.localhost in the system browser" symptom
+from the section above — this time from a genuinely dev-mode-compiled
+"release" binary hitting the same misclassification, not the deadlock
+that section's fix addressed. Rebuilding with `npm run build:release`
+resolved it; use that script going forward instead of a bare `cargo build
+--release` so this can't recur silently.
 
 ---
 

@@ -124,6 +124,40 @@ that's expected now, not a regression to chase. If a *fresh* hang pattern
 shows up (doesn't clear, or shows flat/zero CPU instead of climbing), that's
 worth treating as a new bug, not this one recurring.
 
+---
+
+## Resolved: release binary hangs completely after content loads
+
+**Symptom (found 2026-09-17):** launch `target\release\MoreInfo.exe` built
+via `npm run build:release`. The window appears quickly, content loads
+(today's journal renders, editor gets focus — a blinking cursor is visible),
+then the app goes fully unresponsive with no recovery. Task Manager shows a
+flat ~10% CPU — not the climbing-CPU pattern of real work completing (see
+the dev-build hang above), which is the tell that this is a genuine deadlock,
+not just slow hardware.
+
+**Root cause:** `restore_window_size` had the exact hazard the section above
+already diagnosed and fixed for `save_window_size` — but on the *read* side,
+which that fix never touched. It was a `#[tauri::command] async fn` invoked
+from JS right at startup (`invoke('restore_window_size')`, chained after
+`restoreStateCurrent(...)` in `main.js`), and its very first line called
+`window.is_maximized()` from that async command context. On Windows that
+query can block on the native UI thread if it's still inside (or hasn't
+fully unwound from) the nested message loop the OS runs while showing/
+positioning a new window — which is exactly when this command fired, so it
+reliably deadlocked the whole app, not just the promise waiting on it.
+
+**Fix:** `restore_window_size` is no longer a `#[tauri::command]`. It's now
+a plain function called directly from `run()`'s `.setup()` closure, right
+after `install_window_geometry_persistence(&main_window)` — same thread that
+just built the window, so `is_maximized()` there is the safe in-thread case
+the comment block above `WinState` in `lib.rs` describes, not a cross-thread
+round-trip. The JS-side `invoke('restore_window_size')` call is gone;
+`restoreStateCurrent(...)` (maximized/fullscreen only, owned by
+`tauri-plugin-window-state`) is untouched. Verified via `Get-Process`
+(`Responding: True` immediately, flat ~4% CPU, no climb) and a screenshot
+showing the journal fully rendered with correct restored window geometry.
+
 ### Testing a release build
 
 `npm run build` runs the full `tauri build`, including installer bundling

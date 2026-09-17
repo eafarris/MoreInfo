@@ -2799,12 +2799,12 @@ Object.keys(sbConfig).forEach(name => {
 });
 
 // Plugin handles maximised/fullscreen only; we own size+position.
-// Saving is now handled natively (Rust `on_window_event`, flushed on close)
-// rather than from here — see WINDOWS.md for why a JS-debounced
-// save_window_size command used to deadlock the app on Windows.
-restoreStateCurrent(StateFlags.MAXIMIZED | StateFlags.FULLSCREEN)
-  .then(() => invoke('restore_window_size'))
-  .catch(() => {});
+// Saving and restoring are both handled natively now (Rust `on_window_event`
+// for saving, flushed on close; `restore_window_size` called directly from
+// `.setup()` for restoring) rather than from here — see WINDOWS.md for why
+// JS-invoked `save_window_size`/`restore_window_size` commands used to
+// deadlock the app on Windows.
+restoreStateCurrent(StateFlags.MAXIMIZED | StateFlags.FULLSCREEN).catch(() => {});
 
 invoke('get_datastore_path').then(p => { datastorePath = p; }).catch(console.error);
 

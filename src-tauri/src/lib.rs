@@ -1221,6 +1221,18 @@ fn get_unlinked_references(path: String) -> Result<Vec<UnlinkedEntry>, String> {
 // round-trip. We do the same below, just persisting into the datastore's
 // preferences.json instead of the plugin's separate OS-level file, so window
 // geometry travels with the datastore.
+//
+// `restore_window_size` had the identical hazard on the *read* side: it used
+// to be a `#[tauri::command] async fn` invoked from JS (`invoke('restore_
+// window_size')`) right after startup, and its very first line called
+// `window.is_maximized()` — the same cross-thread query the paragraph above
+// says can deadlock. On Windows this reproduced exactly that: window shows,
+// webview content loads, then the whole app hangs (~10% CPU, no further
+// progress) because the IPC-dispatched command thread never gets its query
+// answered. Fixed 2026-09-17 by calling it as a plain function directly from
+// `run()`'s `.setup()` closure instead — same thread that just built the
+// window, so `is_maximized()` there is the safe in-thread case, not a
+// cross-thread round-trip. No JS invoke needed for it any more.
 
 // ── Per-datastore user preferences ──────────────────────────────────────────
 // Stored at <datastore>/preferences.json.  Distinct from the app-level
@@ -1331,8 +1343,12 @@ fn install_window_geometry_persistence(window: &tauri::WebviewWindow) {
 
 /// Read the saved window size/position from `preferences.json`, clamp it to
 /// the current monitor, and apply it.  No-ops on first run or when maximised.
-#[tauri::command]
-async fn restore_window_size(window: tauri::WebviewWindow) -> Result<(), String> {
+///
+/// Called directly from `run()`'s `.setup()` closure (same thread that built
+/// `window`) rather than as a `#[tauri::command]` invoked from JS — see the
+/// comment block above `WinState` for why an IPC-dispatched call here used to
+/// deadlock the app on Windows.
+fn restore_window_size(window: &tauri::WebviewWindow) -> Result<(), String> {
     if window.is_maximized().map_err(|e| e.to_string())? {
         return Ok(());
     }
@@ -3149,6 +3165,9 @@ pub fn run() {
                 .build()?;
 
             install_window_geometry_persistence(&main_window);
+            if let Err(e) = restore_window_size(&main_window) {
+                eprintln!("failed to restore window size: {e}");
+            }
 
             let toggle_left   = MenuItem::with_id(handle, "toggle-left",   "Toggle Left Sidebar",   true, None::<&str>)?;
             let toggle_right  = MenuItem::with_id(handle, "toggle-right",  "Toggle Right Sidebar",  true, None::<&str>)?;
@@ -3316,7 +3335,6 @@ pub fn run() {
             search_metadata,
             write_task_line,
             get_linked_tasks,
-            restore_window_size,
             list_tags,
             list_pages_for_tag,
             check_datastore_health,
